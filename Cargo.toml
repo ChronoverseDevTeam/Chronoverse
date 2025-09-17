@@ -1,7 +1,12 @@
-[package]
-name = "chronoverse"
+[workspace]
+members = ["crv-core", "crv-cli", "crv-server"]
+resolver = "3"
+
+[workspace.package]
+authors = ["youzheyin <1298763831@qq.com>"]
 version = "0.1.0"
 edition = "2024"
 
-[dependencies]
-tokio = "1.47.1"
+[workspace.dependencies]
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }

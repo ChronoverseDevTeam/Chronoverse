@@ -1,0 +1,11 @@
+[package]
+name = "crv-server"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+
+[dependencies]
+crv-core ={ path = "../crv-core" }
+
+tokio = { workspace = true }
+serde = { workspace = true }
