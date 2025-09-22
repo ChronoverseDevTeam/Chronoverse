@@ -29,7 +29,7 @@ jobs:
 
       - name: Build (Release)
         run: |
-          cargo build --release -p crv-cli -p crv-server
+          cargo build --release -p crv-cli -p crv-edge -p crv-hive
 
       - name: Run tests (workspace)
         run: |
@@ -41,7 +41,8 @@ jobs:
           name: chronoverse-${{ runner.os }}-release
           path: |
             target/release/crv-cli*
-            target/release/crv-server*
+            target/release/crv-edge*
+            target/release/crv-hive*
           if-no-files-found: error
           compression-level: 6
           retention-days: 14
@@ -68,10 +69,12 @@ jobs:
           set -euo pipefail
           if [[ "${{ runner.os }}" == "Windows" ]]; then
             if [[ -f "dist/crv-cli.exe" ]]; then mv dist/crv-cli.exe dist/crv-cli-${{ runner.os }}.exe; fi
-            if [[ -f "dist/crv-server.exe" ]]; then mv dist/crv-server.exe dist/crv-server-${{ runner.os }}.exe; fi
+            if [[ -f "dist/crv-edge.exe" ]]; then mv dist/crv-edge.exe dist/crv-edge-${{ runner.os }}.exe; fi
+            if [[ -f "dist/crv-hive.exe" ]]; then mv dist/crv-hive.exe dist/crv-hive-${{ runner.os }}.exe; fi
           else
             if [[ -f "dist/crv-cli" ]]; then mv dist/crv-cli dist/crv-cli-${{ runner.os }}; fi
-            if [[ -f "dist/crv-server" ]]; then mv dist/crv-server dist/crv-server-${{ runner.os }}; fi
+            if [[ -f "dist/crv-edge" ]]; then mv dist/crv-edge dist/crv-edge-${{ runner.os }}; fi
+            if [[ -f "dist/crv-hive" ]]; then mv dist/crv-hive dist/crv-hive-${{ runner.os }}; fi
           fi
 
       - name: Upload to GitHub Release
