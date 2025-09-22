@@ -1,11 +1,12 @@
+# crv-edge is the client of crv
 [package]
-name = "crv-server"
+name = "crv-edge"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
 
 [dependencies]
-crv-core ={ path = "../crv-core" }
+crv-core = { path = "../crv-core" }
 
 tokio = { workspace = true }
 serde = { workspace = true }

@@ -158,7 +158,16 @@ dependencies = [
 ]
 
 [[package]]
-name = "crv-server"
+name = "crv-edge"
+version = "0.1.0"
+dependencies = [
+ "crv-core",
+ "serde",
+ "tokio",
+]
+
+[[package]]
+name = "crv-hive"
 version = "0.1.0"
 dependencies = [
  "crv-core",
