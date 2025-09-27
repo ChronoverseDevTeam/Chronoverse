@@ -1,0 +1,13 @@
+syntax = "proto3";
+package hive_proto;
+
+message GreetingReq {
+  string msg = 1;
+}
+
+message NilRsp {
+}
+
+service HiveService {
+  rpc Greeting(GreetingReq) returns (NilRsp);
+}

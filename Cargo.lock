@@ -292,8 +292,14 @@ name = "crv-hive"
 version = "0.1.0"
 dependencies = [
  "crv-core",
+ "prost",
+ "prost-types",
+ "protoc-bin-vendored",
  "serde",
  "tokio",
+ "tonic",
+ "tonic-prost",
+ "tonic-prost-build",
 ]
 
 [[package]]
