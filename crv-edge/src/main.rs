@@ -34,6 +34,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     use tray_icon::{Icon, TrayIconBuilder};
     use image::ImageReader;
     use image::GenericImageView;
+    use std::time::Duration;
+    use crv_edge::pb::edge_daemon_service_client::EdgeDaemonServiceClient;
+    use crv_edge::pb::BonjourReq;
 
     let addr: SocketAddr = "127.0.0.1:34562".parse()?;
 
@@ -53,7 +56,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 创建托盘菜单
     let menu = Menu::new();
-    let status_item = MenuItem::new("正在运行", true, None);
+    let status_item = MenuItem::new("启动中...", true, None);
     let quit_item = MenuItem::new("退出", true, None);
     // 记录退出按钮的 id
     let quit_id = quit_item.id().clone();
@@ -76,8 +79,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let icon = Icon::from_rgba(rgba32.into_raw(), w32 as u32, h32 as u32)?;
 
+    // 自定义用户事件用于更新状态
+    #[derive(Clone)]
+    enum AppEvent { StatusRunning, StatusFailed }
+
     // 事件循环
-    let event_loop = EventLoopBuilder::<()>::with_user_event().build();
+    let event_loop = EventLoopBuilder::<AppEvent>::with_user_event().build();
+    let proxy = event_loop.create_proxy();
 
     let _tray_icon = TrayIconBuilder::new()
         .with_menu(Box::new(menu))
@@ -91,6 +99,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 将一次性通道和句柄包装在 Option 里，以便在闭包内安全地 take
     let mut shutdown_tx = Some(shutdown_tx);
     let mut server_handle = Some(server_handle);
+
+    // 启动后进行一次自检：尝试连接 gRPC 并调用 bonjour
+    let proxy_clone = proxy.clone();
+    runtime.spawn(async move {
+        // 稍等片刻让 server 绑定端口
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let endpoint = format!("http://{}:{}", "127.0.0.1", 34562);
+        let result = async {
+            let mut client = EdgeDaemonServiceClient::connect(endpoint).await.ok()?;
+            let _ = client.bonjour(tonic::Request::new(BonjourReq{})).await.ok()?;
+            Some(())
+        }.await;
+        let _ = match result {
+            Some(_) => proxy_clone.send_event(AppEvent::StatusRunning),
+            None => proxy_clone.send_event(AppEvent::StatusFailed),
+        };
+    });
 
     // 为了在主循环内访问最新的菜单事件，使用 try_recv 读取（非阻塞）
     // 注意：MenuEvent::receiver() 是全局的，这里直接复用上面的 menu_event_rx 进行 try_recv
@@ -119,6 +144,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         match event {
+            Event::UserEvent(AppEvent::StatusRunning) => {
+                let _ = status_item.set_text("正在运行");
+            }
+            Event::UserEvent(AppEvent::StatusFailed) => {
+                let _ = status_item.set_text("启动失败");
+            }
             Event::LoopDestroyed => {
                 // 事件循环销毁时确保触发关闭
                 if let Some(tx) = shutdown_tx.take() { let _ = tx.send(()); }
