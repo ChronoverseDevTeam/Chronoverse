@@ -18,6 +18,11 @@ prost-types = "0.14.1"
 tonic = "0.14.2"
 tonic-prost = "0.14.2"
 
+[target.'cfg(windows)'.dependencies]
+tray-icon = "0.14"
+tao = "0.32"
+image = { version = "0.25", default-features = false, features = ["ico", "png"] }
+
 [build-dependencies]
 tonic-prost-build = "0.14.2"
 protoc-bin-vendored = "3"
