@@ -10,3 +10,14 @@ crv-core = { path = "../crv-core" }
 
 tokio = { workspace = true }
 serde = { workspace = true }
+
+# Protocol Buffer
+prost = "0.14.1"
+prost-types = "0.14.1"
+
+tonic = "0.14.2"
+tonic-prost = "0.14.2"
+
+[build-dependencies]
+tonic-prost-build = "0.14.2"
+protoc-bin-vendored = "3"
