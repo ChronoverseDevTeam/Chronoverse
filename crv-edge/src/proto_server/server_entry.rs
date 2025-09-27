@@ -10,10 +10,8 @@ pub struct CrvEdgeDaemonServer;
 impl EdgeDaemonService for CrvEdgeDaemonServer {
     async fn bonjour(
         &self,
-        request: Request<BonjourReq>,
+        _: Request<BonjourReq>,
     ) -> Result<Response<BonjourRsp>, Status> {
-        let _msg = request.into_inner().msg;
-        
         let response = BonjourRsp {
             daemon_version: "1.0.0".to_string(),
             api_level: 1,
