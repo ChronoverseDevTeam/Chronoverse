@@ -1,0 +1,17 @@
+syntax = "proto3";
+package daemon_proto;
+
+message BonjourReq {
+}
+
+message BonjourRsp {
+  string daemonVersion = 1;
+  int32 apiLevel = 2;
+  string platform = 3;
+  string os = 4;
+  string architecture = 5;
+}
+
+service EdgeDaemonService {
+  rpc Bonjour(BonjourReq) returns (BonjourRsp);
+}

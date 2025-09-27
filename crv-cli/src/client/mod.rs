@@ -1,6 +1,6 @@
 use tonic::transport::Channel;
 use crate::pb::edge_daemon_service_client::EdgeDaemonServiceClient;
-use crate::pb::{GreetingReq, NilRsp};
+use crate::pb::{BonjourReq, BonjourRsp};
 
 /// gRPC 客户端结构体
 pub struct CrvClient {
@@ -20,14 +20,12 @@ impl CrvClient {
     }
 
     /// 发送问候消息到服务器
-    pub async fn greeting(&mut self, msg: &str) -> Result<(), Box<dyn std::error::Error>> {
-        let request = tonic::Request::new(GreetingReq {
-            msg: msg.to_string(),
-        });
+    pub async fn bonjour(&mut self) -> Result<BonjourRsp, Box<dyn std::error::Error>> {
+        let request = tonic::Request::new(BonjourReq {});
 
-        let response: tonic::Response<NilRsp> = self.client.greeting(request).await?;
+        let response: tonic::Response<BonjourRsp> = self.client.bonjour(request).await?;
         
         println!("服务器响应: {:?}", response);
-        Ok(())
+        Ok(response.into_inner())
     }
 }

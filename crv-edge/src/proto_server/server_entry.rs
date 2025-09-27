@@ -1,19 +1,28 @@
 use tonic::{transport::Server, Request, Response, Status};
 use crate::pb::edge_daemon_service_server::{EdgeDaemonService, EdgeDaemonServiceServer};
-use crate::pb::{GreetingReq, NilRsp};
+use crate::pb::{BonjourReq, BonjourRsp};
 use std::future::Future;
 
 #[derive(Default)]
-pub struct CvEdgeGreeter;
+pub struct CrvEdgeDaemonServer;
 
 #[tonic::async_trait]
-impl EdgeDaemonService for CvEdgeGreeter {
-    async fn greeting(
+impl EdgeDaemonService for CrvEdgeDaemonServer {
+    async fn bonjour(
         &self,
-        request: Request<GreetingReq>,
-    ) -> Result<Response<NilRsp>, Status> {
+        request: Request<BonjourReq>,
+    ) -> Result<Response<BonjourRsp>, Status> {
         let _msg = request.into_inner().msg;
-        Ok(Response::new(NilRsp {}))
+        
+        let response = BonjourRsp {
+            daemon_version: "1.0.0".to_string(),
+            api_level: 1,
+            platform: "chronoverse".to_string(),
+            os: std::env::consts::OS.to_string(),
+            architecture: std::env::consts::ARCH.to_string(),
+        };
+        
+        Ok(Response::new(response))
     }
 }
 
@@ -25,10 +34,10 @@ pub async fn start_server_with_shutdown<S>(
 where
     S: Future<Output = ()> + Send + 'static,
 {
-    let greeter = CvEdgeGreeter::default();
+    let daemon_server = CrvEdgeDaemonServer::default();
 
     Server::builder()
-        .add_service(EdgeDaemonServiceServer::new(greeter))
+        .add_service(EdgeDaemonServiceServer::new(daemon_server))
         .serve_with_shutdown(addr, shutdown)
         .await?;
 
@@ -37,10 +46,10 @@ where
 
 /// 启动 gRPC 服务器（无关闭信号，会一直运行直至进程退出）
 pub async fn start_server(addr: std::net::SocketAddr) -> Result<(), Box<dyn std::error::Error>> {
-    let greeter = CvEdgeGreeter::default();
+    let daemon_server = CrvEdgeDaemonServer::default();
 
     Server::builder()
-        .add_service(EdgeDaemonServiceServer::new(greeter))
+        .add_service(EdgeDaemonServiceServer::new(daemon_server))
         .serve(addr)
         .await?;
 
