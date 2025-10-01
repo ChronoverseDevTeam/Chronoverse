@@ -11,6 +11,10 @@ crv-core = { path = "../crv-core" }
 tokio = { workspace = true }
 serde = { workspace = true }
 
+# Fingerprint dependencies
+blake3 = "1"
+## no hostname/mac/sysinfo needed after stability change
+
 # Protocol Buffer
 prost = "0.14.1"
 prost-types = "0.14.1"
@@ -22,6 +26,7 @@ tonic-prost = "0.14.2"
 tray-icon = "0.14"
 tao = "0.32"
 image = { version = "0.25", default-features = false, features = ["ico", "png"] }
+winreg = "0.52"
 
 [build-dependencies]
 tonic-prost-build = "0.14.2"
