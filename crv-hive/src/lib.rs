@@ -4,3 +4,5 @@ pub mod pb {
 }
 
 pub mod hive_server;
+pub mod database;
+pub mod config;

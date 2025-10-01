@@ -1,0 +1,66 @@
+use std::env;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
+
+use crate::config::entity::ConfigEntity;
+
+static CONFIG: OnceLock<ConfigEntity> = OnceLock::new();
+
+fn default_config_path() -> PathBuf {
+    // 优先使用环境变量 CRV_HIVE_CONFIG 指定的路径，否则使用工作目录下的 hive.toml
+    if let Ok(p) = env::var("CRV_HIVE_CONFIG_PATH") {
+        return PathBuf::from(p);
+    }
+    PathBuf::from("hive.toml")
+}
+
+fn ensure_parent_dir(path: &Path) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent)?;
+        }
+    }
+    Ok(())
+}
+
+pub fn get_config() -> Option<&'static ConfigEntity> {
+    CONFIG.get()
+}
+
+pub fn get_or_init_config() -> &'static ConfigEntity {
+    CONFIG.get_or_init(|| ConfigEntity::default())
+}
+
+pub async fn load_config() -> Result<(), Box<dyn std::error::Error>> {
+    let path = default_config_path();
+    if path.exists() {
+        let content = tokio::fs::read_to_string(&path).await?;
+        let cfg: ConfigEntity = toml::from_str(&content)?;
+        let _ = CONFIG.set(cfg);
+    } else {
+        let cfg = ConfigEntity::default();
+        let toml_str = toml::to_string_pretty(&cfg)?;
+        ensure_parent_dir(&path)?;
+        tokio::fs::write(&path, toml_str).await?;
+        let _ = CONFIG.set(cfg);
+    }
+    Ok(())
+}
+
+pub async fn save_config() -> Result<(), Box<dyn std::error::Error>> {
+    let path = default_config_path();
+    if let Some(cfg) = CONFIG.get() {
+        let toml_str = toml::to_string_pretty(cfg)?;
+        ensure_parent_dir(&path)?;
+        tokio::fs::write(&path, toml_str).await?;
+        Ok(())
+    } else {
+        let cfg = ConfigEntity::default();
+        let toml_str = toml::to_string_pretty(&cfg)?;
+        ensure_parent_dir(&path)?;
+        tokio::fs::write(&path, toml_str).await?;
+        let _ = CONFIG.set(cfg);
+        Ok(())
+    }
+}

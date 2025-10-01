@@ -10,6 +10,7 @@ crv-core = { path = "../crv-core" }
 
 tokio = { workspace = true }
 serde = { workspace = true }
+toml = "0.8"
 
 # Protocol Buffer
 prost = "0.14.1"
@@ -17,6 +18,8 @@ prost-types = "0.14.1"
 
 tonic = "0.14.2"
 tonic-prost = "0.14.2"
+
+mongodb = "3.3.0"
 
 
 [build-dependencies]

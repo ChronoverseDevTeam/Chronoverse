@@ -1,14 +1,25 @@
 use std::net::SocketAddr;
 use tokio::signal;
-use crv_hive::hive_server;
+use crv_hive::{config, hive_server, database};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let addr: SocketAddr = "0.0.0.0:34560".parse()?;
-    
-    println!("Starting Hive gRPC server on {}", addr);
+    config::holder::load_config().await?;
 
-    // Ctrl+C 优雅关闭触发器
+    let addr_str = config::holder::get_config()
+        .unwrap()
+        .hive_address
+        .clone()
+        .unwrap_or_else(|| "0.0.0.0:34560".to_string());
+    let addr: SocketAddr = addr_str
+        .parse()
+        .expect(&format!("unable to parse addr `{}`", addr_str));
+
+    database::mongo::init_mongo_from_config().await?;
+
+    println!("Hive gRPC sevice now is available at {}", addr);
+
+    // Ctrl+C to shutdown gracefully
     let shutdown = async {
         signal::ctrl_c()
             .await
@@ -16,6 +27,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("\nReceived CTRL+C signal, shutting down gracefully...");
     };
 
-    // 使用支持优雅关闭的启动函数
+    // Launching
     hive_server::start_server_with_shutdown(addr, shutdown).await
 }
