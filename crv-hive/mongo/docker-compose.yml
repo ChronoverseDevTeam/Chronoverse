@@ -1,0 +1,25 @@
+version: "3.8"
+
+services:
+  mongo:
+    image: mongo:6.0
+    container_name: crv-hive-mongo
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    environment:
+      - MONGO_INITDB_DATABASE=chronoverse
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "mongodb://localhost:27017", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - ./data:/data/db
+      - ./init:/docker-entrypoint-initdb.d
+
+volumes:
+  # Named volumes can be added later if needed; using local bind for clarity
+  # data:
+  # init:
+
