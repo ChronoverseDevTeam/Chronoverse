@@ -21,7 +21,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // 使用支持优雅关闭的启动函数
-    crv_edge::proto_server::server_entry::start_server_with_shutdown(addr, shutdown).await
+    crv_edge::daemon_server::server_entry::start_server_with_shutdown(addr, shutdown).await
 }
 
 #[cfg(windows)]
@@ -51,7 +51,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let shutdown = async move {
             let _ = shutdown_rx.await;
         };
-        let _ = crv_edge::proto_server::server_entry::start_server_with_shutdown(addr, shutdown).await;
+        let _ = crv_edge::daemon_server::server_entry::start_server_with_shutdown(addr, shutdown).await;
     });
 
     // 创建托盘菜单
