@@ -26,10 +26,11 @@ pub fn apply_renew_metadata<T>(renew: Option<RenewToken>, resp: &mut tonic::Resp
 
 // 服务器拦截器：仅校验 JWT；PAT 在各 RPC 内部异步校验
 pub fn check_auth(mut req: Request<()>) -> Result<Request<()>, Status> {
-    // 放行 Login（登录接口无需已登录状态）
+    // 放行 Login 与 Register（无需已登录状态）
     if let Some(m) = req.extensions().get::<tonic::GrpcMethod>() {
         // service: hive_proto.HiveService, method: Login
-        if m.method() == "Login" {
+        let method = m.method();
+        if method == "Login" || method == "Register" {
             return Ok(req);
         }
     }

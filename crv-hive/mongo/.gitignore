@@ -2,3 +2,4 @@ bin/
 data-native/
 dist/
 logs/
+mongod.pid

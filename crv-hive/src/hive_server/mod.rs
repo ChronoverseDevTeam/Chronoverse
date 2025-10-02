@@ -2,7 +2,7 @@ use tonic::{transport::Server, Request, Response, Status};
 pub mod auth;
 use crate::hive_server::auth::check_auth;
 use crate::pb::hive_service_server::{HiveService, HiveServiceServer};
-use crate::pb::{CreateWorkspaceReq, GreetingReq, ListWorkspaceReq, ListWorkspaceRsp, NilRsp, LoginReq, LoginRsp, CreateTokenReq, CreateTokenRsp, ListTokensReq, ListTokensRsp, RevokeTokenReq, RevokeTokenRsp};
+use crate::pb::{CreateWorkspaceReq, GreetingReq, ListWorkspaceReq, ListWorkspaceRsp, NilRsp, LoginReq, LoginRsp, RegisterReq, RegisterRsp, CreateTokenReq, CreateTokenRsp, ListTokensReq, ListTokensRsp, RevokeTokenReq, RevokeTokenRsp};
 use crate::hive_server::auth::{RenewToken, apply_renew_metadata};
 
 #[derive(Default)]
@@ -45,6 +45,13 @@ impl HiveService for CrvHiveService {
         request: Request<LoginReq>,
     ) -> Result<Response<LoginRsp>, Status> {
         crate::logic::auth::login(request).await
+    }
+
+    async fn register(
+        &self,
+        request: Request<RegisterReq>,
+    ) -> Result<Response<RegisterRsp>, Status> {
+        crate::logic::auth::register(request).await
     }
 
     async fn create_token(

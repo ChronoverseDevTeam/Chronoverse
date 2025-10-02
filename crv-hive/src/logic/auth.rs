@@ -1,5 +1,5 @@
 use tonic::{Request, Response, Status};
-use crate::pb::{LoginReq, LoginRsp};
+use crate::pb::{LoginReq, LoginRsp, RegisterReq, RegisterRsp};
 use argon2::PasswordVerifier;
 
 pub async fn login(
@@ -20,6 +20,38 @@ pub async fn login(
         .map_err(|_| Status::internal("issue token failed"))?;
 
     Ok(Response::new(LoginRsp { access_token: token, expires_at: exp }))
+}
+
+pub async fn register(
+    request: Request<RegisterReq>
+) -> Result<Response<RegisterRsp>, Status> {
+    let req = request.into_inner();
+    if req.username.trim().is_empty() || req.password.is_empty() {
+        return Err(Status::invalid_argument("username and password required"));
+    }
+    if crate::user::get_user_by_name(&req.username).await.map_err(|_| Status::internal("db error"))?.is_some() {
+        return Err(Status::already_exists("username exists"));
+    }
+
+    let password = hash_password(&req.password).map_err(|_| Status::internal("hash password failed"))?;
+    let now = chrono::Utc::now();
+    let user = crate::user::UserEntity {
+        name: req.username,
+        email: req.email,
+        password,
+        created_at: now,
+        updated_at: now,
+    };
+    crate::user::create_user(user).await.map_err(|_| Status::internal("db error"))?;
+    Ok(Response::new(RegisterRsp {}))
+}
+
+fn hash_password(plain: &str) -> Result<String, argon2::password_hash::Error> {
+    use argon2::{Argon2, PasswordHasher};
+    use argon2::password_hash::{SaltString};
+    let salt = SaltString::generate(&mut rand::thread_rng());
+    let hashed = Argon2::default().hash_password(plain.as_bytes(), &salt)?.to_string();
+    Ok(hashed)
 }
 
 fn verify_password(plain: &str, stored: &str) -> bool {

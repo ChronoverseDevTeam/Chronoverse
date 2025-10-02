@@ -26,3 +26,6 @@ target
 /target
 .idea
 .vscode
+
+# Chronoverse configuration
+hive.toml

@@ -44,6 +44,14 @@ message LoginRsp {
   int64  expires_at   = 2; // unix seconds
 }
 
+message RegisterReq {
+  string username = 1;
+  string password = 2;
+  string email    = 3;
+}
+
+message RegisterRsp {}
+
 message CreateTokenReq {
   string name = 1;
   optional int64 expires_at = 2; // unix seconds
@@ -80,6 +88,7 @@ service HiveService {
 
   // Auth & Token management
   rpc Login(LoginReq) returns (LoginRsp);
+  rpc Register(RegisterReq) returns (RegisterRsp);
   rpc CreateToken(CreateTokenReq) returns (CreateTokenRsp);
   rpc ListTokens(ListTokensReq) returns (ListTokensRsp);
   rpc RevokeToken(RevokeTokenReq) returns (RevokeTokenRsp);
