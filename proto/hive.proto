@@ -8,6 +8,33 @@ message GreetingReq {
 message NilRsp {
 }
 
+message CreateWorkspaceReq {
+  string name = 1;
+  string path = 2;
+  string device_finger_print = 3;
+}
+
+message ListWorkspaceReq {
+  optional string name = 1;
+  optional string owner = 2;
+  optional string device_finger_print = 3;
+}
+
+message Workspace {
+  string name = 1;
+  int64 created_at = 2;
+  int64 updated_at = 3;
+  string owner = 4;
+  string path = 5;
+  string device_finger_print = 6;
+}
+
+message ListWorkspaceRsp {
+  repeated Workspace workspaces = 1;
+}
+
 service HiveService {
   rpc Greeting(GreetingReq) returns (NilRsp);
+  rpc CreateWorkspace(CreateWorkspaceReq) returns (NilRsp);
+  rpc ListWorkspaces(ListWorkspaceReq) returns (ListWorkspaceRsp);
 }

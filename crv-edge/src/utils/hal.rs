@@ -86,9 +86,23 @@ fn platform_identifiers() -> Vec<String> {
     vec!["unknown-os".to_string()]
 }
 
-/// 生成与机器硬件/系统特征绑定的稳定指纹（跨平台）。
 pub fn machine_fingerprint() -> String {
     let ids = platform_identifiers();
     let parts: Vec<&str> = ids.iter().map(|s| s.as_str()).collect();
     hash_strings(&parts)
+}
+
+#[cfg(test)]
+#[test]
+fn test_machine_fingerprint_consistency() {
+    let fp1 = machine_fingerprint();
+    let fp2 = machine_fingerprint();
+    assert_eq!(fp1, fp2, "多次调用 machine_fingerprint 应该返回相同的值");
+}
+
+#[test]
+fn test_machine_fingerprint_not_empty() {
+    let fp = machine_fingerprint();
+    println!("machine_fingerprint: {}", fp);
+    assert!(!fp.is_empty(), "machine_fingerprint 不应返回空字符串");
 }

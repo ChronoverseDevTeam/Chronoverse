@@ -1,6 +1,8 @@
+use std::vec;
+
 use tonic::{transport::Server, Request, Response, Status};
 use crate::pb::hive_service_server::{HiveService, HiveServiceServer};
-use crate::pb::{GreetingReq, NilRsp};
+use crate::pb::{CreateWorkspaceReq, GreetingReq, ListWorkspaceReq, ListWorkspaceRsp, NilRsp};
 
 #[derive(Default)]
 pub struct CvHiveGreeter;
@@ -13,6 +15,22 @@ impl HiveService for CvHiveGreeter {
     ) -> Result<Response<NilRsp>, Status> {
         let _msg = request.into_inner().msg;
         Ok(Response::new(NilRsp {}))
+    }
+
+    async fn create_workspace(
+        &self,
+        request: Request<CreateWorkspaceReq>,
+    ) -> Result<Response<NilRsp>, Status> {
+        let _req = request.into_inner();
+        Ok(Response::new(NilRsp {}))
+    }
+
+    async fn list_workspaces(
+        &self,
+        request: Request<ListWorkspaceReq>,
+    ) -> Result<Response<ListWorkspaceRsp>, Status> {
+        let _req = request.into_inner();
+        Ok(Response::new(ListWorkspaceRsp { workspaces: vec![] }))
     }
 }
 
