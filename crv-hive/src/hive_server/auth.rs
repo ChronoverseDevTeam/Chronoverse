@@ -7,32 +7,80 @@ pub struct UserContext {
     pub source: &'static str,
 }
 
+#[derive(Clone, Debug)]
+pub struct RenewToken {
+    pub token: String,
+    pub expires_at: i64,
+}
+
+pub fn apply_renew_metadata<T>(renew: Option<RenewToken>, resp: &mut tonic::Response<T>) {
+    if let Some(newt) = renew.as_ref() {
+        if let Ok(v) = tonic::metadata::MetadataValue::try_from(newt.token.as_str()) {
+            let _ = resp.metadata_mut().insert("x-renew-token", v);
+        }
+        if let Ok(v) = tonic::metadata::MetadataValue::try_from(newt.expires_at.to_string().as_str()) {
+            let _ = resp.metadata_mut().insert("x-renew-expires-at", v);
+        }
+    }
+}
+
 // 服务器拦截器：仅校验 JWT；PAT 在各 RPC 内部异步校验
 pub fn check_auth(mut req: Request<()>) -> Result<Request<()>, Status> {
+    // 放行 Login（登录接口无需已登录状态）
+    if let Some(m) = req.extensions().get::<tonic::GrpcMethod>() {
+        // service: hive_proto.HiveService, method: Login
+        if m.method() == "Login" {
+            return Ok(req);
+        }
+    }
+
     let md = req.metadata();
 
-    if let Some(hv) = md.get("authorization").and_then(|v| v.to_str().ok()) {
-        if let Some(token) = hv.strip_prefix("Bearer ") {
-            if let Ok((username, scopes)) = verify_jwt_and_extract(token) {
-                req.extensions_mut().insert(UserContext { username, scopes, source: "jwt" });
-            } else {
-                return Err(Status::unauthenticated("invalid bearer token"));
-            }
+    // 其余接口要求有效 JWT
+    let hv = md.get("authorization").and_then(|v| v.to_str().ok())
+        .ok_or_else(|| Status::unauthenticated("missing authorization header"))?;
+
+    let token = hv.strip_prefix("Bearer ")
+        .ok_or_else(|| Status::unauthenticated("invalid authorization scheme"))?;
+
+    let (username, scopes, exp) = verify_jwt_and_extract(token)
+        .map_err(|_| Status::unauthenticated("invalid bearer token"))?;
+
+    req.extensions_mut().insert(UserContext { username, scopes, source: "jwt" });
+
+    // 剩余时间 ≤ 45 分钟则续签（新的有效期 2 小时）
+    let now = chrono::Utc::now().timestamp();
+    if exp - now <= 45 * 60 {
+        if let Some((tk, new_exp)) = issue_jwt_from_req(&req) {
+            req.extensions_mut().insert(RenewToken { token: tk, expires_at: new_exp });
         }
     }
 
     Ok(req)
 }
 
-fn verify_jwt_and_extract(token: &str) -> Result<(String, Vec<String>), ()> {
+fn verify_jwt_and_extract(token: &str) -> Result<(String, Vec<String>, i64), ()> {
     #[derive(serde::Deserialize)]
     struct Claims { sub: String, exp: i64, scopes: Option<Vec<String>> }
     use jsonwebtoken::{DecodingKey, Validation, decode, Algorithm};
     let key = std::env::var("JWT_SECRET").map_err(|_| ())?;
     let data = decode::<Claims>(token, &DecodingKey::from_secret(key.as_bytes()), &Validation::new(Algorithm::HS256)).map_err(|_| ())?;
-    Ok((data.claims.sub, data.claims.scopes.unwrap_or_default()))
+    let now = chrono::Utc::now().timestamp();
+    if data.claims.exp <= now { return Err(()); }
+    Ok((data.claims.sub, data.claims.scopes.unwrap_or_default(), data.claims.exp))
 }
 
-fn find_pat_owner_and_scopes(_token_plain: &str) -> Option<(String, Vec<String>)> { None }
+fn issue_jwt_from_req(req: &Request<()>) -> Option<(String, i64)> {
+    let ctx = req.extensions().get::<UserContext>()?;
+    issue_jwt(&ctx.username, &ctx.scopes, 2 * 60 * 60).ok()
+}
 
-
+fn issue_jwt(username: &str, scopes: &[String], ttl_secs: i64) -> Result<(String, i64), ()> {
+    #[derive(serde::Serialize)]
+    struct Claims { sub: String, exp: i64, scopes: Vec<String> }
+    let exp = chrono::Utc::now().timestamp() + ttl_secs;
+    let claims = Claims { sub: username.to_string(), exp, scopes: scopes.to_vec() };
+    let key = std::env::var("JWT_SECRET").map_err(|_| ())?;
+    let token = jsonwebtoken::encode(&jsonwebtoken::Header::default(), &claims, &jsonwebtoken::EncodingKey::from_secret(key.as_bytes())).map_err(|_| ())?;
+    Ok((token, exp))
+}

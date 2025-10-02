@@ -17,7 +17,7 @@ pub async fn create_token(
     let now = chrono::Utc::now();
     let expires_at = req.expires_at.map(|v| chrono::DateTime::from_timestamp(v, 0).unwrap());
 
-    let entity = crate::tokens::PersonalToken {
+    let entity = crate::token::entity::PersonalToken {
         id: id.clone(),
         user: user.username,
         name: req.name,
@@ -28,7 +28,7 @@ pub async fn create_token(
         last_used_at: None,
     };
 
-    crate::tokens::insert(entity).await.map_err(|_| Status::internal("db error"))?;
+    crate::token::insert(entity).await.map_err(|_| Status::internal("db error"))?;
 
     Ok(Response::new(CreateTokenRsp { token: token_plain, id }))
 }
@@ -37,7 +37,7 @@ pub async fn list_tokens(
     request: Request<ListTokensReq>
 ) -> Result<Response<ListTokensRsp>, Status> {
     let user = ensure_user(&request)?;
-    let items = crate::tokens::list_by_user(&user.username).await.map_err(|_| Status::internal("db error"))?;
+    let items = crate::token::list_by_user(&user.username).await.map_err(|_| Status::internal("db error"))?;
     let tokens: Vec<TokenInfo> = items.into_iter().map(|t| TokenInfo {
         id: t.id,
         name: t.name,
@@ -46,7 +46,17 @@ pub async fn list_tokens(
         scopes: t.scopes,
         last_used_at: t.last_used_at.map(|d| d.timestamp()),
     }).collect();
-    Ok(Response::new(ListTokensRsp { tokens }))
+    let renew = request.extensions().get::<crate::hive_server::auth::RenewToken>().cloned();
+    let mut resp = Response::new(ListTokensRsp { tokens });
+    if let Some(newt) = renew.as_ref() {
+        if let Ok(v) = tonic::metadata::MetadataValue::try_from(newt.token.as_str()) {
+            let _ = resp.metadata_mut().insert("x-renew-token", v);
+        }
+        if let Ok(v) = tonic::metadata::MetadataValue::try_from(newt.expires_at.to_string().as_str()) {
+            let _ = resp.metadata_mut().insert("x-renew-expires-at", v);
+        }
+    }
+    Ok(resp)
 }
 
 pub async fn revoke_token(
@@ -54,7 +64,7 @@ pub async fn revoke_token(
 ) -> Result<Response<RevokeTokenRsp>, Status> {
     let user = ensure_user(&request)?.clone();
     let req = request.into_inner();
-    let ok = crate::tokens::delete_by_id(&user.username, &req.id).await.map_err(|_| Status::internal("db error"))?;
+    let ok = crate::token::delete_by_id(&user.username, &req.id).await.map_err(|_| Status::internal("db error"))?;
     if !ok { return Err(Status::not_found("token not found")); }
     Ok(Response::new(RevokeTokenRsp {}))
 }
