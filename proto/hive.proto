@@ -33,8 +33,54 @@ message ListWorkspaceRsp {
   repeated Workspace workspaces = 1;
 }
 
+// Authentication & Token management
+message LoginReq {
+  string username = 1;
+  string password = 2;
+}
+
+message LoginRsp {
+  string access_token = 1; // JWT
+  int64  expires_at   = 2; // unix seconds
+}
+
+message CreateTokenReq {
+  string name = 1;
+  optional int64 expires_at = 2; // unix seconds
+  repeated string scopes = 3;
+}
+
+message CreateTokenRsp {
+  string token = 1; // plain token, returned once
+  string id    = 2; // token record id
+}
+
+message ListTokensReq {}
+
+message TokenInfo {
+  string id = 1;
+  string name = 2;
+  int64 created_at = 3;
+  optional int64 expires_at = 4;
+  repeated string scopes = 5;
+  optional int64 last_used_at = 6;
+}
+
+message ListTokensRsp {
+  repeated TokenInfo tokens = 1;
+}
+
+message RevokeTokenReq { string id = 1; }
+message RevokeTokenRsp {}
+
 service HiveService {
   rpc Greeting(GreetingReq) returns (NilRsp);
   rpc CreateWorkspace(CreateWorkspaceReq) returns (NilRsp);
   rpc ListWorkspaces(ListWorkspaceReq) returns (ListWorkspaceRsp);
+
+  // Auth & Token management
+  rpc Login(LoginReq) returns (LoginRsp);
+  rpc CreateToken(CreateTokenReq) returns (CreateTokenRsp);
+  rpc ListTokens(ListTokensReq) returns (ListTokensRsp);
+  rpc RevokeToken(RevokeTokenReq) returns (RevokeTokenRsp);
 }
