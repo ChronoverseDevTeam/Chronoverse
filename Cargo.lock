@@ -684,6 +684,9 @@ dependencies = [
 name = "crv-core"
 version = "0.1.0"
 dependencies = [
+ "blake3",
+ "bson",
+ "chrono",
  "flate2",
  "serde",
  "serde_json",
