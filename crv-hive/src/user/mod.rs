@@ -3,8 +3,7 @@ use mongodb::bson::doc;
 
 use crate::database::get_mongo;
 
-pub mod entitiy;
-pub use entitiy::UserEntity;
+pub use crv_core::user::entity::UserEntity;
 
 const COLLECTION_NAME: &str = "users";
 

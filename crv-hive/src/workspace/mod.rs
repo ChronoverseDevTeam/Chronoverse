@@ -4,8 +4,7 @@ use mongodb::bson;
 
 use crate::database::get_mongo;
 
-pub mod entity;
-pub use entity::WorkspaceEntity;
+pub use crv_core::workspace::entity::WorkspaceEntity;
 
 const COLLECTION_NAME: &str = "workspaces";
 

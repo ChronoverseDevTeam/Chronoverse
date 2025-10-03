@@ -199,6 +199,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_register_user() -> Result<(), Box<dyn std::error::Error>> {
+        if std::env::var("GITHUB_ACTIONS").is_ok() || std::env::var("CI").is_ok() {
+            eprintln!("Skip test_register_user on GitHub Actions CI");
+            return Ok(());
+        }
         let endpoint = std::env::var("CRV_HIVE_ENDPOINT").unwrap_or_else(|_| "http://127.0.0.1:34560".to_string());
         let mut client = HiveClient::connect(endpoint).await?;
         let username = "Alice".to_string();
@@ -208,6 +212,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_login_and_create_workspace() -> Result<(), Box<dyn std::error::Error>> {
+        if std::env::var("GITHUB_ACTIONS").is_ok() || std::env::var("CI").is_ok() {
+            eprintln!("Skip test_login_and_create_workspace on GitHub Actions CI");
+            return Ok(());
+        }
         let endpoint = std::env::var("CRV_HIVE_ENDPOINT").unwrap_or_else(|_| "http://127.0.0.1:34560".to_string());
         let mut client = HiveClient::connect(endpoint).await?;
         let ts = chrono::Utc::now().timestamp_millis();
