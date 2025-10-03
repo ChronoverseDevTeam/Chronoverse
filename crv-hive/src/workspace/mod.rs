@@ -38,6 +38,31 @@ pub async fn list_workspaces() -> Result<Vec<WorkspaceEntity>, mongodb::error::E
     Ok(items)
 }
 
+pub async fn list_workspaces_filtered(
+    name: Option<&str>,
+    owner: Option<&str>,
+    device_finger_print: Option<&str>,
+) -> Result<Vec<WorkspaceEntity>, mongodb::error::Error> {
+    let coll = collection();
+    let mut filter = doc! {};
+    if let Some(n) = name.and_then(|s| if s.trim().is_empty() { None } else { Some(s) }) {
+        filter.insert("_id", n);
+    }
+    if let Some(o) = owner.and_then(|s| if s.trim().is_empty() { None } else { Some(s) }) {
+        filter.insert("owner", o);
+    }
+    if let Some(d) = device_finger_print.and_then(|s| if s.trim().is_empty() { None } else { Some(s) }) {
+        filter.insert("device_finger_print", d);
+    }
+
+    let mut cursor = coll.find(filter).await?;
+    let mut items = Vec::new();
+    while let Some(res) = cursor.next().await {
+        items.push(res?);
+    }
+    Ok(items)
+}
+
 pub async fn update_workspace_path(name: &str, new_path: &str) -> Result<bool, mongodb::error::Error> {
     let coll = collection();
     let filter = doc! {"_id": name};

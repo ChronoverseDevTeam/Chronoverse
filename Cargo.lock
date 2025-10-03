@@ -700,7 +700,9 @@ name = "crv-edge"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "chrono",
  "crv-core",
+ "dirs",
  "image",
  "prost",
  "prost-types",
@@ -708,6 +710,7 @@ dependencies = [
  "serde",
  "tao",
  "tokio",
+ "tokio-stream",
  "tonic",
  "tonic-prost",
  "tonic-prost-build",

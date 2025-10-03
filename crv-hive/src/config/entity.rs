@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ConfigEntity {
     pub mongo_url: String,
     pub mongo_database: String,
@@ -8,7 +9,8 @@ pub struct ConfigEntity {
     pub mongo_username: Option<String>,
     pub mongo_password: Option<String>,
 
-    pub hive_address: Option<String>
+    pub hive_address: Option<String>,
+    pub jwt_secret: String
 }
 
 impl Default for ConfigEntity {
@@ -20,7 +22,8 @@ impl Default for ConfigEntity {
             mongo_username: None,
             mongo_password: None,
 
-            hive_address: Some("0.0.0.0:34560".to_string())
+            hive_address: Some("0.0.0.0:34560".to_string()),
+            jwt_secret: "dev-secret".to_string()
         }
     }
 }

@@ -73,8 +73,9 @@ struct Claims {
 fn issue_jwt(username: &str, scopes: &[String], ttl_secs: i64) -> Result<(String, i64), jsonwebtoken::errors::Error> {
     let exp = chrono::Utc::now().timestamp() + ttl_secs;
     let claims = Claims { sub: username.to_string(), exp, scopes: scopes.to_vec() };
-    let key = std::env::var("JWT_SECRET").map_err(|_| jsonwebtoken::errors::ErrorKind::InvalidKeyFormat)?;
-    let token = jsonwebtoken::encode(&jsonwebtoken::Header::default(), &claims, &jsonwebtoken::EncodingKey::from_secret(key.as_bytes()))?;
+    // 优先从配置读取 jwt_secret；若为空则回退到环境变量，再回退默认值
+    let cfg_secret = crate::config::holder::get_or_init_config().jwt_secret.clone();
+    let token = jsonwebtoken::encode(&jsonwebtoken::Header::default(), &claims, &jsonwebtoken::EncodingKey::from_secret(cfg_secret.as_bytes()))?;
     Ok((token, exp))
 }
 

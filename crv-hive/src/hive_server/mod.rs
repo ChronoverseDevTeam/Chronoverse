@@ -1,6 +1,6 @@
 use tonic::{transport::Server, Request, Response, Status};
 pub mod auth;
-use crate::hive_server::auth::check_auth;
+use crate::hive_server::auth::enforce_jwt;
 use crate::pb::hive_service_server::{HiveService, HiveServiceServer};
 use crate::pb::{CreateWorkspaceReq, GreetingReq, ListWorkspaceReq, ListWorkspaceRsp, NilRsp, LoginReq, LoginRsp, RegisterReq, RegisterRsp, CreateTokenReq, CreateTokenRsp, ListTokensReq, ListTokensRsp, RevokeTokenReq, RevokeTokenRsp};
 use crate::hive_server::auth::{RenewToken, apply_renew_metadata};
@@ -15,7 +15,7 @@ impl HiveService for CrvHiveService {
         request: Request<GreetingReq>,
     ) -> Result<Response<NilRsp>, Status> {
         let renew = request.extensions().get::<RenewToken>().cloned();
-        let mut resp = crate::logic::create_workspace::greeting(request).await?;
+        let mut resp = Response::new(NilRsp {});
         apply_renew_metadata(renew, &mut resp);
         Ok(resp)
     }
@@ -24,8 +24,9 @@ impl HiveService for CrvHiveService {
         &self,
         request: Request<CreateWorkspaceReq>,
     ) -> Result<Response<NilRsp>, Status> {
+        let request = enforce_jwt(request)?;
         let renew = request.extensions().get::<RenewToken>().cloned();
-        let mut resp = Response::new(NilRsp {});
+        let mut resp = crate::logic::create_workspace::create_workspace(request).await?;
         apply_renew_metadata(renew, &mut resp);
         Ok(resp)
     }
@@ -34,6 +35,7 @@ impl HiveService for CrvHiveService {
         &self,
         request: Request<ListWorkspaceReq>,
     ) -> Result<Response<ListWorkspaceRsp>, Status> {
+        let request = enforce_jwt(request)?;
         let renew = request.extensions().get::<RenewToken>().cloned();
         let mut resp = crate::logic::list_workspaces::list_workspaces(request).await?;
         apply_renew_metadata(renew, &mut resp);
@@ -58,6 +60,7 @@ impl HiveService for CrvHiveService {
         &self,
         request: Request<CreateTokenReq>,
     ) -> Result<Response<CreateTokenRsp>, Status> {
+        let request = enforce_jwt(request)?;
         let renew = request.extensions().get::<RenewToken>().cloned();
         let mut resp = crate::logic::tokens::create_token(request).await?;
         apply_renew_metadata(renew, &mut resp);
@@ -68,6 +71,7 @@ impl HiveService for CrvHiveService {
         &self,
         request: Request<ListTokensReq>,
     ) -> Result<Response<ListTokensRsp>, Status> {
+        let request = enforce_jwt(request)?;
         let renew = request.extensions().get::<RenewToken>().cloned();
         let mut resp = crate::logic::tokens::list_tokens(request).await?;
         apply_renew_metadata(renew, &mut resp);
@@ -78,6 +82,7 @@ impl HiveService for CrvHiveService {
         &self,
         request: Request<RevokeTokenReq>,
     ) -> Result<Response<RevokeTokenRsp>, Status> {
+        let request = enforce_jwt(request)?;
         let renew = request.extensions().get::<RenewToken>().cloned();
         let mut resp = crate::logic::tokens::revoke_token(request).await?;
         apply_renew_metadata(renew, &mut resp);
@@ -96,7 +101,7 @@ where
     let service = CrvHiveService::default();
 
     Server::builder()
-        .add_service(HiveServiceServer::with_interceptor(service, check_auth))
+        .add_service(HiveServiceServer::new(service))
         .serve_with_shutdown(addr, shutdown)
         .await?;
 
@@ -108,7 +113,7 @@ pub async fn start_server(addr: std::net::SocketAddr) -> Result<(), Box<dyn std:
     let greeter = CrvHiveService::default();
 
     Server::builder()
-        .add_service(HiveServiceServer::with_interceptor(greeter, check_auth))
+        .add_service(HiveServiceServer::new(greeter))
         .serve(addr)
         .await?;
 

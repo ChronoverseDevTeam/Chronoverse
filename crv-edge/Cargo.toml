@@ -22,6 +22,13 @@ prost-types = "0.14.1"
 tonic = "0.14.2"
 tonic-prost = "0.14.2"
 
+# user directory helpers
+dirs = "5"
+
+[dev-dependencies]
+tokio-stream = "0.1"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+
 [target.'cfg(windows)'.dependencies]
 tray-icon = "0.14"
 tao = "0.32"

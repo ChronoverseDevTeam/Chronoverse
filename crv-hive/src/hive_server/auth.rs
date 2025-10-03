@@ -24,18 +24,9 @@ pub fn apply_renew_metadata<T>(renew: Option<RenewToken>, resp: &mut tonic::Resp
     }
 }
 
-// 服务器拦截器：仅校验 JWT；PAT 在各 RPC 内部异步校验
-pub fn check_auth(mut req: Request<()>) -> Result<Request<()>, Status> {
-    // 放行 Login 与 Register（无需已登录状态）
-    if let Some(m) = req.extensions().get::<tonic::GrpcMethod>() {
-        // service: hive_proto.HiveService, method: Login
-        let method = m.method();
-        if method == "Login" || method == "Register" {
-            return Ok(req);
-        }
-    }
-
-    let md = req.metadata();
+// 在需要鉴权的 RPC 方法内部调用该函数以强制校验 JWT
+pub fn enforce_jwt<T>(mut req: Request<T>) -> Result<Request<T>, Status> {
+    let md = req.metadata().clone();
 
     // 其余接口要求有效 JWT
     let hv = md.get("authorization").and_then(|v| v.to_str().ok())
@@ -52,7 +43,7 @@ pub fn check_auth(mut req: Request<()>) -> Result<Request<()>, Status> {
     // 剩余时间 ≤ 45 分钟则续签（新的有效期 2 小时）
     let now = chrono::Utc::now().timestamp();
     if exp - now <= 45 * 60 {
-        if let Some((tk, new_exp)) = issue_jwt_from_req(&req) {
+        if let Some((tk, new_exp)) = issue_jwt_from_req_meta(&req.extensions()) {
             req.extensions_mut().insert(RenewToken { token: tk, expires_at: new_exp });
         }
     }
@@ -64,15 +55,15 @@ fn verify_jwt_and_extract(token: &str) -> Result<(String, Vec<String>, i64), ()>
     #[derive(serde::Deserialize)]
     struct Claims { sub: String, exp: i64, scopes: Option<Vec<String>> }
     use jsonwebtoken::{DecodingKey, Validation, decode, Algorithm};
-    let key = std::env::var("JWT_SECRET").map_err(|_| ())?;
+    let key = crate::config::holder::get_or_init_config().jwt_secret.clone();
     let data = decode::<Claims>(token, &DecodingKey::from_secret(key.as_bytes()), &Validation::new(Algorithm::HS256)).map_err(|_| ())?;
     let now = chrono::Utc::now().timestamp();
     if data.claims.exp <= now { return Err(()); }
     Ok((data.claims.sub, data.claims.scopes.unwrap_or_default(), data.claims.exp))
 }
 
-fn issue_jwt_from_req(req: &Request<()>) -> Option<(String, i64)> {
-    let ctx = req.extensions().get::<UserContext>()?;
+fn issue_jwt_from_req_meta(ext: &tonic::Extensions) -> Option<(String, i64)> {
+    let ctx = ext.get::<UserContext>()?;
     issue_jwt(&ctx.username, &ctx.scopes, 2 * 60 * 60).ok()
 }
 
@@ -81,7 +72,7 @@ fn issue_jwt(username: &str, scopes: &[String], ttl_secs: i64) -> Result<(String
     struct Claims { sub: String, exp: i64, scopes: Vec<String> }
     let exp = chrono::Utc::now().timestamp() + ttl_secs;
     let claims = Claims { sub: username.to_string(), exp, scopes: scopes.to_vec() };
-    let key = std::env::var("JWT_SECRET").map_err(|_| ())?;
+    let key = crate::config::holder::get_or_init_config().jwt_secret.clone();
     let token = jsonwebtoken::encode(&jsonwebtoken::Header::default(), &claims, &jsonwebtoken::EncodingKey::from_secret(key.as_bytes())).map_err(|_| ())?;
     Ok((token, exp))
 }
