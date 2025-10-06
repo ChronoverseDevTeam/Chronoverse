@@ -123,18 +123,19 @@ mod tests {
     #[tokio::test]
     async fn test_edge_daemon_integration() -> Result<(), Box<dyn std::error::Error>> {
         //只运行一次初始化
-        // INIT.call_once(|| {
-        //     println!("开始边缘节点集成测试");
-        // });
+        INIT.call_once(|| {
+            println!("开始边缘节点集成测试");
+        });
 
-        // // 启动边缘节点
-        // let edge_process = start_edge_daemon()?;
+        // 启动边缘节点
+        let edge_process = start_edge_daemon()?;
         
-        // // 确保在测试结束时停止进程
-        // let _guard = EdgeDaemonGuard { process: Some(edge_process) };
+        // 确保在测试结束时停止进程
+        let _guard = EdgeDaemonGuard { process: Some(edge_process) };
 
-        // // 等待服务器完全启动
-        // thread::sleep(Duration::from_secs(2));
+        // 等待服务器完全启动
+        thread::sleep(Duration::from_secs(2));
+
 
         // 创建客户端
         let server_addr = "http://127.0.0.1:34562";
