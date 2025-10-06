@@ -12,6 +12,48 @@ message BonjourRsp {
   string architecture = 5;
 }
 
+message GetLatestReq {
+}
+
+message GetLatestRsp {
+  bool success = 1;
+  string message = 2;
+  repeated string file_paths = 3;
+}
+
+message CheckoutReq {
+  string relative_path = 1;
+}
+
+message CheckoutRsp {
+  bool success = 1;
+  string message = 2;
+  string file_path = 3;
+}
+
+message SummitReq {
+  string relative_path = 1;
+}
+
+message SummitRsp {
+  bool success = 1;
+  string message = 2;
+  string file_path = 3;
+}
+
+message CreateWorkspaceReq {
+}
+
+message CreateWorkspaceRsp {
+  bool success = 1;
+  string message = 2;
+  string workspace_path = 3;
+}
+
 service EdgeDaemonService {
   rpc Bonjour(BonjourReq) returns (BonjourRsp);
+  rpc GetLatest(GetLatestReq) returns (GetLatestRsp);
+  rpc Checkout(CheckoutReq) returns (CheckoutRsp);
+  rpc Summit(SummitReq) returns (SummitRsp);
+  rpc CreateWorkspace(CreateWorkspaceReq) returns (CreateWorkspaceRsp);
 }

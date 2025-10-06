@@ -25,6 +25,10 @@ tonic-prost = "0.14.2"
 # user directory helpers
 dirs = "5"
 
+# Hash and compression dependencies
+twox-hash = "1.6"
+flate2 = "1.0"
+
 [dev-dependencies]
 tokio-stream = "0.1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }

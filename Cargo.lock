@@ -703,6 +703,7 @@ dependencies = [
  "chrono",
  "crv-core",
  "dirs",
+ "flate2",
  "image",
  "prost",
  "prost-types",
@@ -715,6 +716,7 @@ dependencies = [
  "tonic-prost",
  "tonic-prost-build",
  "tray-icon",
+ "twox-hash",
  "winreg 0.52.0",
 ]
 
