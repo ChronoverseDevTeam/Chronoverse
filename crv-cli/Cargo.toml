@@ -5,6 +5,10 @@ version.workspace = true
 authors.workspace = true
 edition.workspace = true
 
+[[bin]]
+name = "crv"
+path = "src/main.rs"
+
 [dependencies]
 crv-core = { path = "../crv-core" }
 
