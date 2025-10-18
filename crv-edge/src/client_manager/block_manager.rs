@@ -1,6 +1,6 @@
-use std::io;
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
-use std::fs;
+use std::fs::{self, File};
 use std::collections::HashMap;
 use twox_hash::xxh3::hash64;
 
@@ -19,7 +19,6 @@ impl BlockManager {
     }
 
     pub fn get_block_metadata_by_hash(&mut self, hash: u64) -> io::Result<&BlockMetadata> {
-        
         if self.cache.contains_key(&hash) { 
             return Ok(&self.cache[&hash]);
         }
@@ -33,7 +32,11 @@ impl BlockManager {
             Err(_) => {
                 let depot_block_path = self.depot_store_path.join(BlockMetadata::get_local_path(hash));
                 if depot_block_path.exists() {
-                    fs::write(&block_path, fs::read(&depot_block_path)?)?;
+                    // 使用流式复制替代全量读写
+                    let mut source = File::open(&depot_block_path)?;
+                    let mut dest = File::create(&block_path)?;
+                    io::copy(&mut source, &mut dest)?;
+                    
                     let metadata = BlockMetadata::read_from_path(&block_path)?;
                     self.cache.insert(hash, metadata);
                     Ok(&self.cache[&hash])
@@ -44,21 +47,29 @@ impl BlockManager {
         }
     }
 
-    fn get_block_content_by_hash(&mut self, hash: u64) -> io::Result<Vec<u8>> {
+    /// 流式读取单个块的内容
+    fn get_block_content_by_hash(&mut self, hash: u64) -> io::Result<File> {
         if let Err(_) = self.get_block_metadata_by_hash(hash) {
             return Err(io::Error::new(io::ErrorKind::NotFound, "block not found"));
         }
         let block_path = self.store_path.join(BlockMetadata::get_local_path(hash));
-        fs::read(&block_path)
+        File::open(&block_path)
     }
 
-    pub fn get_block_content_by_hashs(&mut self, hashs: Vec<u64>) -> io::Result<Vec<u8>> {
-        let mut res = Vec::<u8>::new();
-        for hash in hashs {
-            let data = self.get_block_content_by_hash(hash)?;
-            res.extend_from_slice(&data);
+    /// 流式读取多个块的内容
+    /// 返回一个实现了 Read trait 的 BlockReader，可以按需读取数据
+    pub fn get_block_content_by_hashs(&mut self, hashs: Vec<u64>) -> io::Result<BlockReader> {
+        // 预先验证所有块是否存在
+        for &hash in &hashs {
+            self.get_block_metadata_by_hash(hash)?;
         }
-        Ok(res)
+        
+        Ok(BlockReader {
+            block_manager: self,
+            hashs,
+            current_block: None,
+            current_hash_index: 0,
+        })
     }
 
     pub fn create_single_block(&mut self, data: &[u8]) -> io::Result<u64> {
@@ -83,15 +94,53 @@ impl BlockManager {
     }
 
     pub fn create_blocks_at_path(&mut self, path: &Path) -> io::Result<Vec<u64>> {
-        let data = fs::read(path)?;
-        let mut offset = 0;
-        let mut hashs = Vec::<u64>::new();
-        while offset < data.len() {
-            let end = std::cmp::min(offset + BLOCK_SIZE, data.len());
-            let block_data = &data[offset..end];
-            hashs.push(self.create_single_block(block_data)?);
-            offset += BLOCK_SIZE;
+        let mut file = File::open(path)?;
+        let mut buffer = vec![0; BLOCK_SIZE];
+        let mut hashs = Vec::new();
+
+        loop {
+            let bytes_read = file.read(&mut buffer)?;
+            if bytes_read == 0 {
+                break;
+            }
+            hashs.push(self.create_single_block(&buffer[..bytes_read])?);
         }
         Ok(hashs)
+    }
+}
+
+/// 用于流式读取多个块内容的读取器
+pub struct BlockReader<'a> {
+    block_manager: &'a mut BlockManager,
+    hashs: Vec<u64>,
+    current_block: Option<File>,
+    current_hash_index: usize,
+}
+
+impl<'a> Read for BlockReader<'a> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        // 如果当前没有打开的块，或者当前块已读完，尝试打开下一个块
+        if self.current_block.is_none() {
+            if self.current_hash_index >= self.hashs.len() {
+                return Ok(0); // 所有块都读完了
+            }
+            let hash = self.hashs[self.current_hash_index];
+            self.current_block = Some(self.block_manager.get_block_content_by_hash(hash)?);
+            self.current_hash_index += 1;
+        }
+
+        // 从当前块读取数据
+        if let Some(ref mut block) = self.current_block {
+            let bytes_read = block.read(buf)?;
+            if bytes_read == 0 {
+                // 当前块读完了，清除它，下次会读取下一个块
+                self.current_block = None;
+                // 递归调用以读取下一个块
+                return self.read(buf);
+            }
+            Ok(bytes_read)
+        } else {
+            Ok(0)
+        }
     }
 }

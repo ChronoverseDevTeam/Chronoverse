@@ -1,6 +1,32 @@
 use tonic::transport::Channel;
 use crate::pb::edge_daemon_service_client::EdgeDaemonServiceClient;
-use crate::pb::{BonjourReq, BonjourRsp, GetLatestReq, GetLatestRsp, CheckoutReq, CheckoutRsp, SummitReq, SummitRsp, CreateWorkspaceReq, CreateWorkspaceRsp};
+use crate::pb::{
+    // Basic operations
+    BonjourReq, BonjourRsp,
+    // Workspace management
+    CreateWorkspaceReq, CreateWorkspaceRsp, DeleteWorkspaceReq, DeleteWorkspaceRsp,
+    ListWorkspacesReq, ListWorkspacesRsp, DescribeWorkspaceReq, DescribeWorkspaceRsp,
+    CurrentWorkspaceReq, CurrentWorkspaceRsp,
+    // File operations
+    AddReq, AddRsp, SyncReq, SyncRsp, LockReq, LockRsp, UnlockReq, UnlockRsp,
+    RevertReq, RevertRsp, SubmitReq, SubmitRsp,
+    // Changelist management
+    CreateChangelistReq, CreateChangelistRsp, DeleteChangelistReq, DeleteChangelistRsp,
+    ListChangelistsReq, ListChangelistsRsp, DescribeChangelistReq, DescribeChangelistRsp,
+    // Snapshot management
+    CreateSnapshotReq, CreateSnapshotRsp, DeleteSnapshotReq, DeleteSnapshotRsp,
+    ListSnapshotsReq, ListSnapshotsRsp, DescribeSnapshotReq, DescribeSnapshotRsp,
+    RestoreSnapshotReq, RestoreSnapshotRsp,
+    // Merge and resolve
+    MergeReq, MergeRsp, ResolveReq, ResolveRsp,
+    // Describe files
+    DescribeReq, DescribeRsp,
+    // Branch management
+    CreateBranchReq, CreateBranchRsp, DeleteBranchReq, DeleteBranchRsp,
+    ListBranchesReq, ListBranchesRsp, SwitchBranchReq, SwitchBranchRsp,
+    // Legacy operations
+    GetLatestReq, GetLatestRsp, CheckoutReq, CheckoutRsp, SummitReq, SummitRsp,
+};
 
 /// gRPC 客户端结构体
 pub struct CrvClient {
@@ -70,6 +96,221 @@ impl CrvClient {
         let response: tonic::Response<CreateWorkspaceRsp> = self.client.create_workspace(request).await?;
         
         println!("CreateWorkspace 响应: {:?}", response);
+        Ok(response.into_inner())
+    }
+
+    // Workspace management
+    /// 删除工作空间
+    pub async fn delete_workspace(&mut self, workspace_name: String) -> Result<DeleteWorkspaceRsp, Box<dyn std::error::Error>> {
+        let request = tonic::Request::new(DeleteWorkspaceReq { workspace_name });
+        let response: tonic::Response<DeleteWorkspaceRsp> = self.client.delete_workspace(request).await?;
+        println!("DeleteWorkspace 响应: {:?}", response);
+        Ok(response.into_inner())
+    }
+
+    /// 列出所有工作空间
+    pub async fn list_workspaces(&mut self) -> Result<ListWorkspacesRsp, Box<dyn std::error::Error>> {
+        let request = tonic::Request::new(ListWorkspacesReq {});
+        let response: tonic::Response<ListWorkspacesRsp> = self.client.list_workspaces(request).await?;
+        println!("ListWorkspaces 响应: {:?}", response);
+        Ok(response.into_inner())
+    }
+
+    /// 描述工作空间
+    pub async fn describe_workspace(&mut self, workspace_name: String) -> Result<DescribeWorkspaceRsp, Box<dyn std::error::Error>> {
+        let request = tonic::Request::new(DescribeWorkspaceReq { workspace_name });
+        let response: tonic::Response<DescribeWorkspaceRsp> = self.client.describe_workspace(request).await?;
+        println!("DescribeWorkspace 响应: {:?}", response);
+        Ok(response.into_inner())
+    }
+
+    /// 获取当前工作空间
+    pub async fn current_workspace(&mut self) -> Result<CurrentWorkspaceRsp, Box<dyn std::error::Error>> {
+        let request = tonic::Request::new(CurrentWorkspaceReq {});
+        let response: tonic::Response<CurrentWorkspaceRsp> = self.client.current_workspace(request).await?;
+        println!("CurrentWorkspace 响应: {:?}", response);
+        Ok(response.into_inner())
+    }
+
+    // File operations
+    /// 添加文件到版本控制
+    pub async fn add(&mut self, paths: Vec<String>) -> Result<AddRsp, Box<dyn std::error::Error>> {
+        let request = tonic::Request::new(AddReq { paths });
+        let response: tonic::Response<AddRsp> = self.client.add(request).await?;
+        println!("Add 响应: {:?}", response);
+        Ok(response.into_inner())
+    }
+
+    /// 同步文件
+    pub async fn sync(&mut self, depot_paths: Vec<String>, force: bool) -> Result<SyncRsp, Box<dyn std::error::Error>> {
+        let request = tonic::Request::new(SyncReq { depot_paths, force });
+        let response: tonic::Response<SyncRsp> = self.client.sync(request).await?;
+        println!("Sync 响应: {:?}", response);
+        Ok(response.into_inner())
+    }
+
+    /// 锁定文件
+    pub async fn lock(&mut self, paths: Vec<String>) -> Result<LockRsp, Box<dyn std::error::Error>> {
+        let request = tonic::Request::new(LockReq { paths });
+        let response: tonic::Response<LockRsp> = self.client.lock(request).await?;
+        println!("Lock 响应: {:?}", response);
+        Ok(response.into_inner())
+    }
+
+    /// 解锁文件
+    pub async fn unlock(&mut self, paths: Vec<String>) -> Result<UnlockRsp, Box<dyn std::error::Error>> {
+        let request = tonic::Request::new(UnlockReq { paths });
+        let response: tonic::Response<UnlockRsp> = self.client.unlock(request).await?;
+        println!("Unlock 响应: {:?}", response);
+        Ok(response.into_inner())
+    }
+
+    /// 恢复文件
+    pub async fn revert(&mut self, paths: Vec<String>) -> Result<RevertRsp, Box<dyn std::error::Error>> {
+        let request = tonic::Request::new(RevertReq { paths });
+        let response: tonic::Response<RevertRsp> = self.client.revert(request).await?;
+        println!("Revert 响应: {:?}", response);
+        Ok(response.into_inner())
+    }
+
+    /// 提交文件
+    pub async fn submit(&mut self, changelist_id: i32, description: String) -> Result<SubmitRsp, Box<dyn std::error::Error>> {
+        let request = tonic::Request::new(SubmitReq { changelist_id, description });
+        let response: tonic::Response<SubmitRsp> = self.client.submit(request).await?;
+        println!("Submit 响应: {:?}", response);
+        Ok(response.into_inner())
+    }
+
+    // Changelist management
+    /// 创建变更列表
+    pub async fn create_changelist(&mut self, description: String) -> Result<CreateChangelistRsp, Box<dyn std::error::Error>> {
+        let request = tonic::Request::new(CreateChangelistReq { description });
+        let response: tonic::Response<CreateChangelistRsp> = self.client.create_changelist(request).await?;
+        println!("CreateChangelist 响应: {:?}", response);
+        Ok(response.into_inner())
+    }
+
+    /// 删除变更列表
+    pub async fn delete_changelist(&mut self, changelist_id: i32) -> Result<DeleteChangelistRsp, Box<dyn std::error::Error>> {
+        let request = tonic::Request::new(DeleteChangelistReq { changelist_id });
+        let response: tonic::Response<DeleteChangelistRsp> = self.client.delete_changelist(request).await?;
+        println!("DeleteChangelist 响应: {:?}", response);
+        Ok(response.into_inner())
+    }
+
+    /// 列出所有变更列表
+    pub async fn list_changelists(&mut self) -> Result<ListChangelistsRsp, Box<dyn std::error::Error>> {
+        let request = tonic::Request::new(ListChangelistsReq {});
+        let response: tonic::Response<ListChangelistsRsp> = self.client.list_changelists(request).await?;
+        println!("ListChangelists 响应: {:?}", response);
+        Ok(response.into_inner())
+    }
+
+    /// 描述变更列表
+    pub async fn describe_changelist(&mut self, changelist_id: i32, list_files: bool) -> Result<DescribeChangelistRsp, Box<dyn std::error::Error>> {
+        let request = tonic::Request::new(DescribeChangelistReq { changelist_id, list_files });
+        let response: tonic::Response<DescribeChangelistRsp> = self.client.describe_changelist(request).await?;
+        println!("DescribeChangelist 响应: {:?}", response);
+        Ok(response.into_inner())
+    }
+
+    // Snapshot management
+    /// 创建快照
+    pub async fn create_snapshot(&mut self, changelist_id: i32, description: String) -> Result<CreateSnapshotRsp, Box<dyn std::error::Error>> {
+        let request = tonic::Request::new(CreateSnapshotReq { changelist_id, description });
+        let response: tonic::Response<CreateSnapshotRsp> = self.client.create_snapshot(request).await?;
+        println!("CreateSnapshot 响应: {:?}", response);
+        Ok(response.into_inner())
+    }
+
+    /// 删除快照
+    pub async fn delete_snapshot(&mut self, snapshot_id: String) -> Result<DeleteSnapshotRsp, Box<dyn std::error::Error>> {
+        let request = tonic::Request::new(DeleteSnapshotReq { snapshot_id });
+        let response: tonic::Response<DeleteSnapshotRsp> = self.client.delete_snapshot(request).await?;
+        println!("DeleteSnapshot 响应: {:?}", response);
+        Ok(response.into_inner())
+    }
+
+    /// 列出所有快照
+    pub async fn list_snapshots(&mut self) -> Result<ListSnapshotsRsp, Box<dyn std::error::Error>> {
+        let request = tonic::Request::new(ListSnapshotsReq {});
+        let response: tonic::Response<ListSnapshotsRsp> = self.client.list_snapshots(request).await?;
+        println!("ListSnapshots 响应: {:?}", response);
+        Ok(response.into_inner())
+    }
+
+    /// 描述快照
+    pub async fn describe_snapshot(&mut self, snapshot_id: String) -> Result<DescribeSnapshotRsp, Box<dyn std::error::Error>> {
+        let request = tonic::Request::new(DescribeSnapshotReq { snapshot_id });
+        let response: tonic::Response<DescribeSnapshotRsp> = self.client.describe_snapshot(request).await?;
+        println!("DescribeSnapshot 响应: {:?}", response);
+        Ok(response.into_inner())
+    }
+
+    /// 恢复快照
+    pub async fn restore_snapshot(&mut self, snapshot_id: String) -> Result<RestoreSnapshotRsp, Box<dyn std::error::Error>> {
+        let request = tonic::Request::new(RestoreSnapshotReq { snapshot_id });
+        let response: tonic::Response<RestoreSnapshotRsp> = self.client.restore_snapshot(request).await?;
+        println!("RestoreSnapshot 响应: {:?}", response);
+        Ok(response.into_inner())
+    }
+
+    // Merge and resolve
+    /// 合并分支
+    pub async fn merge(&mut self, branch_name: String, depot_paths: Vec<String>) -> Result<MergeRsp, Box<dyn std::error::Error>> {
+        let request = tonic::Request::new(MergeReq { branch_name, depot_paths });
+        let response: tonic::Response<MergeRsp> = self.client.merge(request).await?;
+        println!("Merge 响应: {:?}", response);
+        Ok(response.into_inner())
+    }
+
+    /// 解决冲突
+    pub async fn resolve(&mut self, paths: Vec<String>) -> Result<ResolveRsp, Box<dyn std::error::Error>> {
+        let request = tonic::Request::new(ResolveReq { paths });
+        let response: tonic::Response<ResolveRsp> = self.client.resolve(request).await?;
+        println!("Resolve 响应: {:?}", response);
+        Ok(response.into_inner())
+    }
+
+    // Describe files
+    /// 描述文件状态
+    pub async fn describe(&mut self, paths: Vec<String>) -> Result<DescribeRsp, Box<dyn std::error::Error>> {
+        let request = tonic::Request::new(DescribeReq { paths });
+        let response: tonic::Response<DescribeRsp> = self.client.describe(request).await?;
+        println!("Describe 响应: {:?}", response);
+        Ok(response.into_inner())
+    }
+
+    // Branch management
+    /// 创建分支
+    pub async fn create_branch(&mut self, branch_name: String, base_branch: String) -> Result<CreateBranchRsp, Box<dyn std::error::Error>> {
+        let request = tonic::Request::new(CreateBranchReq { branch_name, base_branch });
+        let response: tonic::Response<CreateBranchRsp> = self.client.create_branch(request).await?;
+        println!("CreateBranch 响应: {:?}", response);
+        Ok(response.into_inner())
+    }
+
+    /// 删除分支
+    pub async fn delete_branch(&mut self, branch_name: String) -> Result<DeleteBranchRsp, Box<dyn std::error::Error>> {
+        let request = tonic::Request::new(DeleteBranchReq { branch_name });
+        let response: tonic::Response<DeleteBranchRsp> = self.client.delete_branch(request).await?;
+        println!("DeleteBranch 响应: {:?}", response);
+        Ok(response.into_inner())
+    }
+
+    /// 列出所有分支
+    pub async fn list_branches(&mut self) -> Result<ListBranchesRsp, Box<dyn std::error::Error>> {
+        let request = tonic::Request::new(ListBranchesReq {});
+        let response: tonic::Response<ListBranchesRsp> = self.client.list_branches(request).await?;
+        println!("ListBranches 响应: {:?}", response);
+        Ok(response.into_inner())
+    }
+
+    /// 切换分支
+    pub async fn switch_branch(&mut self, branch_name: String) -> Result<SwitchBranchRsp, Box<dyn std::error::Error>> {
+        let request = tonic::Request::new(SwitchBranchReq { branch_name });
+        let response: tonic::Response<SwitchBranchRsp> = self.client.switch_branch(request).await?;
+        println!("SwitchBranch 响应: {:?}", response);
         Ok(response.into_inner())
     }
 }

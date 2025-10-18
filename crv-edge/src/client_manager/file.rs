@@ -33,7 +33,7 @@ impl FileMetadata {
         self.revisions.retain(|rev| rev.changelist_id != changelist_id);
     }
 
-    pub fn switch_revision(&mut self, revision_index: u32, block_manager: &mut BlockManager){
+    pub fn switch_revision(&mut self, revision_index: u32, block_manager: &mut BlockManager) {
         if revision_index >= self.revisions.len() as u32 {
             return;
         }
@@ -43,7 +43,16 @@ impl FileMetadata {
         }
 
         self.current_revision = revision_index;
-        let data = block_manager.get_block_content_by_hashs(self.revisions[revision_index as usize].block_hashes.clone());
-        std::fs::write(&self.path, data.unwrap()).expect("写入文件失败");
+        
+        // 获取流式读取器
+        let mut reader = block_manager.get_block_content_by_hashs(
+            self.revisions[revision_index as usize].block_hashes.clone()
+        ).expect("获取块内容失败");
+
+        // 创建或打开目标文件
+        let mut file = std::fs::File::create(&self.path).expect("创建文件失败");
+        
+        // 流式复制数据
+        std::io::copy(&mut reader, &mut file).expect("写入文件失败");
     }
 }
