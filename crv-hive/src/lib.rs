@@ -8,3 +8,4 @@ pub mod database;
 pub mod config;
 pub mod logic;
 pub mod middleware;
+pub mod test;
