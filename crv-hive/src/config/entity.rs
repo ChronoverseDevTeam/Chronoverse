@@ -10,7 +10,7 @@ pub struct ConfigEntity {
     pub mongo_password: Option<String>,
 
     pub hive_address: Option<String>,
-    pub jwt_secret: String
+    pub jwt_secret: String,
 }
 
 impl Default for ConfigEntity {
@@ -23,7 +23,7 @@ impl Default for ConfigEntity {
             mongo_password: None,
 
             hive_address: Some("0.0.0.0:34560".to_string()),
-            jwt_secret: "dev-secret".to_string()
+            jwt_secret: "dev-secret".to_string(),
         }
     }
 }

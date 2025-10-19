@@ -725,7 +725,6 @@ name = "crv-hive"
 version = "0.1.0"
 dependencies = [
  "argon2",
- "base64 0.22.1",
  "bson",
  "chrono",
  "crv-core",
@@ -737,13 +736,11 @@ dependencies = [
  "protoc-bin-vendored",
  "rand 0.8.5",
  "serde",
- "sha2",
  "tokio",
  "toml",
  "tonic",
  "tonic-prost",
  "tonic-prost-build",
- "uuid",
 ]
 
 [[package]]

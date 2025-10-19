@@ -1,9 +1,7 @@
 use tonic::{transport::Server, Request, Response, Status};
-pub mod auth;
-use crate::hive_server::auth::enforce_jwt;
 use crate::pb::hive_service_server::{HiveService, HiveServiceServer};
 use crate::pb::{CreateWorkspaceReq, GreetingReq, ListWorkspaceReq, ListWorkspaceRsp, NilRsp, LoginReq, LoginRsp, RegisterReq, RegisterRsp, CreateTokenReq, CreateTokenRsp, ListTokensReq, ListTokensRsp, RevokeTokenReq, RevokeTokenRsp};
-use crate::hive_server::auth::{RenewToken, apply_renew_metadata};
+use crate::middleware::{RenewToken, apply_renew_metadata, enforce_jwt};
 
 #[derive(Default)]
 pub struct CrvHiveService;
@@ -60,33 +58,21 @@ impl HiveService for CrvHiveService {
         &self,
         request: Request<CreateTokenReq>,
     ) -> Result<Response<CreateTokenRsp>, Status> {
-        let request = enforce_jwt(request)?;
-        let renew = request.extensions().get::<RenewToken>().cloned();
-        let mut resp = crate::logic::tokens::create_token(request).await?;
-        apply_renew_metadata(renew, &mut resp);
-        Ok(resp)
+        Err(Status::unimplemented("token APIs are disabled"))
     }
 
     async fn list_tokens(
         &self,
         request: Request<ListTokensReq>,
     ) -> Result<Response<ListTokensRsp>, Status> {
-        let request = enforce_jwt(request)?;
-        let renew = request.extensions().get::<RenewToken>().cloned();
-        let mut resp = crate::logic::tokens::list_tokens(request).await?;
-        apply_renew_metadata(renew, &mut resp);
-        Ok(resp)
+        Err(Status::unimplemented("token APIs are disabled"))
     }
 
     async fn revoke_token(
         &self,
         request: Request<RevokeTokenReq>,
     ) -> Result<Response<RevokeTokenRsp>, Status> {
-        let request = enforce_jwt(request)?;
-        let renew = request.extensions().get::<RenewToken>().cloned();
-        let mut resp = crate::logic::tokens::revoke_token(request).await?;
-        apply_renew_metadata(renew, &mut resp);
-        Ok(resp)
+        Err(Status::unimplemented("token APIs are disabled"))
     }
 }
 

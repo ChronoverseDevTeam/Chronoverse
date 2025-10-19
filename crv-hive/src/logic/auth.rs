@@ -7,7 +7,7 @@ pub async fn login(
 ) -> Result<Response<LoginRsp>, Status> {
     let req = request.into_inner();
 
-    let user = crate::user::get_user_by_name(&req.username)
+    let user = crate::database::user::get_user_by_name(&req.username)
         .await
         .map_err(|_| Status::internal("db error"))?
         .ok_or_else(|| Status::unauthenticated("invalid username or password"))?;
@@ -29,20 +29,20 @@ pub async fn register(
     if req.username.trim().is_empty() || req.password.is_empty() {
         return Err(Status::invalid_argument("username and password required"));
     }
-    if crate::user::get_user_by_name(&req.username).await.map_err(|_| Status::internal("db error"))?.is_some() {
+    if crate::database::user::get_user_by_name(&req.username).await.map_err(|_| Status::internal("db error"))?.is_some() {
         return Err(Status::already_exists("username exists"));
     }
 
     let password = hash_password(&req.password).map_err(|_| Status::internal("hash password failed"))?;
     let now = chrono::Utc::now();
-    let user = crate::user::UserEntity {
+    let user = crate::database::user::UserEntity {
         name: req.username,
         email: req.email,
         password,
         created_at: now,
         updated_at: now,
     };
-    crate::user::create_user(user).await.map_err(|_| Status::internal("db error"))?;
+    crate::database::user::create_user(user).await.map_err(|_| Status::internal("db error"))?;
     Ok(Response::new(RegisterRsp {}))
 }
 

@@ -15,7 +15,7 @@ pub async fn list_workspaces(
         return Err(Status::invalid_argument("at least one filter required"));
     }
 
-    let items = crate::workspace::list_workspaces_filtered(
+    let items = crate::database::workspace::list_workspaces_filtered(
             req.name.as_deref(),
             req.owner.as_deref(),
             req.device_finger_print.as_deref(),

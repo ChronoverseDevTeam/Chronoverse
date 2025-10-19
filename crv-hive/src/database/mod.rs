@@ -1,4 +1,6 @@
 pub mod mongo;
+pub mod user;
+pub mod workspace;
 
 pub use mongo::{
     get_mongo,

@@ -1,7 +1,7 @@
 use tonic::{Request, Response, Status};
 
 use crate::{
-    hive_server::auth::{apply_renew_metadata, RenewToken, UserContext},
+    middleware::{apply_renew_metadata, RenewToken, UserContext},
     pb::{CreateWorkspaceReq, NilRsp},
 };
 
@@ -29,7 +29,7 @@ pub async fn create_workspace(
     }
 
     let now = chrono::Utc::now();
-    let entity = crate::workspace::WorkspaceEntity {
+    let entity = crate::database::workspace::WorkspaceEntity {
         name: req.name,
         created_at: now,
         updated_at: now,
@@ -40,7 +40,7 @@ pub async fn create_workspace(
 
     // 原子插入：依赖 MongoDB 唯一键（_id）冲突返回重复错误
     use mongodb::error::ErrorKind;
-    if let Err(e) = crate::workspace::create_workspace(entity).await {
+    if let Err(e) = crate::database::workspace::create_workspace(entity).await {
         // E11000 duplicate key error
         let is_dup = match e.kind.as_ref() {
             ErrorKind::Write(wf) => match wf {
