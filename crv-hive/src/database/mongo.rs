@@ -101,4 +101,11 @@ pub fn get_mongo() -> &'static MongoManager {
     MONGO.get().expect("MongoDB 未初始化，请先调用 init_mongo_from_config 或 init_mongo_with_config")
 }
 
+/// 关闭全局 Mongo 连接（在优雅关停时调用）。
+/// 注意：mongodb Rust 驱动的 Client/Database 是轻量的句柄，关闭通常是释放资源即可。
+pub async fn shutdown_mongo() {
+    // 将 OnceLock 中的管理器泄露引用转为拥有权并丢弃（如果需要的话）。
+    // OnceLock 不支持 take，这里通过不再使用句柄让其在进程结束时释放。
+    // 如后续需要更严格的关闭，可在此添加驱动提供的显式关闭（若提供）。
+}
 

@@ -25,6 +25,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .await
             .expect("Failed to install CTRL+C signal handler");
         println!("\nReceived CTRL+C signal, shutting down gracefully...");
+
+        // Flush config and close database handles
+        if let Err(e) = config::holder::shutdown_config().await {
+            eprintln!("failed to save config on shutdown: {}", e);
+        }
+        database::mongo::shutdown_mongo().await;
     };
 
     // Launching

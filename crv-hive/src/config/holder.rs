@@ -64,3 +64,10 @@ pub async fn save_config() -> Result<(), Box<dyn std::error::Error>> {
         Ok(())
     }
 }
+
+/// 优雅关闭时调用的配置持久化钩子（如果需要将内存更改落盘）。
+pub async fn shutdown_config() -> Result<(), Box<dyn std::error::Error>> {
+    // 当前仅将内存中的 CONFIG 再次保存一次，确保外部可能的变更写回。
+    // 若无变更也不会有副作用。
+    save_config().await
+}
