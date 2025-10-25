@@ -1,15 +1,13 @@
 use tonic::{Request, Response, Status};
 
 use crate::{
-    middleware::{apply_renew_metadata, RenewToken, UserContext},
-    pb::{CreateWorkspaceReq, NilRsp},
+    middleware::UserContext,
+    pb::{UpsertWorkspaceReq, NilRsp},
 };
 
-pub async fn create_workspace(
-    request: Request<CreateWorkspaceReq>,
+pub async fn upsert_workspace(
+    request: Request<UpsertWorkspaceReq>,
 ) -> Result<Response<NilRsp>, Status> {
-    let renew = request.extensions().get::<RenewToken>().cloned();
-
     let user = request
         .extensions()
         .get::<UserContext>()
@@ -38,30 +36,11 @@ pub async fn create_workspace(
         device_finger_print: req.device_finger_print,
     };
 
-    // 原子插入：依赖 MongoDB 唯一键（_id）冲突返回重复错误
-    use mongodb::error::ErrorKind;
-    if let Err(e) = crate::database::workspace::create_workspace(entity).await {
-        // E11000 duplicate key error
-        let is_dup = match e.kind.as_ref() {
-            ErrorKind::Write(wf) => match wf {
-                mongodb::error::WriteFailure::WriteError(we) => we.code == 11000,
-                mongodb::error::WriteFailure::WriteConcernError(_) => false,
-                _ => false,
-            },
-            ErrorKind::BulkWrite(bwe) => bwe
-                .write_errors
-                .iter()
-                .any(|(_, we)| we.code == 11000),
-            ErrorKind::Command(ce) => ce.code == 11000 || ce.code_name == "DuplicateKey",
-            _ => false,
-        };
-        if is_dup {
-            return Err(Status::already_exists("workspace exists"));
-        }
-        return Err(Status::internal("db error"));
-    }
+    // Upsert 逻辑：如果存在则更新，不存在则创建
+    // 利用 MongoDB 的单文档原子性保证一致性
+    crate::database::workspace::upsert_workspace(entity)
+        .await
+        .map_err(|_| Status::internal("db error"))?;
 
-    let mut resp = Response::new(NilRsp {});
-    apply_renew_metadata(renew, &mut resp);
-    Ok(resp)
+    Ok(Response::new(NilRsp {}))
 }

@@ -20,6 +20,31 @@ pub async fn create_workspace(entity: WorkspaceEntity) -> Result<(), mongodb::er
     Ok(())
 }
 
+/// Upsert workspace: 如果存在则更新，不存在则创建
+/// 返回 true 表示创建了新工作区，false 表示更新了已存在的工作区
+pub async fn upsert_workspace(entity: WorkspaceEntity) -> Result<bool, mongodb::error::Error> {
+    let coll = collection();
+    let filter = doc! {"_id": &entity.name};
+    
+    // 使用 replace_one 替换整个文档，保留 created_at
+    use mongodb::options::ReplaceOptions;
+    
+    // 先尝试获取现有文档的 created_at
+    let existing = get_workspace_by_name(&entity.name).await?;
+    
+    let mut final_entity = entity;
+    if let Some(existing_workspace) = existing {
+        // 如果存在，保留原来的 created_at
+        final_entity.created_at = existing_workspace.created_at;
+    }
+    
+    let options = ReplaceOptions::builder().upsert(true).build();
+    let result = coll.replace_one(filter, final_entity).with_options(options).await?;
+    
+    // upserted_id 存在表示是新创建的
+    Ok(result.upserted_id.is_some())
+}
+
 pub async fn get_workspace_by_name(name: &str) -> Result<Option<WorkspaceEntity>, mongodb::error::Error> {
     let coll = collection();
     let filter = doc! {"_id": name};

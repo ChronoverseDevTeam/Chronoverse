@@ -16,7 +16,8 @@ pub struct ConfigEntity {
 impl Default for ConfigEntity {
     fn default() -> Self {
         Self {
-            mongo_url: "mongodb://127.0.0.1:27017".to_string(),
+            // 添加 directConnection=true&w=1 用于单节点 MongoDB（非副本集）
+            mongo_url: "mongodb://127.0.0.1:27017/?directConnection=true&w=1".to_string(),
             mongo_database: "chronoverse".to_string(),
             mongo_app: Some("Chronoverse".to_string()),
             mongo_username: None,

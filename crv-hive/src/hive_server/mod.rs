@@ -1,6 +1,6 @@
 use tonic::{transport::Server, Request, Response, Status};
 use crate::pb::hive_service_server::{HiveService, HiveServiceServer};
-use crate::pb::{CreateWorkspaceReq, GreetingReq, ListWorkspaceReq, ListWorkspaceRsp, NilRsp, LoginReq, LoginRsp, RegisterReq, RegisterRsp, CreateTokenReq, CreateTokenRsp, ListTokensReq, ListTokensRsp, RevokeTokenReq, RevokeTokenRsp};
+use crate::pb::{UpsertWorkspaceReq, GreetingReq, ListWorkspaceReq, ListWorkspaceRsp, NilRsp, LoginReq, LoginRsp, RegisterReq, RegisterRsp};
 use crate::middleware::{RenewToken, apply_renew_metadata, enforce_jwt};
 
 #[derive(Default)]
@@ -18,13 +18,13 @@ impl HiveService for CrvHiveService {
         Ok(resp)
     }
 
-    async fn create_workspace(
+    async fn upsert_workspace(
         &self,
-        request: Request<CreateWorkspaceReq>,
+        request: Request<UpsertWorkspaceReq>,
     ) -> Result<Response<NilRsp>, Status> {
         let request = enforce_jwt(request)?;
         let renew = request.extensions().get::<RenewToken>().cloned();
-        let mut resp = crate::logic::create_workspace::create_workspace(request).await?;
+        let mut resp = crate::logic::create_workspace::upsert_workspace(request).await?;
         apply_renew_metadata(renew, &mut resp);
         Ok(resp)
     }
@@ -52,27 +52,6 @@ impl HiveService for CrvHiveService {
         request: Request<RegisterReq>,
     ) -> Result<Response<RegisterRsp>, Status> {
         crate::logic::auth::register(request).await
-    }
-
-    async fn create_token(
-        &self,
-        request: Request<CreateTokenReq>,
-    ) -> Result<Response<CreateTokenRsp>, Status> {
-        Err(Status::unimplemented("token APIs are disabled"))
-    }
-
-    async fn list_tokens(
-        &self,
-        request: Request<ListTokensReq>,
-    ) -> Result<Response<ListTokensRsp>, Status> {
-        Err(Status::unimplemented("token APIs are disabled"))
-    }
-
-    async fn revoke_token(
-        &self,
-        request: Request<RevokeTokenReq>,
-    ) -> Result<Response<RevokeTokenRsp>, Status> {
-        Err(Status::unimplemented("token APIs are disabled"))
     }
 }
 

@@ -28,7 +28,6 @@ jsonwebtoken = "9"
 argon2 = "0.5"
 rand = "0.8"
 
-
 [build-dependencies]
 tonic-prost-build = "0.14.2"
 protoc-bin-vendored = "3"

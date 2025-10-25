@@ -62,6 +62,10 @@ impl MongoManager {
             options.app_name = Some(app.clone());
         }
 
+        // 强制启用 directConnection 用于单节点 MongoDB（非副本集）
+        // 这样可以避免 MongoDB 8.x 的 Primary 节点选择问题
+        options.direct_connection = Some(true);
+
         let client = Client::with_options(options)?;
         let database = client.database(&cfg.mongo_database);
         Ok(Self { client, database })
