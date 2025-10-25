@@ -10,3 +10,5 @@ edition = "2024"
 [workspace.dependencies]
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
+thiserror = { version = "2" }
+regex = { version = "1" }
