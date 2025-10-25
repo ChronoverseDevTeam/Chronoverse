@@ -15,6 +15,7 @@ crv-core = { path = "../crv-core" }
 tokio = { workspace = true }
 serde = { workspace = true }
 clap = { version = "4.5.47", features = ["derive"] }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 # Protocol Buffer
 prost = "0.14.1"

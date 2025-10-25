@@ -3,7 +3,7 @@ use clap::{Parser, Subcommand};
 #[derive(Parser)]
 pub struct WorkspaceArgs {
     #[command(subcommand)]
-    command: WorkspaceCommands,
+    pub command: WorkspaceCommands,
 }
 
 #[derive(Subcommand)]
