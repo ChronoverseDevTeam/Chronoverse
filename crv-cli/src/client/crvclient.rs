@@ -15,6 +15,10 @@ use crate::pb::{
     GetLatestReq,
     CheckoutReq,
     SubmitReq,
+    HiveConnectReq, HiveConnectRsp,
+    HiveLoginReq, HiveLoginRsp,
+    HiveRegisterReq, HiveRegisterRsp,
+    HiveListWorkspacesReq, HiveListWorkspacesRsp,
 };
 
 /// Local workspace file state - tracks what's checked out locally
@@ -600,6 +604,128 @@ impl CrvClient {
         if let Some(state) = self.local_files.get_mut(depot_path) {
             state.is_modified = true;
         }
+    }
+
+    // ========== Hive 相关方法（通过 Edge 转发）==========
+
+    /// 连接到 Hive 服务器（通过 Edge）
+    /// 
+    /// # Arguments
+    /// * `hive_addr` - Hive 服务器地址（例如: "http://127.0.0.1:34560"）
+    pub async fn connect_hive(&mut self, hive_addr: &str) -> Result<HiveConnectRsp, Box<dyn std::error::Error>> {
+        let request = tonic::Request::new(HiveConnectReq {
+            hive_address: hive_addr.to_string(),
+        });
+        
+        let response = self.grpc_client.as_mut()
+            .ok_or("gRPC client not initialized")?
+            .hive_connect(request)
+            .await?;
+        
+        let rsp = response.into_inner();
+        
+        if rsp.success {
+            println!("✅ {}", rsp.message);
+        } else {
+            println!("❌ {}", rsp.message);
+        }
+        
+        Ok(rsp)
+    }
+
+    /// 登录到 Hive 服务器（通过 Edge）
+    /// 
+    /// # Arguments
+    /// * `username` - 用户名
+    /// * `password` - 密码
+    pub async fn hive_login(&mut self, username: String, password: String) -> Result<HiveLoginRsp, Box<dyn std::error::Error>> {
+        let request = tonic::Request::new(HiveLoginReq {
+            username: username.clone(),
+            password,
+        });
+        
+        let response = self.grpc_client.as_mut()
+            .ok_or("gRPC client not initialized")?
+            .hive_login(request)
+            .await?;
+        
+        let login_rsp = response.into_inner();
+        
+        if login_rsp.success {
+            println!("✅ {}", login_rsp.message);
+            println!("  Access Token: {}...", &login_rsp.access_token[..20.min(login_rsp.access_token.len())]);
+            println!("  Expires At: {}", login_rsp.expires_at);
+        } else {
+            println!("❌ {}", login_rsp.message);
+        }
+        
+        Ok(login_rsp)
+    }
+
+    /// 注册新用户到 Hive 服务器（通过 Edge）
+    /// 
+    /// # Arguments
+    /// * `username` - 用户名
+    /// * `password` - 密码
+    /// * `email` - 电子邮件
+    pub async fn hive_register(&mut self, username: String, password: String, email: String) -> Result<HiveRegisterRsp, Box<dyn std::error::Error>> {
+        let request = tonic::Request::new(HiveRegisterReq {
+            username: username.clone(),
+            password,
+            email,
+        });
+        
+        let response = self.grpc_client.as_mut()
+            .ok_or("gRPC client not initialized")?
+            .hive_register(request)
+            .await?;
+        
+        let register_rsp = response.into_inner();
+        
+        if register_rsp.success {
+            println!("✅ {}", register_rsp.message);
+        } else {
+            println!("❌ {}", register_rsp.message);
+        }
+        
+        Ok(register_rsp)
+    }
+
+    /// 从 Hive 服务器获取工作空间列表（通过 Edge）
+    /// 
+    /// # Arguments
+    /// * `name` - 可选的工作空间名称过滤
+    /// * `owner` - 可选的所有者过滤
+    pub async fn hive_list_workspaces(
+        &mut self,
+        name: Option<String>,
+        owner: Option<String>,
+        device_finger_print: Option<String>,
+    ) -> Result<HiveListWorkspacesRsp, Box<dyn std::error::Error>> {
+        let request = tonic::Request::new(HiveListWorkspacesReq {
+            name,
+            owner,
+            device_finger_print,
+        });
+        
+        let response = self.grpc_client.as_mut()
+            .ok_or("gRPC client not initialized")?
+            .hive_list_workspaces(request)
+            .await?;
+        
+        let list_rsp = response.into_inner();
+        
+        if list_rsp.success {
+            println!("📋 工作空间列表 ({} 个):", list_rsp.workspaces.len());
+            for (idx, ws) in list_rsp.workspaces.iter().enumerate() {
+                println!("  {}. {} (owner: {}, path: {})", 
+                    idx + 1, ws.name, ws.owner, ws.path);
+            }
+        } else {
+            println!("❌ {}", list_rsp.message);
+        }
+        
+        Ok(list_rsp)
     }
 }
 

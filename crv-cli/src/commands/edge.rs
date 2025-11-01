@@ -39,6 +39,47 @@ pub enum EdgeCommands {
         #[arg(short, long)]
         description: String,
     },
+    
+    // === Hive 相关命令 ===
+    /// 连接到 Hive 服务器
+    HiveConnect {
+        /// Hive 服务器地址
+        #[arg(value_name = "HIVE_ADDR", default_value = "http://127.0.0.1:34560")]
+        hive_addr: String,
+    },
+    /// 登录到 Hive
+    HiveLogin {
+        /// 用户名
+        #[arg(short, long)]
+        username: String,
+        /// 密码
+        #[arg(short, long)]
+        password: String,
+    },
+    /// 注册新用户
+    HiveRegister {
+        /// 用户名
+        #[arg(short, long)]
+        username: String,
+        /// 密码
+        #[arg(short, long)]
+        password: String,
+        /// 电子邮件
+        #[arg(short, long)]
+        email: String,
+    },
+    /// 列出 Hive 上的工作空间
+    HiveListWorkspaces {
+        /// 工作空间名称过滤（可选）
+        #[arg(short, long)]
+        name: Option<String>,
+        /// 所有者过滤（可选）
+        #[arg(short, long)]
+        owner: Option<String>,
+        /// 设备指纹过滤（可选）
+        #[arg(short, long)]
+        device: Option<String>,
+    },
 }
 
 /// 处理命令（使用已有的客户端连接）
@@ -103,6 +144,28 @@ pub async fn handle(
             println!("描述: {}", description);
             let result = client.submit(&file_path, description).await?;
             println!("✅ {}", result);
+        }
+
+        // === Hive 相关命令处理 ===
+        EdgeCommands::HiveConnect { hive_addr } => {
+            println!("正在连接到 Hive 服务器: {}", hive_addr);
+            client.connect_hive(&hive_addr).await?;
+            println!("✅ 已连接到 Hive 服务器");
+        }
+
+        EdgeCommands::HiveLogin { username, password } => {
+            println!("正在登录用户: {}", username);
+            let _response = client.hive_login(username, password).await?;
+        }
+
+        EdgeCommands::HiveRegister { username, password, email } => {
+            println!("正在注册用户: {}", username);
+            let _response = client.hive_register(username, password, email).await?;
+        }
+
+        EdgeCommands::HiveListWorkspaces { name, owner, device } => {
+            println!("正在获取工作空间列表...");
+            let _response = client.hive_list_workspaces(name, owner, device).await?;
         }
     }
 

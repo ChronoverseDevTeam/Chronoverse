@@ -1,8 +1,9 @@
-Param(
+﻿Param(
   [string]$Version = "8.2.0",
   [int]$Port = 27017,
   [switch]$RecreateData,
-  [switch]$Silent
+  [switch]$Silent,
+  [string]$MongodPath = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -45,36 +46,48 @@ if (Test-Path $pidFile) {
   }
 }
 
-$mongodExe = Join-Path $binDir "mongod.exe"
-if (-not (Test-Path $mongodExe)) {
-  $zipName = "mongodb-windows-x86_64-$Version.zip"
-  $url = "https://fastdl.mongodb.org/windows/$zipName"
-  $zipPath = Join-Path $distDir $zipName
-  Write-Info "下载 MongoDB ${Version}: ${url}"
-  try {
-    Invoke-WebRequest -Uri $url -OutFile $zipPath -UseBasicParsing
-  } catch {
-    throw "下载失败：$url。可通过 -Version 指定其他版本，如 6.0.15 或 7.0.x"
+# 如果指定了 MongodPath 参数，直接使用
+if ($MongodPath) {
+  $mongodExe = $MongodPath
+  Write-Ok "使用指定的 MongoDB 路径: $mongodExe"
+  
+  # 验证路径是否存在
+  if (-not (Test-Path $mongodExe)) {
+    throw "指定的 mongod.exe 路径不存在: $mongodExe"
+  }
+} else {
+  # 否则使用默认逻辑：本地 bin 目录或自动下载
+  $mongodExe = Join-Path $binDir "mongod.exe"
+  if (-not (Test-Path $mongodExe)) {
+    $zipName = "mongodb-windows-x86_64-$Version.zip"
+    $url = "https://fastdl.mongodb.org/windows/$zipName"
+    $zipPath = Join-Path $distDir $zipName
+    Write-Info "下载 MongoDB ${Version}: ${url}"
+    try {
+      Invoke-WebRequest -Uri $url -OutFile $zipPath -UseBasicParsing
+    } catch {
+      throw "下载失败：$url。可通过 -Version 指定其他版本，如 6.0.15 或 7.0.x"
+    }
+
+    $extractDir = Join-Path $distDir ("mongodb-$Version")
+    Write-Info "解压到: $extractDir"
+    if (Test-Path $extractDir) { Remove-Item -Recurse -Force $extractDir }
+    Expand-Archive -Path $zipPath -DestinationPath $extractDir -Force
+
+    $candidateBin = Join-Path $extractDir ("mongodb-windows-x86_64-$Version/bin")
+    if (-not (Test-Path $candidateBin)) {
+      # 某些版本目录名可能不同，回退到搜索
+      $binSearch = Get-ChildItem -Path $extractDir -Recurse -Filter "mongod.exe" | Select-Object -First 1
+      if (-not $binSearch) { throw "未在解压目录找到 mongod.exe" }
+      $candidateBin = Split-Path -Path $binSearch.FullName -Parent
+    }
+
+    Write-Info "复制 mongod 可执行文件到: $binDir"
+    Copy-Item -Path (Join-Path $candidateBin "*") -Destination $binDir -Recurse -Force
   }
 
-  $extractDir = Join-Path $distDir ("mongodb-$Version")
-  Write-Info "解压到: $extractDir"
-  if (Test-Path $extractDir) { Remove-Item -Recurse -Force $extractDir }
-  Expand-Archive -Path $zipPath -DestinationPath $extractDir -Force
-
-  $candidateBin = Join-Path $extractDir ("mongodb-windows-x86_64-$Version/bin")
-  if (-not (Test-Path $candidateBin)) {
-    # 某些版本目录名可能不同，回退到搜索
-    $binSearch = Get-ChildItem -Path $extractDir -Recurse -Filter "mongod.exe" | Select-Object -First 1
-    if (-not $binSearch) { throw "未在解压目录找到 mongod.exe" }
-    $candidateBin = Split-Path -Path $binSearch.FullName -Parent
-  }
-
-  Write-Info "复制 mongod 可执行文件到: $binDir"
-  Copy-Item -Path (Join-Path $candidateBin "*") -Destination $binDir -Recurse -Force
+  if (-not (Test-Path $mongodExe)) { throw "未找到 mongod.exe: $mongodExe" }
 }
-
-if (-not (Test-Path $mongodExe)) { throw "未找到 mongod.exe: $mongodExe" }
 
 Write-Info "启动 mongod (端口 $Port)..."
 $mongodArgs = @(

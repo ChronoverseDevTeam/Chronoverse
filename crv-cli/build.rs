@@ -12,7 +12,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // .build_server(false)
         // .out_dir("src/generated")  
         .compile_protos(
-            &["../proto/daemon.proto"],
+            &["../proto/daemon.proto", "../proto/hive.proto"],
             &["../proto"],
         )?;
     // 可选：将包名暴露为编译期环境变量便于lib.rs include自定义路径

@@ -351,6 +351,57 @@ message SummitRsp {
   string file_path = 3;
 }
 
+// Hive integration messages
+message HiveConnectReq {
+  string hive_address = 1;
+}
+
+message HiveConnectRsp {
+  bool success = 1;
+  string message = 2;
+}
+
+message HiveLoginReq {
+  string username = 1;
+  string password = 2;
+}
+
+message HiveLoginRsp {
+  bool success = 1;
+  string message = 2;
+  string access_token = 3;
+  int64 expires_at = 4;
+}
+
+message HiveRegisterReq {
+  string username = 1;
+  string password = 2;
+  string email = 3;
+}
+
+message HiveRegisterRsp {
+  bool success = 1;
+  string message = 2;
+}
+
+message HiveListWorkspacesReq {
+  optional string name = 1;
+  optional string owner = 2;
+  optional string device_finger_print = 3;
+}
+
+message HiveWorkspaceInfo {
+  string name = 1;
+  string owner = 2;
+  string path = 3;
+}
+
+message HiveListWorkspacesRsp {
+  bool success = 1;
+  string message = 2;
+  repeated HiveWorkspaceInfo workspaces = 3;
+}
+
 service EdgeDaemonService {
   // Basic operations
   rpc Bonjour(BonjourReq) returns (BonjourRsp);
@@ -400,4 +451,10 @@ service EdgeDaemonService {
   rpc GetLatest(GetLatestReq) returns (GetLatestRsp);
   rpc Checkout(CheckoutReq) returns (CheckoutRsp);
   rpc Summit(SummitReq) returns (SummitRsp);
+  
+  // Hive integration
+  rpc HiveConnect(HiveConnectReq) returns (HiveConnectRsp);
+  rpc HiveLogin(HiveLoginReq) returns (HiveLoginRsp);
+  rpc HiveRegister(HiveRegisterReq) returns (HiveRegisterRsp);
+  rpc HiveListWorkspaces(HiveListWorkspacesReq) returns (HiveListWorkspacesRsp);
 }
