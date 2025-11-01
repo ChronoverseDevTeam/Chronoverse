@@ -32,7 +32,7 @@ pub enum RevisionDescriptor {
 pub enum FilenameWildcard {
     /// 确切的文件名
     Exact(String),
-    /// 后缀名通配: ~png, ~obj.meta, 不包含 `~`
+    /// 后缀名通配: ~png, ~obj.meta, 将 `~` 替换为 `.`
     Extension(String),
     /// 匹配所有文件
     All,
@@ -42,14 +42,14 @@ impl FilenameWildcard {
     fn to_string(&self) -> String {
         match self {
             FilenameWildcard::Exact(s) => s.clone(),
-            FilenameWildcard::Extension(s) => format!("~{s}"),
+            FilenameWildcard::Extension(s) => format!("~{}", &s[1..]),
             FilenameWildcard::All => String::new(),
         }
     }
 }
 
 /// Depot Path (具体的文件)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DepotPath {
     pub dirs: Vec<String>,
     pub file: String,
@@ -156,6 +156,17 @@ impl LocalPath {
     /// 在解析后 `self.dirs` 的第一个元素即为盘符，保持原有的大小写。
     pub fn parse(path: &str) -> PathResult<Self> {
         parser::local_path(path)
+    }
+
+    /// 转化为使用 `/` 分割文件夹的路径
+    pub fn to_unix_path_string(&self) -> String {
+        let dir_string = self
+            .dirs
+            .0
+            .iter()
+            .map(|dir| format!("{}/", dir))
+            .collect::<String>();
+        format!("/{}{}", dir_string, self.file)
     }
 }
 
@@ -308,7 +319,7 @@ mod parser {
             just("~")
                 .then(path_segment)
                 .map(|(_, extension): (_, &str)| {
-                    FilenameWildcard::Extension(extension.to_string())
+                    FilenameWildcard::Extension(format!(".{extension}"))
                 }),
             path_segment.map(|filename: &str| FilenameWildcard::Exact(filename.to_string())),
             empty().map(|_| FilenameWildcard::All),
@@ -524,7 +535,7 @@ mod parser {
             just("~")
                 .then(path_segment)
                 .map(|(_, extension): (_, &str)| {
-                    FilenameWildcard::Extension(extension.to_string())
+                    FilenameWildcard::Extension(format!(".{extension}"))
                 }),
             path_segment.map(|filename: &str| FilenameWildcard::Exact(filename.to_string())),
             empty().map(|_| FilenameWildcard::All),
@@ -847,6 +858,10 @@ mod test_local_path {
         let local_path = local_path.unwrap();
         assert_eq!(local_path.dirs.0, vec!["C", "Users", "Documents"]);
         assert_eq!(local_path.file, "file.txt");
+        assert_eq!(
+            local_path.to_unix_path_string(),
+            "/C/Users/Documents/file.txt".to_string()
+        );
 
         // 2. Windows 路径 - 使用正斜杠
         let path = "D:/Projects/rust/main.rs";
@@ -855,6 +870,10 @@ mod test_local_path {
         let local_path = local_path.unwrap();
         assert_eq!(local_path.dirs.0, vec!["D", "Projects", "rust"]);
         assert_eq!(local_path.file, "main.rs");
+        assert_eq!(
+            local_path.to_unix_path_string(),
+            "/D/Projects/rust/main.rs".to_string()
+        );
 
         // 3. Windows 路径 - 混合斜杠
         let path = r"E:\Work/code\src/lib.rs";
@@ -863,6 +882,10 @@ mod test_local_path {
         let local_path = local_path.unwrap();
         assert_eq!(local_path.dirs.0, vec!["E", "Work", "code", "src"]);
         assert_eq!(local_path.file, "lib.rs");
+        assert_eq!(
+            local_path.to_unix_path_string(),
+            "/E/Work/code/src/lib.rs".to_string()
+        );
 
         // 4. Windows 路径 - 小写盘符
         let path = r"c:\temp\test.txt";
@@ -871,6 +894,10 @@ mod test_local_path {
         let local_path = local_path.unwrap();
         assert_eq!(local_path.dirs.0, vec!["c", "temp"]);
         assert_eq!(local_path.file, "test.txt");
+        assert_eq!(
+            local_path.to_unix_path_string(),
+            "/c/temp/test.txt".to_string()
+        );
 
         // 5. Windows 路径 - 根目录文件
         let path = r"Z:\readme.md";
@@ -879,6 +906,7 @@ mod test_local_path {
         let local_path = local_path.unwrap();
         assert_eq!(local_path.dirs.0, vec!["Z"]);
         assert_eq!(local_path.file, "readme.md");
+        assert_eq!(local_path.to_unix_path_string(), "/Z/readme.md".to_string());
 
         // 6. Windows 路径 - 中文路径
         let path = r"C:\用户\文档\新建文本文档.txt";
@@ -887,6 +915,10 @@ mod test_local_path {
         let local_path = local_path.unwrap();
         assert_eq!(local_path.dirs.0, vec!["C", "用户", "文档"]);
         assert_eq!(local_path.file, "新建文本文档.txt");
+        assert_eq!(
+            local_path.to_unix_path_string(),
+            "/C/用户/文档/新建文本文档.txt".to_string()
+        );
 
         // 7. Windows 路径 - 带空格
         let path = r"C:\Program Files\My App\config.json";
@@ -895,6 +927,10 @@ mod test_local_path {
         let local_path = local_path.unwrap();
         assert_eq!(local_path.dirs.0, vec!["C", "Program Files", "My App"]);
         assert_eq!(local_path.file, "config.json");
+        assert_eq!(
+            local_path.to_unix_path_string(),
+            "/C/Program Files/My App/config.json".to_string()
+        );
     }
 
     #[test]
