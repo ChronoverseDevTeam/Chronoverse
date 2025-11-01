@@ -69,7 +69,7 @@ impl DepotPath {
     }
 
     pub fn parse(path: &str) -> PathResult<Self> {
-        parsers::depot_path(path)
+        parsers::path::depot_path(path)
     }
 }
 
@@ -110,7 +110,7 @@ impl DepotPathWildcard {
     }
 
     pub fn parse(wildcard: &str) -> PathResult<Self> {
-        parsers::depot_path_wildcard(wildcard)
+        parsers::path::depot_path_wildcard(wildcard)
     }
 }
 
@@ -138,7 +138,7 @@ pub struct LocalDir(pub Vec<String>);
 
 impl LocalDir {
     pub fn parse(path: &str) -> PathResult<Self> {
-        parsers::local_dir(path)
+        parsers::path::local_dir(path)
     }
 }
 
@@ -156,7 +156,7 @@ impl LocalPath {
     /// Windows 本地路径风格为 `<盘符>:` 开头的，使用 `/` 或 `\` 进行分割的路径，
     /// 在解析后 `self.dirs` 的第一个元素即为盘符，保持原有的大小写。
     pub fn parse(path: &str) -> PathResult<Self> {
-        parsers::local_path(path)
+        parsers::path::local_path(path)
     }
 
     /// 转化为使用 `/` 分割文件夹的路径
@@ -199,7 +199,7 @@ impl LocalPathWildcard {
     }
 
     pub fn parse(wildcard: &str) -> PathResult<Self> {
-        parsers::local_path_wildcard(wildcard)
+        parsers::path::local_path_wildcard(wildcard)
     }
 }
 
