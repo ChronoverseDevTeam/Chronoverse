@@ -1,4 +1,5 @@
 pub mod metadata;
+pub mod parsers;
 pub mod path;
 pub mod storage;
 pub mod user;
