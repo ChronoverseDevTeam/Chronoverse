@@ -55,17 +55,10 @@ fn validate_filename(s: &str) -> PathResult<String> {
 
 fn depot_path_parser<'src>() -> impl Parser<'src, &'src str, DepotPath, extra::Err<Rich<'src, char>>>
 {
-    // 解析一个路径段（目录名或文件名）
-    let path_segment = none_of("/\n\r")
-        .repeated()
-        .at_least(1)
-        .to_slice()
-        .labelled("path segment");
-
     just("//")
         .labelled("depot path prefix '//'")
         .then(
-            path_segment
+            path_segment_parser()
                 .separated_by(just("/"))
                 .at_least(1)
                 .collect::<Vec<&str>>()
@@ -101,34 +94,67 @@ pub fn depot_path(input: &str) -> PathResult<DepotPath> {
     Ok(result)
 }
 
-fn depot_path_wildcard_parser<'src>()
--> impl Parser<'src, &'src str, DepotPathWildcard, extra::Err<Rich<'src, char>>> {
-    // 解析一个路径段（目录名）
-    let path_segment = none_of("/\n\r")
-        .repeated()
-        .at_least(1)
-        .to_slice()
-        .labelled("path segment");
-
-    let filename_wildcard = choice((
-        just("~")
-            .then(path_segment)
-            .map(|(_, extension): (_, &str)| FilenameWildcard::Extension(format!(".{extension}"))),
-        path_segment.map(|filename: &str| FilenameWildcard::Exact(filename.to_string())),
-        empty().map(|_| FilenameWildcard::All),
-    ));
-
-    let range_depot_wildcard = just("//")
+fn range_depot_wildcard_parser<'src>()
+-> impl Parser<'src, &'src str, RangeDepotWildcard, extra::Err<Rich<'src, char>>> {
+    just("//")
         .labelled("range depot wildcard prefix")
         .then(
-            path_segment
+            path_segment_parser()
                 .then_ignore(just("/"))
                 .repeated()
                 .collect::<Vec<&str>>()
                 .labelled("path segments"),
         )
         .then(just("...").or_not())
-        .then(filename_wildcard)
+        .then(filename_wildcard_parser())
+        .then_ignore(end().labelled("end of path"))
+        .map(|(((_, segments), recursive_dir), filename)| {
+            let dirs = segments.iter().map(|s| s.to_string()).collect();
+
+            RangeDepotWildcard {
+                dirs,
+                recursive: recursive_dir.is_some(),
+                wildcard: filename,
+            }
+        })
+}
+
+fn path_segment_parser<'src>()
+-> Boxed<'src, 'src, &'src str, &'src str, extra::Err<Rich<'src, char>>> {
+    // 解析一个路径段（目录名或文件名）
+    none_of("\\/\n\r")
+        .repeated()
+        .at_least(1)
+        .to_slice()
+        .labelled("path segment")
+        .boxed()
+}
+
+fn filename_wildcard_parser<'src>()
+-> impl Parser<'src, &'src str, FilenameWildcard, extra::Err<Rich<'src, char>>> {
+    choice((
+        just("~")
+            .then(path_segment_parser())
+            .map(|(_, extension): (_, &str)| FilenameWildcard::Extension(format!(".{extension}"))),
+        path_segment_parser().map(|filename: &str| FilenameWildcard::Exact(filename.to_string())),
+        empty().map(|_| FilenameWildcard::All),
+    ))
+    .boxed()
+}
+
+fn depot_path_wildcard_parser<'src>()
+-> impl Parser<'src, &'src str, DepotPathWildcard, extra::Err<Rich<'src, char>>> {
+    let range_depot_wildcard = just("//")
+        .labelled("range depot wildcard prefix")
+        .then(
+            path_segment_parser()
+                .then_ignore(just("/"))
+                .repeated()
+                .collect::<Vec<&str>>()
+                .labelled("path segments"),
+        )
+        .then(just("...").or_not())
+        .then(filename_wildcard_parser())
         .then_ignore(end().labelled("end of path"))
         .map(|(((_, segments), recursive_dir), filename)| {
             let dirs = segments.iter().map(|s| s.to_string()).collect();
@@ -190,13 +216,6 @@ pub fn depot_path_wildcard(input: &str) -> PathResult<DepotPathWildcard> {
 
 fn local_dir_parser<'src>() -> impl Parser<'src, &'src str, LocalDir, extra::Err<Rich<'src, char>>>
 {
-    // 解析一个路径段（目录名）
-    let path_segment = none_of("\\/\n\r")
-        .repeated()
-        .at_least(1)
-        .to_slice()
-        .labelled("path segment");
-
     // 路径分隔符
     let path_separator = one_of("/\\").labelled("path separator");
 
@@ -211,7 +230,7 @@ fn local_dir_parser<'src>() -> impl Parser<'src, &'src str, LocalDir, extra::Err
         just("/").map(|_| None),
     ))
     .then(
-        path_segment
+        path_segment_parser()
             .separated_by(path_separator)
             .collect::<Vec<&str>>()
             .labelled("path segments"),
@@ -249,13 +268,6 @@ pub fn local_dir(input: &str) -> PathResult<LocalDir> {
 
 fn local_path_parser<'src>() -> impl Parser<'src, &'src str, LocalPath, extra::Err<Rich<'src, char>>>
 {
-    // 解析一个路径段（目录名或文件名）
-    let path_segment = none_of("\\/\n\r")
-        .repeated()
-        .at_least(1)
-        .to_slice()
-        .labelled("path segment");
-
     // 路径分隔符
     let path_separator = one_of("/\\").labelled("path separator");
 
@@ -271,7 +283,7 @@ fn local_path_parser<'src>() -> impl Parser<'src, &'src str, LocalPath, extra::E
         just("/").map(|_| None),
     ))
     .then(
-        path_segment
+        path_segment_parser()
             .separated_by(path_separator)
             .at_least(1)
             .collect::<Vec<&str>>()
@@ -317,18 +329,11 @@ pub fn local_path(input: &str) -> PathResult<LocalPath> {
 
 fn local_path_wildcard_parser<'src>()
 -> impl Parser<'src, &'src str, LocalPathWildcard, extra::Err<Rich<'src, char>>> {
-    // 解析一个路径段（目录名或文件名）
-    let path_segment = none_of("\\/\n\r")
-        .repeated()
-        .at_least(1)
-        .to_slice()
-        .labelled("path segment");
-
     let filename_wildcard = choice((
         just("~")
-            .then(path_segment)
+            .then(path_segment_parser())
             .map(|(_, extension): (_, &str)| FilenameWildcard::Extension(format!(".{extension}"))),
-        path_segment.map(|filename: &str| FilenameWildcard::Exact(filename.to_string())),
+        path_segment_parser().map(|filename: &str| FilenameWildcard::Exact(filename.to_string())),
         empty().map(|_| FilenameWildcard::All),
     ));
 
@@ -347,7 +352,7 @@ fn local_path_wildcard_parser<'src>()
         just("/").map(|_| None),
     ))
     .then(
-        path_segment
+        path_segment_parser()
             .then_ignore(path_separator)
             .repeated()
             .collect::<Vec<&str>>()
