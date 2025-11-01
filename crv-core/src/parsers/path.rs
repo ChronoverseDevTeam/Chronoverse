@@ -144,27 +144,8 @@ fn filename_wildcard_parser<'src>()
 
 fn depot_path_wildcard_parser<'src>()
 -> impl Parser<'src, &'src str, DepotPathWildcard, extra::Err<Rich<'src, char>>> {
-    let range_depot_wildcard = just("//")
-        .labelled("range depot wildcard prefix")
-        .then(
-            path_segment_parser()
-                .then_ignore(just("/"))
-                .repeated()
-                .collect::<Vec<&str>>()
-                .labelled("path segments"),
-        )
-        .then(just("...").or_not())
-        .then(filename_wildcard_parser())
-        .then_ignore(end().labelled("end of path"))
-        .map(|(((_, segments), recursive_dir), filename)| {
-            let dirs = segments.iter().map(|s| s.to_string()).collect();
-
-            DepotPathWildcard::Range(RangeDepotWildcard {
-                dirs,
-                recursive: recursive_dir.is_some(),
-                wildcard: filename,
-            })
-        });
+    let range_depot_wildcard =
+        range_depot_wildcard_parser().map(|range| DepotPathWildcard::Range(range));
 
     let regex_depot_wildcard = just("r://")
         .labelled("regex depot wildcard prefix")
