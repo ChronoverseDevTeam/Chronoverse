@@ -293,57 +293,57 @@ impl CrvClient {
         depot_path: &str,
         versions: Vec<&str>,
     ) -> io::Result<()> {
-        let mut revisions = Vec::new();
+        // let mut revisions = Vec::new();
 
-        for (idx, content) in versions.iter().enumerate() {
-            let revision = (idx + 1) as u64;
-            let changelist_id = self.next_changelist_id;
-            self.next_changelist_id += 1;
+        // for (idx, content) in versions.iter().enumerate() {
+        //     let revision = (idx + 1) as u64;
+        //     let changelist_id = self.next_changelist_id;
+        //     self.next_changelist_id += 1;
 
-            // Create temporary file with content
-            let temp_file = self.server_depot_root.join(format!("temp_{}", depot_path.replace('/', "_")));
-            if let Some(parent) = temp_file.parent() {
-                fs::create_dir_all(parent)?;
-            }
-            fs::write(&temp_file, content)?;
+        //     // Create temporary file with content
+        //     let temp_file = self.server_depot_root.join(format!("temp_{}", depot_path.replace('/', "_")));
+        //     if let Some(parent) = temp_file.parent() {
+        //         fs::create_dir_all(parent)?;
+        //     }
+        //     fs::write(&temp_file, content)?;
 
-            // Create MetaFileRevision from file (chunks and stores blocks)
-            let file_revision = MetaFileRevision::from_source_file(
-                depot_path.to_string(),
-                revision,
-                changelist_id,
-                &temp_file,
-                &self.server_block_store,
-                &self.chunking_options,
-            )?;
+        //     // Create MetaFileRevision from file (chunks and stores blocks)
+        //     let file_revision = MetaFileRevision::from_source_file(
+        //         depot_path.to_string(),
+        //         revision,
+        //         changelist_id,
+        //         &temp_file,
+        //         &self.server_block_store,
+        //         &self.chunking_options,
+        //     )?;
 
-            // Create Changelist for this submission
-            let changelist = Changelist {
-                id: changelist_id,
-                description: format!("Auto-generated changelist for {} v{}", depot_path, revision),
-                created_at: Utc::now(),
-                submitted_at: Some(Utc::now()),
-                owner: "system".to_string(),
-                files: vec![file_revision.clone()],
-            };
-            self.changelists.insert(changelist_id, changelist);
+        //     // Create Changelist for this submission
+        //     let changelist = Changelist {
+        //         id: changelist_id,
+        //         description: format!("Auto-generated changelist for {} v{}", depot_path, revision),
+        //         created_at: Utc::now(),
+        //         submitted_at: Some(Utc::now()),
+        //         owner: "system".to_string(),
+        //         files: vec![file_revision.clone()],
+        //     };
+        //     self.changelists.insert(changelist_id, changelist);
 
-            revisions.push(file_revision);
+        //     revisions.push(file_revision);
 
-            // Clean up temp file
-            let _ = fs::remove_file(&temp_file);
-        }
+        //     // Clean up temp file
+        //     let _ = fs::remove_file(&temp_file);
+        // }
 
-        // Create MetaFile to track all revisions of this file on server
-        let meta_file = MetaFile {
-            locked_by: String::new(), // Initially unlocked
-            depot_path: depot_path.to_string(),
-            revisions,
-        };
+        // // Create MetaFile to track all revisions of this file on server
+        // let meta_file = MetaFile {
+        //     locked_by: String::new(), // Initially unlocked
+        //     depot_path: depot_path.to_string(),
+        //     revisions,
+        // };
         
-        self.server_files.insert(depot_path.to_string(), meta_file);
+        // self.server_files.insert(depot_path.to_string(), meta_file);
 
-        println!("  ✓ Created {} with {} versions", depot_path, versions.len());
+        // println!("  ✓ Created {} with {} versions", depot_path, versions.len());
         Ok(())
     }
 
@@ -486,65 +486,65 @@ impl CrvClient {
     /// server creates new MetaFileRevision and Changelist
     fn submit_local(&mut self, depot_path: &str, description: String) -> Result<String, String> {
         // Check if file exists locally
-        let local_state = self.local_files.get(depot_path)
-            .ok_or_else(|| format!("File not checked out: {}", depot_path))?;
+        // let local_state = self.local_files.get(depot_path)
+        //     .ok_or_else(|| format!("File not checked out: {}", depot_path))?;
 
-        // Check if file exists on disk
-        if !local_state.local_path.exists() {
-            return Err(format!("Local file not found: {:?}", local_state.local_path));
-        }
+        // // Check if file exists on disk
+        // if !local_state.local_path.exists() {
+        //     return Err(format!("Local file not found: {:?}", local_state.local_path));
+        // }
 
-        // Determine next revision number
-        let next_revision = self.server_files.get(depot_path)
-            .and_then(|mf| mf.revisions.last())
-            .map(|r| r.revision + 1)
-            .unwrap_or(1);
+        // // Determine next revision number
+        // let next_revision = self.server_files.get(depot_path)
+        //     .and_then(|mf| mf.revisions.last())
+        //     .map(|r| r.revision + 1)
+        //     .unwrap_or(1);
 
-        // Create new changelist
-        let changelist_id = self.next_changelist_id;
-        self.next_changelist_id += 1;
+        // // Create new changelist
+        // let changelist_id = self.next_changelist_id;
+        // self.next_changelist_id += 1;
 
-        // Create new MetaFileRevision from local file (chunks and uploads blocks)
-        let file_revision = MetaFileRevision::from_source_file(
-            depot_path.to_string(),
-            next_revision,
-            changelist_id,
-            &local_state.local_path,
-            &self.server_block_store,
-            &self.chunking_options,
-        ).map_err(|e| format!("Failed to create revision: {}", e))?;
+        // // Create new MetaFileRevision from local file (chunks and uploads blocks)
+        // let file_revision = MetaFileRevision::from_source_file(
+        //     depot_path.to_string(),
+        //     next_revision,
+        //     changelist_id,
+        //     &local_state.local_path,
+        //     &self.server_block_store,
+        //     &self.chunking_options,
+        // ).map_err(|e| format!("Failed to create revision: {}", e))?;
 
-        // Create Changelist on server
-        let changelist = Changelist {
-            id: changelist_id,
-            description: description.clone(),
-            created_at: Utc::now(),
-            submitted_at: Some(Utc::now()),
-            owner: "user".to_string(),
-            files: vec![file_revision.clone()],
-        };
-        self.changelists.insert(changelist_id, changelist);
+        // // Create Changelist on server
+        // let changelist = Changelist {
+        //     id: changelist_id,
+        //     description: description.clone(),
+        //     created_at: Utc::now(),
+        //     submitted_at: Some(Utc::now()),
+        //     owner: "user".to_string(),
+        //     files: vec![file_revision.clone()],
+        // };
+        // self.changelists.insert(changelist_id, changelist);
 
-        // Update server MetaFile with new revision
-        if let Some(meta_file) = self.server_files.get_mut(depot_path) {
-            meta_file.revisions.push(file_revision);
-        } else {
-            // File doesn't exist on server yet, create new MetaFile
-            let meta_file = MetaFile {
-                locked_by: String::new(),
-                depot_path: depot_path.to_string(),
-                revisions: vec![file_revision],
-            };
-            self.server_files.insert(depot_path.to_string(), meta_file);
-        }
+        // // Update server MetaFile with new revision
+        // if let Some(meta_file) = self.server_files.get_mut(depot_path) {
+        //     meta_file.revisions.push(file_revision);
+        // } else {
+        //     // File doesn't exist on server yet, create new MetaFile
+        //     let meta_file = MetaFile {
+        //         locked_by: String::new(),
+        //         depot_path: depot_path.to_string(),
+        //         revisions: vec![file_revision],
+        //     };
+        //     self.server_files.insert(depot_path.to_string(), meta_file);
+        // }
 
-        // Update local workspace state
-        if let Some(local) = self.local_files.get_mut(depot_path) {
-            local.current_revision = next_revision;
-            local.is_modified = false;
-        }
+        // // Update local workspace state
+        // if let Some(local) = self.local_files.get_mut(depot_path) {
+        //     local.current_revision = next_revision;
+        //     local.is_modified = false;
+        // }
 
-        Ok(format!("Submitted {} as revision {} (changelist {})", depot_path, next_revision, changelist_id))
+        Ok(format!("Submitted {} as revision {} (changelist {})", depot_path, "", ""))
     }
 
     /// Change local file to a different revision (仅本地模拟模式支持)

@@ -7,10 +7,8 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 // Used in MongoDB
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct MetaFileRevision {
-    #[serde(rename = "_id")]
-    pub depot_path: String,
     pub revision: u64,
     pub related_changelist_id: u64,
     pub block_hashes: Vec<String>,
@@ -23,7 +21,6 @@ pub struct MetaFileRevision {
 impl MetaFileRevision {
     /// Ingest a source file: chunk it, persist blocks under `store_root`, and build a revision.
     pub fn from_source_file<P: AsRef<Path>, Q: AsRef<Path>>(
-        depot_path: String,
         revision: u64,
         related_changelist_id: u64,
         source_file: P,
@@ -34,7 +31,6 @@ impl MetaFileRevision {
         let block_hashes = blocks.into_iter().map(|b| b.id).collect();
         let now = Utc::now();
         Ok(Self {
-            depot_path,
             revision,
             related_changelist_id,
             block_hashes,
