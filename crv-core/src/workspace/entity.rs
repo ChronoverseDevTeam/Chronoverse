@@ -1,6 +1,24 @@
-use crate::path::basic::{DepotPath, DepotPathWildcard, LocalDir, LocalPath, RangeDepotWildcard};
+use crate::{
+    parsers,
+    path::basic::{DepotPath, DepotPathWildcard, LocalDir, LocalPath, RangeDepotWildcard},
+};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum WorkspaceError {
+    #[error("Syntax error: {0}")]
+    SyntaxError(String),
+
+    #[error("Mapping conflict:\n{0}")]
+    MappingConflictError(String),
+
+    #[error("Local dir in mapping not under root:\n{0}")]
+    MappingNotUnderRoot(String),
+}
+
+pub type WorkspaceResult<T> = Result<T, WorkspaceError>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkspaceEntity {
@@ -64,9 +82,98 @@ pub struct WorkspaceConfig {
 }
 
 impl WorkspaceConfig {
-    /// 检查 mapping 中十分存在冲突的配置项
-    pub fn verify(&self) -> Result<(), Vec<String>> {
-        Err(vec!["need implement.".to_string()])
+    pub fn from_specification(root_dir: &str, mappings: &str) -> WorkspaceResult<Self> {
+        let root_dir =
+            LocalDir::parse(root_dir).map_err(|e| WorkspaceError::SyntaxError(format!("{}", e)))?;
+
+        let mappings = parsers::workspace::workspace_mappings(mappings)?;
+
+        let workspace_config = Self { root_dir, mappings };
+
+        if let Err(errors) = workspace_config.verify_mapping_under_root() {
+            let errors = errors.join("\n");
+            return WorkspaceResult::Err(WorkspaceError::MappingNotUnderRoot(errors));
+        }
+
+        if let Err(errors) = workspace_config.verify_conflict_free() {
+            let errors = errors.join("\n");
+            return WorkspaceResult::Err(WorkspaceError::MappingConflictError(errors));
+        }
+
+        Ok(workspace_config)
+    }
+
+    pub fn verify_mapping_under_root(&self) -> Result<(), Vec<String>> {
+        let mut errors = vec![];
+
+        for mapping in &self.mappings {
+            match mapping {
+                WorkspaceMapping::Include(include_mapping) => {
+                    match include_mapping {
+                        IncludeMapping::File(file_mapping) => {
+                            if Self::common_prefix_end_index(
+                                &file_mapping.local_file.dirs.0,
+                                &self.root_dir.0,
+                            ) == self.root_dir.0.len()
+                            {
+                                continue;
+                            }
+                            errors.push(format!(
+                                "local file {} not under root dir {}",
+                                file_mapping.local_file.to_unix_path_string(),
+                                self.root_dir.to_unix_path_string()
+                            ));
+                        }
+                        IncludeMapping::Range(folder_mapping) => {
+                            if Self::common_prefix_end_index(
+                                &folder_mapping.local_folder.0,
+                                &self.root_dir.0,
+                            ) == self.root_dir.0.len()
+                            {
+                                continue;
+                            }
+                            errors.push(format!(
+                                "local dir {} not under root dir {}",
+                                folder_mapping.local_folder.to_unix_path_string(),
+                                self.root_dir.to_unix_path_string()
+                            ));
+                        }
+                    };
+                }
+                WorkspaceMapping::Exclude(_) => {
+                    continue;
+                }
+            }
+        }
+
+        if errors.is_empty() {
+            return Ok(());
+        } else {
+            return Err(errors);
+        }
+    }
+
+    /// 检查 mapping 中是否存在冲突的配置项
+    pub fn verify_conflict_free(&self) -> Result<(), Vec<String>> {
+        let mut errors = vec![];
+
+        // 检查映射是否冲突
+        for i in 0..self.mappings.len() {
+            for j in i + 1..self.mappings.len() {
+                if let Err(error_message) = self.verify_mapping_pair(i, j) {
+                    errors.push(format!(
+                        "Mapping rules {} and {} conflict: {}",
+                        i, j, error_message
+                    ));
+                }
+            }
+        }
+
+        if errors.is_empty() {
+            return Ok(());
+        } else {
+            return Err(errors);
+        }
     }
 
     /// 仅考虑映射类型的情况下，判断两个映射是否可能冲突，如果可能则按照 primary, secondary 的顺序返回
@@ -701,5 +808,86 @@ mod test {
         let a = &["1".to_string(), "1".to_string()];
         let b = &[];
         assert_eq!(WorkspaceConfig::common_prefix_end_index(a, b), 0);
+    }
+
+    #[test]
+    fn test_from_specification() {
+        // case 0. 正常解析
+        let root_dir = r#"/user"#;
+        let mappings = r#"
+            //a/b/c/... /user
+            //a/b/c/d/... /user/d/ "#;
+        let workspace_config = WorkspaceConfig::from_specification(root_dir, mappings);
+        println!("case 0. 正常解析：{:?}", workspace_config);
+        assert!(workspace_config.is_ok());
+
+        let root_dir = r#"D:\temp"#;
+        let mappings = r#"
+            //a/b/c/... D:\temp
+            //a/b/c/d/... D:\temp\d\ "#;
+        let workspace_config = WorkspaceConfig::from_specification(root_dir, mappings);
+        println!("case 0. 正常解析：{:?}", workspace_config);
+        assert!(workspace_config.is_ok());
+        // case 1. 语法错误
+        // root dir 语法错误
+        let root_dir = r#"C:\~"#;
+        let mappings = r#"//a/b/c/... C:\User"#;
+        let workspace_config = WorkspaceConfig::from_specification(root_dir, mappings);
+        assert!(workspace_config.is_err());
+        let workspace_config_err = workspace_config.err().unwrap();
+        assert!(matches!(
+            workspace_config_err,
+            WorkspaceError::SyntaxError(_)
+        ));
+        println!("case 1. 语法错误: {}", workspace_config_err);
+        // workspace mapping 语法错误
+        let root_dir = r#"C:\User"#;
+        let mappings = r#"//a/b/c/~~~ C:\User"#;
+        let workspace_config = WorkspaceConfig::from_specification(root_dir, mappings);
+        assert!(workspace_config.is_err());
+        let workspace_config_err = workspace_config.err().unwrap();
+        assert!(matches!(
+            workspace_config_err,
+            WorkspaceError::SyntaxError(_)
+        ));
+        println!("case 1. 语法错误: {}", workspace_config_err);
+        // root dir 和 workspace mapping 均语法错误
+        let root_dir = r#"C:\~"#;
+        let mappings = r#"//a/b/c/~~~ C:\User"#;
+        let workspace_config = WorkspaceConfig::from_specification(root_dir, mappings);
+        assert!(workspace_config.is_err());
+        let workspace_config_err = workspace_config.err().unwrap();
+        assert!(matches!(
+            workspace_config_err,
+            WorkspaceError::SyntaxError(_)
+        ));
+        println!("case 1. 语法错误: {}", workspace_config_err);
+        // case 2. mapping 中的 local 不在 root dir 下
+        let root_dir = r#"C:\User"#;
+        let mappings = r#"//a/b/c/... D:\temp"#;
+        let workspace_config = WorkspaceConfig::from_specification(root_dir, mappings);
+        assert!(workspace_config.is_err());
+        let workspace_config_err = workspace_config.err().unwrap();
+        assert!(matches!(
+            workspace_config_err,
+            WorkspaceError::MappingNotUnderRoot(_)
+        ));
+        println!(
+            "case 2. mapping 中的 local 不在 root dir 下：{}",
+            workspace_config_err
+        );
+        // case 3. mapping 冲突
+        let root_dir = r#"D:\temp"#;
+        let mappings = r#"
+            //a/b/c/... D:\temp
+            //a/b/c/d/... D:\temp\e\ "#;
+        let workspace_config = WorkspaceConfig::from_specification(root_dir, mappings);
+        assert!(workspace_config.is_err());
+        let workspace_config_err = workspace_config.err().unwrap();
+        println!("case 3. mapping 冲突：{}", workspace_config_err);
+        assert!(matches!(
+            workspace_config_err,
+            WorkspaceError::MappingConflictError(_)
+        ));
     }
 }

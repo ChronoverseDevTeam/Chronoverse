@@ -1,60 +1,12 @@
 use crate::path::basic::*;
-use chumsky::prelude::*;
+use chumsky::{container::Seq, prelude::*};
 
-// 非法字符集合
-const ILLEGAL_CHARS: &str = r#"*|\<>?:"#;
+// 路段中的非法字符集合
+const SEGMENT_ILLEGAL_CHARS: &str = "~*\\|/<>?:\r\n";
+const SEGMENT_ILLEGAL_CHARS_WITH_BLANK: &str = " ~*\\|/<>?:\r\n";
 
-/// 验证路径段是否包含保留字符或非法字符
-fn validate_segment(s: &str) -> PathResult<String> {
-    if s.is_empty() {
-        return Err(PathError::SyntaxError(
-            "Empty path segment not allowed".to_string(),
-        ));
-    }
-
-    if s.contains("...") {
-        return Err(PathError::InvalidPath(format!(
-            "Path segment '{}' contains reserved pattern '...'",
-            s
-        )));
-    }
-
-    if s.contains('~') {
-        return Err(PathError::InvalidPath(format!(
-            "Path segment '{}' contains reserved character '~'",
-            s
-        )));
-    }
-
-    // 检查其他非法字符
-    if let Some(illegal_char) = s.chars().find(|c| ILLEGAL_CHARS.contains(*c)) {
-        return Err(PathError::InvalidPath(format!(
-            "Path segment '{}' contains illegal character '{}'",
-            s, illegal_char
-        )));
-    }
-
-    Ok(s.to_string())
-}
-
-fn validate_filename(s: &str) -> PathResult<String> {
-    validate_segment(s)?;
-
-    // 额外验证：文件名不能以空白字符结尾
-    if s.chars()
-        .last()
-        .expect("parser should reject empty filename")
-        .is_whitespace()
-    {
-        return Err(PathError::InvalidPath(
-            "Filename cannot end with whitespace".to_string(),
-        ));
-    }
-    Ok(s.to_string())
-}
-
-fn depot_path_parser<'src>() -> impl Parser<'src, &'src str, DepotPath, extra::Err<Rich<'src, char>>>
-{
+pub fn depot_path_parser<'src>()
+-> impl Parser<'src, &'src str, DepotPath, extra::Err<Rich<'src, char>>> {
     just("//")
         .labelled("depot path prefix '//'")
         .then(
@@ -64,7 +16,6 @@ fn depot_path_parser<'src>() -> impl Parser<'src, &'src str, DepotPath, extra::E
                 .collect::<Vec<&str>>()
                 .labelled("path segments"),
         )
-        .then_ignore(end().labelled("end of path"))
         .map(|(_, segments)| {
             // 最后一个段是文件名，其余是目录
             let mut parts: Vec<String> = segments.iter().map(|s| s.to_string()).collect();
@@ -76,8 +27,9 @@ fn depot_path_parser<'src>() -> impl Parser<'src, &'src str, DepotPath, extra::E
 }
 
 pub fn depot_path(input: &str) -> PathResult<DepotPath> {
-    // 第一步：使用 chumsky parser 解析基本结构
+    // 使用 chumsky parser 解析基本结构
     let result = depot_path_parser()
+        .then_ignore(end().labelled("end of depot path"))
         .parse(input)
         .into_result()
         .map_err(|errors| {
@@ -85,16 +37,10 @@ pub fn depot_path(input: &str) -> PathResult<DepotPath> {
             PathError::SyntaxError(format!("{}", error))
         })?;
 
-    // 第二步：验证每个路径段
-    for dir in &result.dirs {
-        validate_segment(dir)?;
-    }
-    validate_filename(&result.file)?;
-
     Ok(result)
 }
 
-fn range_depot_wildcard_parser<'src>()
+pub fn range_depot_wildcard_parser<'src>()
 -> impl Parser<'src, &'src str, RangeDepotWildcard, extra::Err<Rich<'src, char>>> {
     just("//")
         .labelled("range depot wildcard prefix")
@@ -107,7 +53,6 @@ fn range_depot_wildcard_parser<'src>()
         )
         .then(just("...").or_not())
         .then(filename_wildcard_parser())
-        .then_ignore(end().labelled("end of path"))
         .map(|(((_, segments), recursive_dir), filename)| {
             let dirs = segments.iter().map(|s| s.to_string()).collect();
 
@@ -121,10 +66,16 @@ fn range_depot_wildcard_parser<'src>()
 
 fn path_segment_parser<'src>()
 -> Boxed<'src, 'src, &'src str, &'src str, extra::Err<Rich<'src, char>>> {
-    // 解析一个路径段（目录名或文件名）
-    none_of("\\/\n\r")
+    let none_blank_block = none_of(SEGMENT_ILLEGAL_CHARS_WITH_BLANK)
         .repeated()
         .at_least(1)
+        .to_slice()
+        .filter(|s: &&str| !(*s).contains("..."));
+    let blank_block = just(" ").repeated().at_least(1);
+
+    // 解析一个路径段（目录名或文件名），不能以空格开头或结尾
+    none_blank_block
+        .then(blank_block.then(none_blank_block).repeated())
         .to_slice()
         .labelled("path segment")
         .boxed()
@@ -142,7 +93,7 @@ fn filename_wildcard_parser<'src>()
     .boxed()
 }
 
-fn depot_path_wildcard_parser<'src>()
+pub fn depot_path_wildcard_parser<'src>()
 -> impl Parser<'src, &'src str, DepotPathWildcard, extra::Err<Rich<'src, char>>> {
     let range_depot_wildcard =
         range_depot_wildcard_parser().map(|range| DepotPathWildcard::Range(range));
@@ -150,7 +101,6 @@ fn depot_path_wildcard_parser<'src>()
     let regex_depot_wildcard = just("r://")
         .labelled("regex depot wildcard prefix")
         .then(none_of("\n\r").repeated().collect())
-        .then_ignore(end().labelled("end of path"))
         .map(|(_, pattern)| DepotPathWildcard::Regex(RegexDepotWildcard { pattern }));
 
     choice((range_depot_wildcard, regex_depot_wildcard))
@@ -159,6 +109,7 @@ fn depot_path_wildcard_parser<'src>()
 pub fn depot_path_wildcard(input: &str) -> PathResult<DepotPathWildcard> {
     // 使用 chumsky parser 解析基本结构
     let result = depot_path_wildcard_parser()
+        .then_ignore(end().labelled("end of depot path wildcard"))
         .parse(input)
         .into_result()
         .map_err(|errors| {
@@ -167,22 +118,7 @@ pub fn depot_path_wildcard(input: &str) -> PathResult<DepotPathWildcard> {
         })?;
 
     match &result {
-        DepotPathWildcard::Range(range_depot_wildcard) => {
-            // 验证每个路径段
-            for dir in &range_depot_wildcard.dirs {
-                validate_segment(dir)?;
-            }
-            // 验证文件名
-            match &range_depot_wildcard.wildcard {
-                FilenameWildcard::Exact(exact) => {
-                    validate_filename(exact)?;
-                }
-                FilenameWildcard::Extension(extension) => {
-                    validate_filename(extension)?;
-                }
-                FilenameWildcard::All => {}
-            }
-        }
+        DepotPathWildcard::Range(range_depot_wildcard) => {}
         DepotPathWildcard::Regex(regex_depot_wildcard) => {
             // 验证 regex
             let regex_compile_result = regex::Regex::new(&regex_depot_wildcard.pattern);
@@ -195,8 +131,8 @@ pub fn depot_path_wildcard(input: &str) -> PathResult<DepotPathWildcard> {
     Ok(result)
 }
 
-fn local_dir_parser<'src>() -> impl Parser<'src, &'src str, LocalDir, extra::Err<Rich<'src, char>>>
-{
+pub fn local_dir_parser<'src>()
+-> impl Parser<'src, &'src str, LocalDir, extra::Err<Rich<'src, char>>> {
     // 路径分隔符
     let path_separator = one_of("/\\").labelled("path separator");
 
@@ -204,6 +140,7 @@ fn local_dir_parser<'src>() -> impl Parser<'src, &'src str, LocalDir, extra::Err
     let dirve_letter = any()
         .filter(|c: &char| c.is_ascii_alphabetic())
         .then_ignore(just(":"))
+        .then_ignore(path_separator)
         .labelled("drive letter");
 
     choice((
@@ -213,11 +150,10 @@ fn local_dir_parser<'src>() -> impl Parser<'src, &'src str, LocalDir, extra::Err
     .then(
         path_segment_parser()
             .separated_by(path_separator)
+            .allow_trailing()
             .collect::<Vec<&str>>()
             .labelled("path segments"),
     )
-    .then_ignore(path_separator.or_not())
-    .then_ignore(end().labelled("end of path"))
     .map(|(dirve_letter, segments)| {
         let mut dirs = if let Some(dirve_letter) = dirve_letter {
             vec![dirve_letter.to_string()]
@@ -230,8 +166,9 @@ fn local_dir_parser<'src>() -> impl Parser<'src, &'src str, LocalDir, extra::Err
 }
 
 pub fn local_dir(input: &str) -> PathResult<LocalDir> {
-    // 第一步：使用 chumsky parser 解析基本结构
+    // 使用 chumsky parser 解析基本结构
     let result = local_dir_parser()
+        .then_ignore(end().labelled("end of local dir"))
         .parse(input)
         .into_result()
         .map_err(|errors| {
@@ -239,16 +176,11 @@ pub fn local_dir(input: &str) -> PathResult<LocalDir> {
             PathError::SyntaxError(format!("{}", error))
         })?;
 
-    // 第二步：验证每个路径段
-    for dir in &result.0 {
-        validate_segment(dir)?;
-    }
-
     Ok(result)
 }
 
-fn local_path_parser<'src>() -> impl Parser<'src, &'src str, LocalPath, extra::Err<Rich<'src, char>>>
-{
+pub fn local_path_parser<'src>()
+-> impl Parser<'src, &'src str, LocalPath, extra::Err<Rich<'src, char>>> {
     // 路径分隔符
     let path_separator = one_of("/\\").labelled("path separator");
 
@@ -270,7 +202,6 @@ fn local_path_parser<'src>() -> impl Parser<'src, &'src str, LocalPath, extra::E
             .collect::<Vec<&str>>()
             .labelled("path segments"),
     )
-    .then_ignore(end().labelled("end of path"))
     .map(|(dirve_letter, segments)| {
         let mut dirs = if let Some(dirve_letter) = dirve_letter {
             vec![dirve_letter.to_string()]
@@ -290,20 +221,15 @@ fn local_path_parser<'src>() -> impl Parser<'src, &'src str, LocalPath, extra::E
 }
 
 pub fn local_path(input: &str) -> PathResult<LocalPath> {
-    // 第一步：使用 chumsky parser 解析基本结构
+    // 使用 chumsky parser 解析基本结构
     let result = local_path_parser()
+        .then_ignore(end().labelled("end of local path"))
         .parse(input)
         .into_result()
         .map_err(|errors| {
             let error = errors.into_iter().next().unwrap();
             PathError::SyntaxError(format!("{}", error))
         })?;
-
-    // 第二步：验证每个路径段
-    for dir in &result.dirs.0 {
-        validate_segment(dir)?;
-    }
-    validate_filename(&result.file)?;
 
     Ok(result)
 }
@@ -341,7 +267,6 @@ fn local_path_wildcard_parser<'src>()
     )
     .then(just("...").or_not())
     .then(filename_wildcard)
-    .then_ignore(end().labelled("end of path"))
     .map(|(((dirve_letter, segments), recursive_dir), filename)| {
         let mut dirs = if let Some(dirve_letter) = dirve_letter {
             vec![dirve_letter.to_string()]
@@ -361,27 +286,13 @@ fn local_path_wildcard_parser<'src>()
 pub fn local_path_wildcard(input: &str) -> PathResult<LocalPathWildcard> {
     // 使用 chumsky parser 解析基本结构
     let result = local_path_wildcard_parser()
+        .then_ignore(end().labelled("end of local path wildcard"))
         .parse(input)
         .into_result()
         .map_err(|errors| {
             let error = errors.into_iter().next().unwrap();
             PathError::SyntaxError(format!("{}", error))
         })?;
-
-    // 验证每个路径段
-    for dir in &result.dirs.0 {
-        validate_segment(dir)?;
-    }
-    // 验证文件名
-    match &result.wildcard {
-        FilenameWildcard::Exact(exact) => {
-            validate_filename(exact)?;
-        }
-        FilenameWildcard::Extension(extension) => {
-            validate_filename(extension)?;
-        }
-        FilenameWildcard::All => {}
-    }
 
     Ok(result)
 }

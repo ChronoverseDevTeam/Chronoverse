@@ -7,9 +7,6 @@ pub enum PathError {
     #[error("Syntax error: {0}")]
     SyntaxError(String),
 
-    #[error("Invalid path format: {0}")]
-    InvalidPath(String),
-
     #[error("Regex compilation error: {0}")]
     RegexError(#[from] regex::Error),
 
@@ -140,6 +137,16 @@ impl LocalDir {
     pub fn parse(path: &str) -> PathResult<Self> {
         parsers::path::local_dir(path)
     }
+
+    /// 转化为使用 `/` 分割文件夹的路径
+    pub fn to_unix_path_string(&self) -> String {
+        let dir_string = self
+            .0
+            .iter()
+            .map(|dir| format!("{}/", dir))
+            .collect::<String>();
+        format!("/{}", dir_string)
+    }
 }
 
 /// 本地路径（规范化后的绝对路径，精确到文件）
@@ -255,14 +262,22 @@ mod test_depot_path {
         let depot_path = DepotPath::parse(path);
         assert!(depot_path.is_err());
         let depot_path_err = depot_path.err().unwrap();
-        assert!(matches!(depot_path_err, PathError::InvalidPath(_)));
+        assert!(matches!(depot_path_err, PathError::SyntaxError(_)));
         println!("{}:{}", path, depot_path_err);
 
         let path = "//crv/cli/src/...";
         let depot_path = DepotPath::parse(path);
         assert!(depot_path.is_err());
         let depot_path_err = depot_path.err().unwrap();
-        assert!(matches!(depot_path_err, PathError::InvalidPath(_)));
+        assert!(matches!(depot_path_err, PathError::SyntaxError(_)));
+        println!("{}:{}", path, depot_path_err);
+
+        // 文件名以空格结尾
+        let path = "//crv/cli/src/新建文本文档.txt ";
+        let depot_path = DepotPath::parse(path);
+        assert!(depot_path.is_err());
+        let depot_path_err = depot_path.err().unwrap();
+        assert!(matches!(depot_path_err, PathError::SyntaxError(_)));
         println!("{}:{}", path, depot_path_err);
 
         // 4. 非法字符 `~`，已经是范围索引 depot path 的保留字
@@ -270,7 +285,7 @@ mod test_depot_path {
         let depot_path = DepotPath::parse(path);
         assert!(depot_path.is_err());
         let depot_path_err = depot_path.err().unwrap();
-        assert!(matches!(depot_path_err, PathError::InvalidPath(_)));
+        assert!(matches!(depot_path_err, PathError::SyntaxError(_)));
         println!("{}:{}", path, depot_path_err);
 
         // 5. 其他非法字符 `"*\|/<>?:`
@@ -278,15 +293,7 @@ mod test_depot_path {
         let depot_path = DepotPath::parse(path);
         assert!(depot_path.is_err());
         let depot_path_err = depot_path.err().unwrap();
-        assert!(matches!(depot_path_err, PathError::InvalidPath(_)));
-        println!("{}:{}", path, depot_path_err);
-
-        // 6. 文件名以空格结尾
-        let path = "//crv/cli/src/新建文本文档.txt ";
-        let depot_path = DepotPath::parse(path);
-        assert!(depot_path.is_err());
-        let depot_path_err = depot_path.err().unwrap();
-        assert!(matches!(depot_path_err, PathError::InvalidPath(_)));
+        assert!(matches!(depot_path_err, PathError::SyntaxError(_)));
         println!("{}:{}", path, depot_path_err);
     }
 
@@ -346,12 +353,20 @@ mod test_depot_path {
         assert!(matches!(depot_path_err, PathError::SyntaxError(_)));
         println!("{}:{}", path, depot_path_err);
 
+        // 文件名以空格结尾
+        let path = "//crv/cli/src/新建文本文档.txt ";
+        let depot_path = DepotPathWildcard::parse(path);
+        assert!(depot_path.is_err());
+        let depot_path_err = depot_path.err().unwrap();
+        assert!(matches!(depot_path_err, PathError::SyntaxError(_)));
+        println!("{}:{}", path, depot_path_err);
+
         // 3. 非法字符 `...`，已经是范围索引 depot path 的保留字
         let path = "//crv/cli/src.../build.rs";
         let depot_path = DepotPathWildcard::parse(path);
         assert!(depot_path.is_err());
         let depot_path_err = depot_path.err().unwrap();
-        assert!(matches!(depot_path_err, PathError::InvalidPath(_)));
+        assert!(matches!(depot_path_err, PathError::SyntaxError(_)));
         println!("{}:{}", path, depot_path_err);
 
         // 4. 非法字符 `~`，已经是范围索引 depot path 的保留字
@@ -359,7 +374,7 @@ mod test_depot_path {
         let depot_path = DepotPathWildcard::parse(path);
         assert!(depot_path.is_err());
         let depot_path_err = depot_path.err().unwrap();
-        assert!(matches!(depot_path_err, PathError::InvalidPath(_)));
+        assert!(matches!(depot_path_err, PathError::SyntaxError(_)));
         println!("{}:{}", path, depot_path_err);
 
         // 5. 其他非法字符 `"*\|/<>?:`
@@ -367,15 +382,7 @@ mod test_depot_path {
         let depot_path = DepotPathWildcard::parse(path);
         assert!(depot_path.is_err());
         let depot_path_err = depot_path.err().unwrap();
-        assert!(matches!(depot_path_err, PathError::InvalidPath(_)));
-        println!("{}:{}", path, depot_path_err);
-
-        // 6. 文件名以空格结尾
-        let path = "//crv/cli/src/新建文本文档.txt ";
-        let depot_path = DepotPathWildcard::parse(path);
-        assert!(depot_path.is_err());
-        let depot_path_err = depot_path.err().unwrap();
-        assert!(matches!(depot_path_err, PathError::InvalidPath(_)));
+        assert!(matches!(depot_path_err, PathError::SyntaxError(_)));
         println!("{}:{}", path, depot_path_err);
     }
 
@@ -441,6 +448,21 @@ mod test_depot_path {
 #[cfg(test)]
 mod test_local_path {
     use super::*;
+
+    #[test]
+    fn test_local_dir_parse() {
+        let path = r"C:\Users/Documents/";
+        let local_dir = LocalDir::parse(path);
+        assert!(local_dir.is_ok());
+        let local_dir = local_dir.unwrap();
+        assert_eq!(local_dir.to_unix_path_string(), "/C/Users/Documents/");
+
+        let path = r"C:\Users/Documents";
+        let local_dir = LocalDir::parse(path);
+        assert!(local_dir.is_ok());
+        let local_dir = local_dir.unwrap();
+        assert_eq!(local_dir.to_unix_path_string(), "/C/Users/Documents/");
+    }
 
     #[test]
     fn test_local_path_parse_windows() {
@@ -586,7 +608,7 @@ mod test_local_path {
         if let Err(e) = local_path {
             assert!(matches!(
                 e,
-                PathError::SyntaxError(_) | PathError::InvalidPath(_)
+                PathError::SyntaxError(_) | PathError::SyntaxError(_)
             ));
             println!("Empty path: {}", e);
         }
@@ -636,7 +658,7 @@ mod test_local_path {
         let local_path = LocalPath::parse(path);
         assert!(local_path.is_err());
         if let Err(e) = local_path {
-            assert!(matches!(e, PathError::InvalidPath(_)));
+            assert!(matches!(e, PathError::SyntaxError(_)));
             println!("Reserved pattern: {}", e);
         }
 
@@ -645,7 +667,7 @@ mod test_local_path {
         let local_path = LocalPath::parse(path);
         assert!(local_path.is_err());
         if let Err(e) = local_path {
-            assert!(matches!(e, PathError::InvalidPath(_)));
+            assert!(matches!(e, PathError::SyntaxError(_)));
             println!("Reserved char ~: {}", e);
         }
 
@@ -654,7 +676,7 @@ mod test_local_path {
         let local_path = LocalPath::parse(path);
         assert!(local_path.is_err());
         if let Err(e) = local_path {
-            assert!(matches!(e, PathError::InvalidPath(_)));
+            assert!(matches!(e, PathError::SyntaxError(_)));
             println!("Illegal char |: {}", e);
         }
 
@@ -663,7 +685,7 @@ mod test_local_path {
         let local_path = LocalPath::parse(path);
         assert!(local_path.is_err());
         if let Err(e) = local_path {
-            assert!(matches!(e, PathError::InvalidPath(_)));
+            assert!(matches!(e, PathError::SyntaxError(_)));
             println!("Trailing whitespace: {}", e);
         }
 
@@ -672,7 +694,7 @@ mod test_local_path {
         let local_path = LocalPath::parse(path);
         assert!(local_path.is_err());
         if let Err(e) = local_path {
-            assert!(matches!(e, PathError::InvalidPath(_)));
+            assert!(matches!(e, PathError::SyntaxError(_)));
             println!("Windows trailing whitespace: {}", e);
         }
 
@@ -681,7 +703,7 @@ mod test_local_path {
         let local_path = LocalPath::parse(path);
         assert!(local_path.is_err());
         if let Err(e) = local_path {
-            assert!(matches!(e, PathError::InvalidPath(_)));
+            assert!(matches!(e, PathError::SyntaxError(_)));
             println!("Wildcard char: {}", e);
         }
 
@@ -791,12 +813,20 @@ mod test_local_path {
         assert!(matches!(depot_path_err, PathError::SyntaxError(_)));
         println!("{}:{}", path, depot_path_err);
 
+        // 文件名以空格结尾
+        let path = "/crv/cli/src/新建文本文档.txt ";
+        let depot_path = LocalPathWildcard::parse(path);
+        assert!(depot_path.is_err());
+        let depot_path_err = depot_path.err().unwrap();
+        assert!(matches!(depot_path_err, PathError::SyntaxError(_)));
+        println!("{}:{}", path, depot_path_err);
+
         // 3. 非法字符 `...`，已经是范围索引 depot path 的保留字
         let path = "/crv/cli/src.../build.rs";
         let depot_path = LocalPathWildcard::parse(path);
         assert!(depot_path.is_err());
         let depot_path_err = depot_path.err().unwrap();
-        assert!(matches!(depot_path_err, PathError::InvalidPath(_)));
+        assert!(matches!(depot_path_err, PathError::SyntaxError(_)));
         println!("{}:{}", path, depot_path_err);
 
         // 4. 非法字符 `~`，已经是范围索引 depot path 的保留字
@@ -804,7 +834,7 @@ mod test_local_path {
         let depot_path = LocalPathWildcard::parse(path);
         assert!(depot_path.is_err());
         let depot_path_err = depot_path.err().unwrap();
-        assert!(matches!(depot_path_err, PathError::InvalidPath(_)));
+        assert!(matches!(depot_path_err, PathError::SyntaxError(_)));
         println!("{}:{}", path, depot_path_err);
 
         // 5. 其他非法字符 `"*\|/<>?:`
@@ -812,15 +842,7 @@ mod test_local_path {
         let depot_path = LocalPathWildcard::parse(path);
         assert!(depot_path.is_err());
         let depot_path_err = depot_path.err().unwrap();
-        assert!(matches!(depot_path_err, PathError::InvalidPath(_)));
-        println!("{}:{}", path, depot_path_err);
-
-        // 6. 文件名以空格结尾
-        let path = "/crv/cli/src/新建文本文档.txt ";
-        let depot_path = LocalPathWildcard::parse(path);
-        assert!(depot_path.is_err());
-        let depot_path_err = depot_path.err().unwrap();
-        assert!(matches!(depot_path_err, PathError::InvalidPath(_)));
+        assert!(matches!(depot_path_err, PathError::SyntaxError(_)));
         println!("{}:{}", path, depot_path_err);
     }
 }
