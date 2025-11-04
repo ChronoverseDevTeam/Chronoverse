@@ -1,6 +1,8 @@
 use crate::{
     parsers,
-    path::basic::{DepotPath, DepotPathWildcard, LocalDir, LocalPath, RangeDepotWildcard},
+    path::basic::{
+        DepotPath, DepotPathWildcard, LocalDir, LocalPath, LocalPathWildcard, RangeDepotWildcard,
+    },
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -103,7 +105,38 @@ impl WorkspaceConfig {
         Ok(workspace_config)
     }
 
-    pub fn verify_mapping_under_root(&self) -> Result<(), Vec<String>> {
+    // pub fn mapping_local_path(local_path: &LocalPath) -> Option<DepotPath> {
+    //     todo!()
+    // }
+
+    // pub fn mapping_local_range(local_range: &LocalPathWildcard) -> Option<RangeDepotWildcard> {
+    //     todo!()
+    // }
+
+    // /// 将一个 depot 路径映射为该工作区下的本地路径
+    // pub fn mapping_depot_path(&self, depot_path: &DepotPath) -> Option<LocalPath> {
+    //     // 反向遍历所有 mapping
+    //     for mapping in &self.mappings {
+    //         match mapping {
+    //             WorkspaceMapping::Include(include_mapping) => match include_mapping {
+    //                 IncludeMapping::File(file_mapping) => {
+    //                     if depot_path == &file_mapping.depot_file {
+    //                         return Some(file_mapping.local_file.clone());
+    //                     }
+    //                 }
+    //                 IncludeMapping::Range(folder_mapping) => folder_mapping.depot_folder,
+    //             },
+    //             WorkspaceMapping::Exclude(exclude_mapping) => todo!(),
+    //         }
+    //     }
+    //     None
+    // }
+
+    // pub fn mapping_depot_range(depot_range: &RangeDepotWildcard) -> Option<LocalPathWildcard> {
+    //     todo!()
+    // }
+
+    fn verify_mapping_under_root(&self) -> Result<(), Vec<String>> {
         let mut errors = vec![];
 
         for mapping in &self.mappings {
@@ -154,7 +187,7 @@ impl WorkspaceConfig {
     }
 
     /// 检查 mapping 中是否存在冲突的配置项
-    pub fn verify_conflict_free(&self) -> Result<(), Vec<String>> {
+    fn verify_conflict_free(&self) -> Result<(), Vec<String>> {
         let mut errors = vec![];
 
         // 检查映射是否冲突
@@ -416,6 +449,11 @@ impl WorkspaceConfig {
                 // case 2.1. local 包含，depot 不包含，冲突
                 if local_contain && !depot_contain {
                     let local_diff = &primary_local_file.dirs.0[local_common_prefix_end_index..];
+                    // 非递归目录的情况下，当且仅当 local dir 完全相同的时候冲突
+                    if !secondary_depot_dir.recursive && !local_diff.is_empty() {
+                        return Ok(());
+                    }
+
                     // secondary_depot_dir + local_diff
                     // 与 primary_depot_file
                     // 都会映射到 primary_local_file
@@ -451,6 +489,11 @@ impl WorkspaceConfig {
                         return Ok(());
                     } else {
                         // case 2.2.2. 文件部分不同，冲突
+                        // 非递归目录的情况下，当且仅当 local dir 完全相同的时候冲突
+                        if !secondary_depot_dir.recursive && !local_diff.is_empty() {
+                            return Ok(());
+                        }
+
                         // secondary_depot_dir + local_diff
                         // 与 primary_depot_file
                         // 都会映射到 primary_local_file
@@ -501,6 +544,10 @@ impl WorkspaceConfig {
                     && depot_common_prefix_end_index != primary_depot_dir.dirs.len()
                 {
                     let local_diff = &secondary_local_file.dirs.0[local_common_prefix_end_index..];
+                    // 非递归目录的情况下，当且仅当 local dir 完全相同的时候冲突
+                    if !primary_depot_dir.recursive && !local_diff.is_empty() {
+                        return Ok(());
+                    }
                     // secondary_depot_file
                     // 与 primary_depot_dir + local_diff
                     // 都会映射到 secondary_local_file
@@ -572,7 +619,11 @@ impl WorkspaceConfig {
                                 if diff_common_prefix_end_index == depot_diff.len() {
                                     return Ok(());
                                 } else {
-                                    // case 4.2.1.1.2. 差异部分不相互包含，存在冲突
+                                    // case 4.2.1.1.2. 差异部分不相互包含，
+                                    // 且 secondary_depot 是递归目录时，存在冲突
+                                    if !secondary_depot_dir.recursive {
+                                        return Ok(());
+                                    }
                                     let local_diff_diff =
                                         &local_diff[diff_common_prefix_end_index..];
                                     let depot_prefix_and_diff_prefix = &primary_depot_dir.dirs[0
@@ -604,7 +655,12 @@ impl WorkspaceConfig {
                                     ));
                                 }
                             } else {
-                                // case 4.2.1.2. primary depot 更长，且差异部分比 local 的差异部分更长，存在冲突
+                                // case 4.2.1.2. primary depot 更长，且差异部分比 local 的差异部分更长，
+                                // 且 secondary_depot 是递归目录时，存在冲突
+                                if !secondary_depot_dir.recursive {
+                                    return Ok(());
+                                }
+
                                 let diff_common_prefix_end_index =
                                     Self::common_prefix_end_index(local_diff, depot_diff);
                                 let local_diff_diff = &local_diff[diff_common_prefix_end_index..];
@@ -640,7 +696,11 @@ impl WorkspaceConfig {
                             return Ok(());
                         }
                     } else {
-                        // case 4.2.2. primary depot 与 secondary depot 不相互包含，冲突
+                        // case 4.2.2. primary depot 与 secondary depot 不相互包含，
+                        // 且 secondary depot 是递归目录时，冲突
+                        if !secondary_depot_dir.recursive {
+                            return Ok(());
+                        }
                         // secondary_depot_dir + local_diff
                         // 与 primary_depot_dir 都会映射到 primary_local_dir
 
@@ -675,8 +735,12 @@ impl WorkspaceConfig {
                             .len()
                             .min(secondary_depot_dir.dirs.len())
                     {
-                        // case 4.3.1.1. primary depot 更长，冲突
+                        // case 4.3.1.1. primary depot 更长，且 primary depot 是递归目录时，冲突
                         if primary_depot_dir.dirs.len() > secondary_depot_dir.dirs.len() {
+                            if !primary_depot_dir.recursive {
+                                return Ok(());
+                            }
+
                             // local 差异部分
                             let local_diff =
                                 &secondary_local_dir.0[local_common_prefix_end_index..];
@@ -714,7 +778,12 @@ impl WorkspaceConfig {
                             return Ok(());
                         }
                     } else {
-                        // case 4.3.2. primary depot 与 secondary depot 不相互包含，冲突
+                        // case 4.3.2. primary depot 与 secondary depot 不相互包含，
+                        // 且 primary depot 是递归目录时，冲突
+                        if !primary_depot_dir.recursive {
+                            return Ok(());
+                        }
+
                         let local_diff = &secondary_local_dir.0[local_common_prefix_end_index..];
                         // primary_depot_dir + local_diff
                         // 与 secondary_depot_dir
