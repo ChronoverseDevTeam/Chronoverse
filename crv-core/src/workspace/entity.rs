@@ -946,6 +946,19 @@ mod test {
             workspace_config_err,
             WorkspaceError::MappingConflictError(_)
         ));
+        let root_dir = r#"D:\temp"#;
+        let mappings = r#"
+            //a/b/c/... D:\temp\a\b
+            //a/b/d/... D:\temp\
+        "#;
+        let workspace_config = WorkspaceConfig::from_specification(root_dir, mappings);
+        assert!(workspace_config.is_err());
+        let workspace_config_err = workspace_config.err().unwrap();
+        println!("case 3. mapping 冲突：{}", workspace_config_err);
+        assert!(matches!(
+            workspace_config_err,
+            WorkspaceError::MappingConflictError(_)
+        ));
         let root_dir = r#"/root/workspace"#;
         let mappings = r#"
             //a/b/...~a /root/workspace/a/b
