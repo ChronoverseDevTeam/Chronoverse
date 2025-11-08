@@ -78,7 +78,8 @@ impl PathEngine {
                 WorkspaceMapping::Include(include_mapping) => match include_mapping {
                     IncludeMapping::File(file_mapping) => {
                         if &file_mapping.local_file == local_path {
-                            if self.mapping_depot_path(&file_mapping.depot_file).is_some() {
+                            let mapping_back = self.mapping_depot_path(&file_mapping.depot_file);
+                            if mapping_back.is_some() && &mapping_back.unwrap() == local_path {
                                 // 如果还能映射回来，说明没有被排除掉
                                 return Some(file_mapping.depot_file.clone());
                             } else {
@@ -111,7 +112,8 @@ impl PathEngine {
                             dirs: depot_dir_candidate,
                             file: local_path.file.clone(),
                         };
-                        if self.mapping_depot_path(&depot_path_candidate).is_some() {
+                        let mapping_back = self.mapping_depot_path(&depot_path_candidate);
+                        if mapping_back.is_some() && &mapping_back.unwrap() == local_path {
                             return Some(depot_path_candidate);
                         } else {
                             // 同理，不用再向上遍历了
@@ -244,6 +246,7 @@ mod tests {
             -r://.*\.b
             //a/b/c/d.txt /root/test/a/d.ini
             -//a/b/c/...~txt
+            //a/b/c/d/e.txt /root/test/a/e1.ini
             //a/b/c/d/e.txt /root/test/a/e.ini
             "#,
         )
@@ -264,6 +267,8 @@ mod tests {
             engine.mapping_local_path(&local_path).unwrap(),
             DepotPath::parse("//a/b/c/d/e.txt").unwrap()
         );
+        let local_path = LocalPath::parse("/root/test/a/e1.ini").unwrap();
+        assert!(engine.mapping_local_path(&local_path).is_none());
         let local_path = LocalPath::parse("/root/test/a/b/z-a").unwrap();
         assert!(engine.mapping_local_path(&local_path).is_none());
     }
