@@ -2,10 +2,7 @@ use tonic::{transport::Server, Request, Response, Status};
 use crate::pb::hive_service_server::{HiveService, HiveServiceServer};
 use crate::pb::{
     UpsertWorkspaceReq, GreetingReq, ListWorkspaceReq, ListWorkspaceRsp, NilRsp, 
-    LoginReq, LoginRsp, RegisterReq, RegisterRsp,
-    TrackFilesIntoChangelistReq, UntrackFilesFromChangelistReq, 
-    SubmitFilesInChangelistReq, SubmitFilesInChangelistRsp,
-    ListFilesInChangelistReq, ListFilesInChangelistRsp
+    LoginReq, LoginRsp, RegisterReq, RegisterRsp
 };
 use crate::middleware::{RenewToken, apply_renew_metadata, enforce_jwt};
 
@@ -58,54 +55,6 @@ impl HiveService for CrvHiveService {
         request: Request<RegisterReq>,
     ) -> Result<Response<RegisterRsp>, Status> {
         crate::logic::auth::register(request).await
-    }
-
-    async fn track_files_into_changelist(
-        &self,
-        request: Request<TrackFilesIntoChangelistReq>,
-    ) -> Result<Response<NilRsp>, Status> {
-        let request = enforce_jwt(request)?;
-        let renew = request.extensions().get::<RenewToken>().cloned();
-        
-        let mut resp = crate::logic::changelist::track_files_into_changelist(request).await?;
-        apply_renew_metadata(renew, &mut resp);
-        Ok(resp)
-    }
-
-    async fn untrack_files_from_changelist(
-        &self,
-        request: Request<UntrackFilesFromChangelistReq>,
-    ) -> Result<Response<NilRsp>, Status> {
-        let request = enforce_jwt(request)?;
-        let renew = request.extensions().get::<RenewToken>().cloned();
-        
-        let mut resp = crate::logic::changelist::untrack_files_from_changelist(request).await?;
-        apply_renew_metadata(renew, &mut resp);
-        Ok(resp)
-    }
-
-    async fn list_files_in_changelist(
-        &self,
-        request: Request<ListFilesInChangelistReq>,
-    ) -> Result<Response<ListFilesInChangelistRsp>, Status> {
-        let request = enforce_jwt(request)?;
-        let renew = request.extensions().get::<RenewToken>().cloned();
-        
-        let mut resp = crate::logic::changelist::list_files_in_changelist(request).await?;
-        apply_renew_metadata(renew, &mut resp);
-        Ok(resp)
-    }
-
-    async fn submit_files_in_default_changelist(
-        &self,
-        request: Request<SubmitFilesInChangelistReq>,
-    ) -> Result<Response<SubmitFilesInChangelistRsp>, Status> {
-        let request = enforce_jwt(request)?;
-        let renew = request.extensions().get::<RenewToken>().cloned();
-        
-        let mut resp = crate::logic::changelist::submit_files_in_changelist(request).await?;
-        apply_renew_metadata(renew, &mut resp);
-        Ok(resp)
     }
 }
 

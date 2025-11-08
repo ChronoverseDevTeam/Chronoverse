@@ -52,52 +52,6 @@ message RegisterReq {
 
 message RegisterRsp {}
 
-message TrackFilesIntoChangelistReq {
-  string workspace_name = 1;
-  // 若 changelist_id 为 0，则代表是默认 cl
-  int64 changelist_id = 2;
-  repeated string depot_paths = 3;
-}
-
-message UntrackFilesFromChangelistReq {
-  string workspace_name = 1;
-  // 若 changelist_id 为 0，则代表是默认 cl
-  int64 changelist_id = 2;
-  repeated string depot_paths = 3;
-  optional bool all = 4;
-}
-
-message SubmitFilesInChangelistReq {
-  string workspace_name = 1;
-  // 若 changelist_id 为 0，则代表是默认 cl
-  int64 changelist_id = 2;
-  string description = 3;
-}
-
-enum SubmitChangelistResult {
-  UNKNOWN = 0;
-  SUCCESS = 1;
-  FAILED = 2;
-}
-
-message SubmitFilesInChangelistRsp {
-  int64 changelist_id = 1;
-  SubmitChangelistResult result = 2;
-}
-
-message ListFilesInChangelistReq {
-  string workspace_name = 1;
-  // 若 changelist_id 为 0，则代表是默认 cl
-  int64 changelist_id = 2;
-}
-
-message ListFilesInChangelistRsp {
-  string workspace_name = 1;
-  // 若 changelist_id 为 0，则代表是默认 cl
-  int64 changelist_id = 2;
-  repeated string depot_paths = 3;
-}
-
 service HiveService {
   rpc Greeting(GreetingReq) returns (NilRsp);
   rpc UpsertWorkspace(UpsertWorkspaceReq) returns (NilRsp);
@@ -106,8 +60,4 @@ service HiveService {
   // Auth & Token management
   rpc Login(LoginReq) returns (LoginRsp);
   rpc Register(RegisterReq) returns (RegisterRsp);
-  rpc TrackFilesIntoChangelist(TrackFilesIntoChangelistReq) returns (NilRsp);
-  rpc UntrackFilesFromChangelist(UntrackFilesFromChangelistReq) returns (NilRsp);
-  rpc ListFilesInChangelist(ListFilesInChangelistReq) returns (ListFilesInChangelistRsp);
-  rpc SubmitFilesInDefaultChangelist(SubmitFilesInChangelistReq) returns (SubmitFilesInChangelistRsp);
 }
