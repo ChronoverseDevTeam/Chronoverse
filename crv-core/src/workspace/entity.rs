@@ -46,15 +46,12 @@ pub enum WorkspaceMapping {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum IncludeMapping {
     File(FileMapping),
-    Range(FolderMapping),
+    Folder(FolderMapping),
 }
 
 /// Workspace 排除映射
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ExcludeMapping {
-    File(DepotPath),
-    Range(DepotPathWildcard),
-}
+pub struct ExcludeMapping(pub DepotPathWildcard);
 
 /// 单文件映射
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -105,37 +102,6 @@ impl WorkspaceConfig {
         Ok(workspace_config)
     }
 
-    // pub fn mapping_local_path(local_path: &LocalPath) -> Option<DepotPath> {
-    //     todo!()
-    // }
-
-    // pub fn mapping_local_range(local_range: &LocalPathWildcard) -> Option<RangeDepotWildcard> {
-    //     todo!()
-    // }
-
-    // /// 将一个 depot 路径映射为该工作区下的本地路径
-    // pub fn mapping_depot_path(&self, depot_path: &DepotPath) -> Option<LocalPath> {
-    //     // 反向遍历所有 mapping
-    //     for mapping in &self.mappings {
-    //         match mapping {
-    //             WorkspaceMapping::Include(include_mapping) => match include_mapping {
-    //                 IncludeMapping::File(file_mapping) => {
-    //                     if depot_path == &file_mapping.depot_file {
-    //                         return Some(file_mapping.local_file.clone());
-    //                     }
-    //                 }
-    //                 IncludeMapping::Range(folder_mapping) => folder_mapping.depot_folder,
-    //             },
-    //             WorkspaceMapping::Exclude(exclude_mapping) => todo!(),
-    //         }
-    //     }
-    //     None
-    // }
-
-    // pub fn mapping_depot_range(depot_range: &RangeDepotWildcard) -> Option<LocalPathWildcard> {
-    //     todo!()
-    // }
-
     fn verify_mapping_under_root(&self) -> Result<(), Vec<String>> {
         let mut errors = vec![];
 
@@ -157,7 +123,7 @@ impl WorkspaceConfig {
                                 self.root_dir.to_unix_path_string()
                             ));
                         }
-                        IncludeMapping::Range(folder_mapping) => {
+                        IncludeMapping::Folder(folder_mapping) => {
                             if Self::common_prefix_end_index(
                                 &folder_mapping.local_folder.0,
                                 &self.root_dir.0,
@@ -255,7 +221,7 @@ impl WorkspaceConfig {
                 }
             }
             // case 2. 一个是文件，另一个是目录
-            (IncludeMapping::File(primary_mapping), IncludeMapping::Range(secondary_mapping)) => {
+            (IncludeMapping::File(primary_mapping), IncludeMapping::Folder(secondary_mapping)) => {
                 match &secondary_mapping.depot_folder.wildcard {
                     crate::path::basic::FilenameWildcard::Exact(filename) => {
                         if &primary_mapping.local_file.file == filename {
@@ -277,7 +243,7 @@ impl WorkspaceConfig {
                 }
             }
             // case 2. 一个是文件，另一个是目录
-            (IncludeMapping::Range(primary_mapping), IncludeMapping::File(secondary_mapping)) => {
+            (IncludeMapping::Folder(primary_mapping), IncludeMapping::File(secondary_mapping)) => {
                 match &primary_mapping.depot_folder.wildcard {
                     crate::path::basic::FilenameWildcard::Exact(filename) => {
                         if &secondary_mapping.local_file.file == filename {
@@ -299,7 +265,10 @@ impl WorkspaceConfig {
                 }
             }
             // case 3. 都是目录
-            (IncludeMapping::Range(primary_mapping), IncludeMapping::Range(secondary_mapping)) => {
+            (
+                IncludeMapping::Folder(primary_mapping),
+                IncludeMapping::Folder(secondary_mapping),
+            ) => {
                 match (
                     &primary_mapping.depot_folder.wildcard,
                     &secondary_mapping.depot_folder.wildcard,
@@ -430,7 +399,7 @@ impl WorkspaceConfig {
                 }
             }
             // case 2. primary 是文件，secondary 是目录
-            (IncludeMapping::File(primary_mapping), IncludeMapping::Range(secondary_mapping)) => {
+            (IncludeMapping::File(primary_mapping), IncludeMapping::Folder(secondary_mapping)) => {
                 let primary_local_file = &primary_mapping.local_file;
                 let primary_depot_file = &primary_mapping.depot_file;
                 let secondary_local_dir = &secondary_mapping.local_folder;
@@ -526,7 +495,7 @@ impl WorkspaceConfig {
                 }
             }
             // case 3. primary 是目录，secondary 是文件
-            (IncludeMapping::Range(primary_mapping), IncludeMapping::File(secondary_mapping)) => {
+            (IncludeMapping::Folder(primary_mapping), IncludeMapping::File(secondary_mapping)) => {
                 let primary_local_dir = &primary_mapping.local_folder;
                 let primary_depot_dir = &primary_mapping.depot_folder;
                 let secondary_local_file = &secondary_mapping.local_file;
@@ -579,7 +548,10 @@ impl WorkspaceConfig {
                 }
             }
             // case 4. 都是目录
-            (IncludeMapping::Range(primary_mapping), IncludeMapping::Range(secondary_mapping)) => {
+            (
+                IncludeMapping::Folder(primary_mapping),
+                IncludeMapping::Folder(secondary_mapping),
+            ) => {
                 let primary_local_dir = &primary_mapping.local_folder;
                 let secondary_local_dir = &secondary_mapping.local_folder;
                 let primary_depot_dir = &primary_mapping.depot_folder;
@@ -889,6 +861,22 @@ mod test {
         let workspace_config = WorkspaceConfig::from_specification(root_dir, mappings);
         println!("case 0. 正常解析：{:?}", workspace_config);
         assert!(workspace_config.is_ok());
+        let root_dir = r#"/root/workspace"#;
+        let mappings = r#"
+            //a/b/...~a /root/workspace/a/b
+            //a/b/...~b /root/workspace/a/b
+            //a/b/txt.a /root/workspace/a/b/txt.a"#;
+        let workspace_config = WorkspaceConfig::from_specification(root_dir, mappings);
+        println!("case 0. 正常解析：{:?}", workspace_config);
+        assert!(workspace_config.is_ok());
+        let root_dir = r#"/root/workspace"#;
+        let mappings = r#"
+            //a/b/~a /root/workspace/a/b
+            //a/b/~b /root/workspace/a/b
+            //a/b/txt.a /root/workspace/a/b/txt.a"#;
+        let workspace_config = WorkspaceConfig::from_specification(root_dir, mappings);
+        println!("case 0. 正常解析：{:?}", workspace_config);
+        assert!(workspace_config.is_ok());
 
         let root_dir = r#"D:\temp"#;
         let mappings = r#"
@@ -950,6 +938,32 @@ mod test {
         let mappings = r#"
             //a/b/c/... D:\temp
             //a/b/c/d/... D:\temp\e\ "#;
+        let workspace_config = WorkspaceConfig::from_specification(root_dir, mappings);
+        assert!(workspace_config.is_err());
+        let workspace_config_err = workspace_config.err().unwrap();
+        println!("case 3. mapping 冲突：{}", workspace_config_err);
+        assert!(matches!(
+            workspace_config_err,
+            WorkspaceError::MappingConflictError(_)
+        ));
+        let root_dir = r#"/root/workspace"#;
+        let mappings = r#"
+            //a/b/...~a /root/workspace/a/b
+            //a/b/...~b /root/workspace/a/b
+            //a/b/txt.b /root/workspace/a/b/txt.a"#;
+        let workspace_config = WorkspaceConfig::from_specification(root_dir, mappings);
+        assert!(workspace_config.is_err());
+        let workspace_config_err = workspace_config.err().unwrap();
+        println!("case 3. mapping 冲突：{}", workspace_config_err);
+        assert!(matches!(
+            workspace_config_err,
+            WorkspaceError::MappingConflictError(_)
+        ));
+        let root_dir = r#"/root/workspace"#;
+        let mappings = r#"
+            //a/b/~a /root/workspace/a/b
+            //a/b/~b /root/workspace/a/b
+            //a/b/txt.b /root/workspace/a/b/txt.a"#;
         let workspace_config = WorkspaceConfig::from_specification(root_dir, mappings);
         assert!(workspace_config.is_err());
         let workspace_config_err = workspace_config.err().unwrap();

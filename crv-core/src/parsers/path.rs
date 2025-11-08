@@ -1,8 +1,8 @@
 use crate::path::basic::*;
-use chumsky::{container::Seq, prelude::*};
+use chumsky::prelude::*;
 
 // 路段中的非法字符集合
-const SEGMENT_ILLEGAL_CHARS: &str = "~*\\|/<>?:\r\n";
+// const SEGMENT_ILLEGAL_CHARS: &str = "~*\\|/<>?:\r\n";
 const SEGMENT_ILLEGAL_CHARS_WITH_BLANK: &str = " ~*\\|/<>?:\r\n";
 
 pub fn depot_path_parser<'src>()
@@ -118,7 +118,7 @@ pub fn depot_path_wildcard(input: &str) -> PathResult<DepotPathWildcard> {
         })?;
 
     match &result {
-        DepotPathWildcard::Range(range_depot_wildcard) => {}
+        DepotPathWildcard::Range(_) => {}
         DepotPathWildcard::Regex(regex_depot_wildcard) => {
             // 验证 regex
             let regex_compile_result = regex::Regex::new(&regex_depot_wildcard.pattern);

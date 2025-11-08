@@ -9,12 +9,9 @@ fn workspace_mappings_parser<'src>()
         .repeated()
         .at_least(1);
 
-    let exclude_file = just("-")
-        .ignore_then(path::depot_path_parser())
-        .map(|depot_file| WorkspaceMapping::Exclude(ExcludeMapping::File(depot_file)));
     let exclude_range = just("-")
         .ignore_then(path::depot_path_wildcard_parser())
-        .map(|depot_range| WorkspaceMapping::Exclude(ExcludeMapping::Range(depot_range)));
+        .map(|depot_range| WorkspaceMapping::Exclude(ExcludeMapping(depot_range)));
 
     let include_file = path::depot_path_parser()
         .then_ignore(whitespace)
@@ -29,13 +26,13 @@ fn workspace_mappings_parser<'src>()
         .then_ignore(whitespace)
         .then(path::local_dir_parser())
         .map(|(depot_folder, local_folder)| {
-            WorkspaceMapping::Include(IncludeMapping::Range(FolderMapping {
+            WorkspaceMapping::Include(IncludeMapping::Folder(FolderMapping {
                 depot_folder,
                 local_folder,
             }))
         });
 
-    choice((exclude_file, exclude_range, include_file, include_range))
+    choice((exclude_range, include_file, include_range))
         .padded()
         .repeated()
         .collect::<Vec<WorkspaceMapping>>()

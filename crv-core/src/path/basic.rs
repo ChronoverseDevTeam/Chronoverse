@@ -2,6 +2,16 @@ use crate::parsers;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+/// 求两个切片的公共前缀的结束索引，如果返回 0 则代表没有公共前缀
+fn common_prefix_end_index(slice_a: &[String], slice_b: &[String]) -> usize {
+    for (i, (a, b)) in slice_a.iter().zip(slice_b.iter()).enumerate() {
+        if a != b {
+            return i;
+        }
+    }
+    slice_a.len().min(slice_b.len())
+}
+
 #[derive(Error, Debug)]
 pub enum PathError {
     #[error("Syntax error: {0}")]
@@ -42,6 +52,14 @@ impl FilenameWildcard {
             FilenameWildcard::Exact(s) => s.clone(),
             FilenameWildcard::Extension(s) => format!("~{}", &s[1..]),
             FilenameWildcard::All => String::new(),
+        }
+    }
+    /// 检查一个文件名是否匹配该 wildcard
+    pub fn check_match(&self, filename: &str) -> bool {
+        match self {
+            FilenameWildcard::Exact(exact) => filename == exact,
+            FilenameWildcard::Extension(extension) => filename.ends_with(extension),
+            FilenameWildcard::All => true,
         }
     }
 }
@@ -122,6 +140,23 @@ pub struct RangeDepotWildcard {
     pub wildcard: FilenameWildcard,
 }
 
+impl RangeDepotWildcard {
+    /// 判断一个 depot path 是否被该 wildcard 匹配，如果匹配则返回 depot path 独有的目录部分，否则返回 None
+    pub fn match_and_get_diff<'a>(&self, depot_path: &'a DepotPath) -> Option<&'a [String]> {
+        let common_prefix_end = common_prefix_end_index(&self.dirs, &depot_path.dirs);
+        if common_prefix_end != self.dirs.len() {
+            return None;
+        }
+        if !self.recursive && common_prefix_end != depot_path.dirs.len() {
+            return None;
+        }
+        if !self.wildcard.check_match(&depot_path.file) {
+            return None;
+        }
+        Some(&depot_path.dirs[common_prefix_end..])
+    }
+}
+
 /// 正则 Depot Path
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RegexDepotWildcard {
@@ -146,6 +181,15 @@ impl LocalDir {
             .map(|dir| format!("{}/", dir))
             .collect::<String>();
         format!("/{}", dir_string)
+    }
+
+    /// 判断一个 local dir 是否在该 dir 下，如果在则返回 local dir 独有的目录部分，否则返回 None
+    pub fn match_and_get_diff<'a>(&self, other: &'a LocalDir) -> Option<&'a [String]> {
+        let common_prefix_end = common_prefix_end_index(&self.0, &other.0);
+        if common_prefix_end != self.0.len() {
+            return None;
+        }
+        Some(&other.0[common_prefix_end..])
     }
 }
 
@@ -207,6 +251,18 @@ impl LocalPathWildcard {
 
     pub fn parse(wildcard: &str) -> PathResult<Self> {
         parsers::path::local_path_wildcard(wildcard)
+    }
+
+    /// 判断一个 local path 是否在该 dir 下，如果在则返回 local path 独有的目录部分，否则返回 None
+    pub fn match_and_get_diff<'a>(&self, local_path: &'a LocalPath) -> Option<&'a [String]> {
+        let local_dir_diff = self.dirs.match_and_get_diff(&local_path.dirs)?;
+        if !self.recursive && local_dir_diff.len() != 0 {
+            return None;
+        }
+        if !self.wildcard.check_match(&local_path.file) {
+            return None;
+        }
+        Some(local_dir_diff)
     }
 }
 
@@ -606,10 +662,7 @@ mod test_local_path {
         let local_path = LocalPath::parse(path);
         assert!(local_path.is_err());
         if let Err(e) = local_path {
-            assert!(matches!(
-                e,
-                PathError::SyntaxError(_) | PathError::SyntaxError(_)
-            ));
+            assert!(matches!(e, PathError::SyntaxError(_)));
             println!("Empty path: {}", e);
         }
 
