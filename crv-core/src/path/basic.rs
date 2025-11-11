@@ -513,7 +513,7 @@ mod test_local_path {
         let local_dir = local_dir.unwrap();
         assert_eq!(local_dir.to_unix_path_string(), "/C/Users/Documents/");
 
-        let path = r"C:\Users/Documents";
+        let path = r"C:\Users/Documents\";
         let local_dir = LocalDir::parse(path);
         assert!(local_dir.is_ok());
         let local_dir = local_dir.unwrap();

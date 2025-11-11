@@ -149,11 +149,12 @@ pub fn local_dir_parser<'src>()
     ))
     .then(
         path_segment_parser()
-            .separated_by(path_separator)
-            .allow_trailing()
+            .then_ignore(path_separator)
+            .repeated()
             .collect::<Vec<&str>>()
             .labelled("path segments"),
     )
+    .then_ignore(path_segment_parser().not().rewind())
     .map(|(dirve_letter, segments)| {
         let mut dirs = if let Some(dirve_letter) = dirve_letter {
             vec![dirve_letter.to_string()]
@@ -202,6 +203,7 @@ pub fn local_path_parser<'src>()
             .collect::<Vec<&str>>()
             .labelled("path segments"),
     )
+    .then_ignore(path_separator.not().rewind())
     .map(|(dirve_letter, segments)| {
         let mut dirs = if let Some(dirve_letter) = dirve_letter {
             vec![dirve_letter.to_string()]
