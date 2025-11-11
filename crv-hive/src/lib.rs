@@ -9,3 +9,4 @@ pub mod config;
 pub mod logic;
 pub mod middleware;
 pub mod test;
+pub mod s3client;
