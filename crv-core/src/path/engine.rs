@@ -190,14 +190,15 @@ mod tests {
     #[test]
     fn test_mapping_depot() {
         let config = WorkspaceConfig::from_specification(
+            "workspace",
             "/home/youzheyin/Tree/Chronoverse/crv-cli/",
             r#"
-            //crv/cli/src/... /home/youzheyin/Tree/Chronoverse/crv-cli/src/
+            //crv/cli/src/... //workspace/src/
             -//crv/cli/src/~png
             -//crv/cli/somefile
-            //crv/assets/... /home/youzheyin/Tree/Chronoverse/crv-cli/assets/
+            //crv/assets/... //workspace/assets/
             -//crv/assets/...~jpg
-            //crv/assets/special-image/... /home/youzheyin/Tree/Chronoverse/crv-cli/assets/special-image/
+            //crv/assets/special-image/... //workspace/assets/special-image/
             "#,
         )
         .unwrap();
@@ -239,15 +240,16 @@ mod tests {
     #[test]
     fn test_mapping_local() {
         let config = WorkspaceConfig::from_specification(
+            "workspace",
             "/root/test/",
             r#"
-            //a/...~a /root/test/a/
-            //b/...~b /root/test/a/b/
+            //a/...~a //workspace/a/
+            //b/...~b //workspace/a/b/
             -r://.*\.b
-            //a/b/c/d.txt /root/test/a/d.ini
+            //a/b/c/d.txt //workspace/a/d.ini
             -//a/b/c/...~txt
-            //a/b/c/d/e.txt /root/test/a/e1.ini
-            //a/b/c/d/e.txt /root/test/a/e.ini
+            //a/b/c/d/e.txt //workspace/a/e1.ini
+            //a/b/c/d/e.txt //workspace/a/e.ini
             "#,
         )
         .unwrap();

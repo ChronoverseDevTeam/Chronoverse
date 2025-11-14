@@ -64,6 +64,61 @@ impl FilenameWildcard {
     }
 }
 
+/// Workspace Path (具体的文件)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkspacePath {
+    pub workspace_name: String,
+    pub dirs: Vec<String>,
+    pub file: String,
+}
+
+impl WorkspacePath {
+    pub fn into_local_path(&self, root_dir: &LocalDir) -> LocalPath {
+        let mut dirs = root_dir.0.clone();
+        dirs.extend_from_slice(&self.dirs);
+        LocalPath {
+            dirs: LocalDir(dirs),
+            file: self.file.clone(),
+        }
+    }
+
+    pub fn to_string(&self) -> String {
+        format!(
+            "//{}/{}{}",
+            self.workspace_name,
+            self.dirs
+                .iter()
+                .map(|dir| format!("{}/", dir))
+                .collect::<String>(),
+            self.file
+        )
+    }
+}
+
+/// Workspace 目录
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkspaceDir {
+    pub workspace_name: String,
+    pub dirs: Vec<String>,
+}
+
+impl WorkspaceDir {
+    pub fn into_local_dir(&self, root_dir: &LocalDir) -> LocalDir {
+        let mut dirs = root_dir.0.clone();
+        dirs.extend_from_slice(&self.dirs);
+        LocalDir(dirs)
+    }
+
+    pub fn to_string(&self) -> String {
+        let dir_string = self
+            .dirs
+            .iter()
+            .map(|dir| format!("{}/", dir))
+            .collect::<String>();
+        format!("//{}/{}", self.workspace_name, dir_string)
+    }
+}
+
 /// Depot Path (具体的文件)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DepotPath {

@@ -16,8 +16,8 @@ pub enum WorkspaceError {
     #[error("Mapping conflict:\n{0}")]
     MappingConflictError(String),
 
-    #[error("Local dir in mapping not under root:\n{0}")]
-    MappingNotUnderRoot(String),
+    #[error("Wrong workspace names: {0}")]
+    WorkspaceNameInvalid(String),
 }
 
 pub type WorkspaceResult<T> = Result<T, WorkspaceError>;
@@ -81,18 +81,17 @@ pub struct WorkspaceConfig {
 }
 
 impl WorkspaceConfig {
-    pub fn from_specification(root_dir: &str, mappings: &str) -> WorkspaceResult<Self> {
+    pub fn from_specification(
+        workspace_name: &str,
+        root_dir: &str,
+        mappings: &str,
+    ) -> WorkspaceResult<Self> {
         let root_dir =
             LocalDir::parse(root_dir).map_err(|e| WorkspaceError::SyntaxError(format!("{}", e)))?;
 
-        let mappings = parsers::workspace::workspace_mappings(mappings)?;
+        let mappings = parsers::workspace::workspace_mappings(mappings, &root_dir, workspace_name)?;
 
         let workspace_config = Self { root_dir, mappings };
-
-        if let Err(errors) = workspace_config.verify_mapping_under_root() {
-            let errors = errors.join("\n");
-            return WorkspaceResult::Err(WorkspaceError::MappingNotUnderRoot(errors));
-        }
 
         if let Err(errors) = workspace_config.verify_conflict_free() {
             let errors = errors.join("\n");
@@ -100,56 +99,6 @@ impl WorkspaceConfig {
         }
 
         Ok(workspace_config)
-    }
-
-    fn verify_mapping_under_root(&self) -> Result<(), Vec<String>> {
-        let mut errors = vec![];
-
-        for mapping in &self.mappings {
-            match mapping {
-                WorkspaceMapping::Include(include_mapping) => {
-                    match include_mapping {
-                        IncludeMapping::File(file_mapping) => {
-                            if Self::common_prefix_end_index(
-                                &file_mapping.local_file.dirs.0,
-                                &self.root_dir.0,
-                            ) == self.root_dir.0.len()
-                            {
-                                continue;
-                            }
-                            errors.push(format!(
-                                "local file {} not under root dir {}",
-                                file_mapping.local_file.to_unix_path_string(),
-                                self.root_dir.to_unix_path_string()
-                            ));
-                        }
-                        IncludeMapping::Folder(folder_mapping) => {
-                            if Self::common_prefix_end_index(
-                                &folder_mapping.local_folder.0,
-                                &self.root_dir.0,
-                            ) == self.root_dir.0.len()
-                            {
-                                continue;
-                            }
-                            errors.push(format!(
-                                "local dir {} not under root dir {}",
-                                folder_mapping.local_folder.to_unix_path_string(),
-                                self.root_dir.to_unix_path_string()
-                            ));
-                        }
-                    };
-                }
-                WorkspaceMapping::Exclude(_) => {
-                    continue;
-                }
-            }
-        }
-
-        if errors.is_empty() {
-            return Ok(());
-        } else {
-            return Err(errors);
-        }
     }
 
     /// 检查 mapping 中是否存在冲突的配置项
@@ -542,8 +491,42 @@ impl WorkspaceConfig {
                         &depot_path_2,
                         &local_path,
                     ));
+                } else if local_common_prefix_end_index == primary_local_dir.0.len()
+                    && depot_common_prefix_end_index == primary_depot_dir.dirs.len()
+                {
+                    // case 3.2. local 包含，depot 包含
+                    // 仅当非递归且 depot 目录部分不完全相同且 local 目录部分完全相同时冲突
+                    let local_diff = &secondary_local_file.dirs.0[local_common_prefix_end_index..];
+                    let depot_diff = &secondary_depot_file.dirs[depot_common_prefix_end_index..];
+                    if !primary_depot_dir.recursive
+                        && !depot_diff.is_empty()
+                        && local_diff.is_empty()
+                    {
+                        // primary_depot + secondary_local_file
+                        // 和 secondary_depot 都会映射到 secondary_local
+                        let depot_path_1 = DepotPath {
+                            dirs: primary_depot_dir.dirs.clone(),
+                            file: conflict_file_example.clone(),
+                        };
+                        let depot_path_2 = DepotPath {
+                            dirs: secondary_depot_file.dirs.clone(),
+                            file: secondary_depot_file.file.clone(),
+                        };
+                        let local_path = LocalPath {
+                            dirs: secondary_local_file.dirs.clone(),
+                            file: conflict_file_example.clone(),
+                        };
+
+                        return Err(Self::conflict_message(
+                            &depot_path_1,
+                            &depot_path_2,
+                            &local_path,
+                        ));
+                    } else {
+                        return Ok(());
+                    }
                 } else {
-                    // case 3.2. 否则，不冲突
+                    // case 3.3. 否则，不冲突
                     return Ok(());
                 }
             }
@@ -664,8 +647,35 @@ impl WorkspaceConfig {
                                 ));
                             }
                         } else {
-                            // case 4.2.1.3. depot 一样长，或者 secondary depot 更长，不冲突
-                            return Ok(());
+                            // case 4.2.1.3. depot 一样长，或者 secondary depot 更长
+                            // case 4.2.1.3.1. 如果 primary depot 非递归，
+                            // secondary depot 递归，冲突
+                            if !primary_depot_dir.recursive && secondary_depot_dir.recursive {
+                                // secondary_depot + local_diff 和 primary_depot 下的文件都会映射到 primary_local
+                                let mut depot_path_1_dir = Vec::new();
+                                depot_path_1_dir.extend_from_slice(&secondary_depot_dir.dirs);
+                                depot_path_1_dir.extend_from_slice(local_diff);
+                                let depot_path_1 = DepotPath {
+                                    dirs: depot_path_1_dir.clone(),
+                                    file: conflict_file_example.clone(),
+                                };
+                                let depot_path_2 = DepotPath {
+                                    dirs: primary_depot_dir.dirs.clone(),
+                                    file: conflict_file_example.clone(),
+                                };
+                                let local_path = LocalPath {
+                                    dirs: primary_local_dir.clone(),
+                                    file: conflict_file_example.clone(),
+                                };
+                                return Err(Self::conflict_message(
+                                    &depot_path_1,
+                                    &depot_path_2,
+                                    &local_path,
+                                ));
+                            } else {
+                                // case 4.2.1.3.2. 否则，不冲突
+                                return Ok(());
+                            }
                         }
                     } else {
                         // case 4.2.2. primary depot 与 secondary depot 不相互包含，
@@ -785,9 +795,33 @@ impl WorkspaceConfig {
                     }
                 } else {
                     // case 4.4. primary local 和 secondary local 一样长
-                    // case 4.4.1. primary depot 包含在 secondary depot 内，不冲突
+                    // case 4.4.1. primary depot 包含在 secondary depot 内
                     if depot_common_prefix_end_index == primary_depot_dir.dirs.len() {
-                        return Ok(());
+                        // case 4.4.1.1. primary depot 非递归，冲突
+                        if !primary_depot_dir.recursive {
+                            // primary depot 下的文件与 secondary depot 下的文件都会映射到 primary local
+                            let depot_path_1 = DepotPath {
+                                dirs: primary_depot_dir.dirs.clone(),
+                                file: conflict_file_example.clone(),
+                            };
+                            let depot_path_2 = DepotPath {
+                                dirs: secondary_depot_dir.dirs.clone(),
+                                file: conflict_file_example.clone(),
+                            };
+                            let local_path = LocalPath {
+                                dirs: primary_local_dir.clone(),
+                                file: conflict_file_example.clone(),
+                            };
+
+                            return Err(Self::conflict_message(
+                                &depot_path_1,
+                                &depot_path_2,
+                                &local_path,
+                            ));
+                        } else {
+                            // case 4.4.1.2. primary depot 递归，不冲突
+                            return Ok(());
+                        }
                     } else {
                         // case 4.4.2. primary depot 不包含在 secondary depot 内，冲突
                         // primary_depot_dir 与 secondary_depot_dir 都会映射到 secondary_local_dir
@@ -853,43 +887,59 @@ mod test {
 
     #[test]
     fn test_from_specification() {
-        // case 0. 正常解析
-        let root_dir = r#"/user"#;
-        let mappings = r#"
-            //a/b/c/... /user
-            //a/b/c/d/... /user/d/ "#;
-        let workspace_config = WorkspaceConfig::from_specification(root_dir, mappings);
-        println!("case 0. 正常解析：{:?}", workspace_config);
-        assert!(workspace_config.is_ok());
-        let root_dir = r#"/root/workspace"#;
-        let mappings = r#"
-            //a/b/...~a /root/workspace/a/b
-            //a/b/...~b /root/workspace/a/b
-            //a/b/txt.a /root/workspace/a/b/txt.a"#;
-        let workspace_config = WorkspaceConfig::from_specification(root_dir, mappings);
-        println!("case 0. 正常解析：{:?}", workspace_config);
-        assert!(workspace_config.is_ok());
-        let root_dir = r#"/root/workspace"#;
-        let mappings = r#"
-            //a/b/~a /root/workspace/a/b
-            //a/b/~b /root/workspace/a/b
-            //a/b/txt.a /root/workspace/a/b/txt.a"#;
-        let workspace_config = WorkspaceConfig::from_specification(root_dir, mappings);
-        println!("case 0. 正常解析：{:?}", workspace_config);
-        assert!(workspace_config.is_ok());
+        fn assert_conflict(root_dir: &str, mappings: &str) {
+            let workspace_config =
+                WorkspaceConfig::from_specification("workspace", root_dir, mappings);
+            assert!(workspace_config.is_err());
+            let workspace_config_err = workspace_config.err().unwrap();
+            println!("case 3. mapping 冲突：{}", workspace_config_err);
+            assert!(matches!(
+                workspace_config_err,
+                WorkspaceError::MappingConflictError(_)
+            ));
+        }
 
-        let root_dir = r#"D:\temp"#;
+        fn assert_ok(root_dir: &str, mappings: &str) {
+            let workspace_config =
+                WorkspaceConfig::from_specification("workspace", root_dir, mappings);
+            println!("case 0. 正常解析：{:?}", workspace_config);
+            assert!(workspace_config.is_ok());
+        }
+
+        // case 0. 正常解析
+        let root_dir = r#"/user/"#;
         let mappings = r#"
-            //a/b/c/... D:\temp
-            //a/b/c/d/... D:\temp\d\ "#;
-        let workspace_config = WorkspaceConfig::from_specification(root_dir, mappings);
-        println!("case 0. 正常解析：{:?}", workspace_config);
-        assert!(workspace_config.is_ok());
+            //a/b/c/... //workspace/
+            //a/b/c/d/... //workspace/d/"#;
+        assert_ok(root_dir, mappings);
+        let root_dir = r#"/root/workspace/"#;
+        let mappings = r#"
+            //a/b/...~a //workspace/a/b/
+            //a/b/...~b //workspace/a/b/
+            //a/b/txt.a //workspace/a/b/txt.a"#;
+        assert_ok(root_dir, mappings);
+        let root_dir = r#"/root/workspace/"#;
+        let mappings = r#"
+            //a/b/txt.a //workspace/a/b/
+            //a/b/txt.a //workspace/a/b/txt.a
+            "#;
+        assert_ok(root_dir, mappings);
+        let root_dir = r#"/root/workspace/"#;
+        let mappings = r#"
+            //a/b/~a //workspace/a/b/
+            //a/b/~b //workspace/a/b/
+            //a/b/txt.a //workspace/a/b/txt.a"#;
+        assert_ok(root_dir, mappings);
+        let root_dir = r#"D:\temp/"#;
+        let mappings = r#"
+            //a/b/c/... //workspace/
+            //a/b/c/d/... //workspace/d/ "#;
+        assert_ok(root_dir, mappings);
         // case 1. 语法错误
         // root dir 语法错误
         let root_dir = r#"C:\~"#;
-        let mappings = r#"//a/b/c/... C:\User"#;
-        let workspace_config = WorkspaceConfig::from_specification(root_dir, mappings);
+        let mappings = r#"//a/b/c/... //workspace/"#;
+        let workspace_config = WorkspaceConfig::from_specification("workspace", root_dir, mappings);
         assert!(workspace_config.is_err());
         let workspace_config_err = workspace_config.err().unwrap();
         assert!(matches!(
@@ -898,9 +948,21 @@ mod test {
         ));
         println!("case 1. 语法错误: {}", workspace_config_err);
         // workspace mapping 语法错误
-        let root_dir = r#"C:\User"#;
-        let mappings = r#"//a/b/c/~~~ C:\User"#;
-        let workspace_config = WorkspaceConfig::from_specification(root_dir, mappings);
+        let root_dir = r#"D:\temp"#;
+        let mappings = r#"
+            //a/b/c/... //workspace
+            //a/b/c/d/... //workspace\ "#;
+        let workspace_config = WorkspaceConfig::from_specification("workspace", root_dir, mappings);
+        assert!(workspace_config.is_err());
+        let workspace_config_err = workspace_config.err().unwrap();
+        assert!(matches!(
+            workspace_config_err,
+            WorkspaceError::SyntaxError(_)
+        ));
+        println!("case 1. 语法错误: {}", workspace_config_err);
+        let root_dir = r#"C:\User/"#;
+        let mappings = r#"//a/b/c/ C:/User/a/b"#;
+        let workspace_config = WorkspaceConfig::from_specification("workspace", root_dir, mappings);
         assert!(workspace_config.is_err());
         let workspace_config_err = workspace_config.err().unwrap();
         assert!(matches!(
@@ -910,8 +972,8 @@ mod test {
         println!("case 1. 语法错误: {}", workspace_config_err);
         // root dir 和 workspace mapping 均语法错误
         let root_dir = r#"C:\~"#;
-        let mappings = r#"//a/b/c/~~~ C:\User"#;
-        let workspace_config = WorkspaceConfig::from_specification(root_dir, mappings);
+        let mappings = r#"//a/b/c/~~~ //workspace\User"#;
+        let workspace_config = WorkspaceConfig::from_specification("workspace", root_dir, mappings);
         assert!(workspace_config.is_err());
         let workspace_config_err = workspace_config.err().unwrap();
         assert!(matches!(
@@ -919,71 +981,237 @@ mod test {
             WorkspaceError::SyntaxError(_)
         ));
         println!("case 1. 语法错误: {}", workspace_config_err);
-        // case 2. mapping 中的 local 不在 root dir 下
-        let root_dir = r#"C:\User"#;
-        let mappings = r#"//a/b/c/... D:\temp"#;
-        let workspace_config = WorkspaceConfig::from_specification(root_dir, mappings);
+        // case 2. mapping 中的 workspace name 错误
+        let root_dir = r#"C:\User/"#;
+        let mappings = r#"//a/b/c/... //workspaces/"#;
+        let workspace_config = WorkspaceConfig::from_specification("workspace", root_dir, mappings);
         assert!(workspace_config.is_err());
         let workspace_config_err = workspace_config.err().unwrap();
         assert!(matches!(
             workspace_config_err,
-            WorkspaceError::MappingNotUnderRoot(_)
+            WorkspaceError::WorkspaceNameInvalid(_)
         ));
         println!(
-            "case 2. mapping 中的 local 不在 root dir 下：{}",
+            "case 2. mapping 中的 workspace name 错误：{}",
             workspace_config_err
         );
         // case 3. mapping 冲突
-        let root_dir = r#"D:\temp"#;
+        let root_dir = r#"D:/workspace\"#;
         let mappings = r#"
-            //a/b/c/... D:\temp
-            //a/b/c/d/... D:\temp\e\ "#;
-        let workspace_config = WorkspaceConfig::from_specification(root_dir, mappings);
-        assert!(workspace_config.is_err());
-        let workspace_config_err = workspace_config.err().unwrap();
-        println!("case 3. mapping 冲突：{}", workspace_config_err);
-        assert!(matches!(
-            workspace_config_err,
-            WorkspaceError::MappingConflictError(_)
-        ));
-        let root_dir = r#"D:\temp"#;
+            //a/b/...     //workspace/a/b/
+            //a/b/c/...   //workspace/a/b/c/d/
+            "#;
+        assert_ok(root_dir, mappings);
         let mappings = r#"
-            //a/b/c/... D:\temp\a\b
-            //a/b/d/... D:\temp\
-        "#;
-        let workspace_config = WorkspaceConfig::from_specification(root_dir, mappings);
-        assert!(workspace_config.is_err());
-        let workspace_config_err = workspace_config.err().unwrap();
-        println!("case 3. mapping 冲突：{}", workspace_config_err);
-        assert!(matches!(
-            workspace_config_err,
-            WorkspaceError::MappingConflictError(_)
-        ));
-        let root_dir = r#"/root/workspace"#;
+            //a/b/...     //workspace/a/b/
+            //a/b/c/e/... //workspace/a/b/c/d/
+            "#;
+        assert_conflict(root_dir, mappings);
         let mappings = r#"
-            //a/b/...~a /root/workspace/a/b
-            //a/b/...~b /root/workspace/a/b
-            //a/b/txt.b /root/workspace/a/b/txt.a"#;
-        let workspace_config = WorkspaceConfig::from_specification(root_dir, mappings);
-        assert!(workspace_config.is_err());
-        let workspace_config_err = workspace_config.err().unwrap();
-        println!("case 3. mapping 冲突：{}", workspace_config_err);
-        assert!(matches!(
-            workspace_config_err,
-            WorkspaceError::MappingConflictError(_)
-        ));
-        let root_dir = r#"/root/workspace"#;
+            //a/b/...     //workspace/a/b/
+            //a/b/c/e/    //workspace/a/b/c/d/
+            "#;
+        assert_conflict(root_dir, mappings);
         let mappings = r#"
-            //a/b/~a /root/workspace/a/b
-            //a/b/~b /root/workspace/a/b
-            //a/b/txt.b /root/workspace/a/b/txt.a"#;
-        let workspace_config = WorkspaceConfig::from_specification(root_dir, mappings);
-        assert!(workspace_config.is_err());
-        let workspace_config_err = workspace_config.err().unwrap();
-        println!("case 3. mapping 冲突：{}", workspace_config_err);
-        assert!(matches!(
-            workspace_config_err,
-            WorkspaceError::MappingConflictError(_)
-        ));
+            //a/b/        //workspace/a/b/
+            //a/b/c/e/... //workspace/a/b/c/d/
+            "#;
+        assert_ok(root_dir, mappings);
+        let mappings = r#"
+            //a/b/c/d/... //workspace/a/b/
+            //a/b/c/...   //workspace/a/b/c/d/
+            "#;
+        assert_ok(root_dir, mappings);
+        let mappings = r#"
+            //a/b/c/d/... //workspace/a/b/
+            //a/b/c/      //workspace/a/b/c/d/
+            "#;
+        assert_conflict(root_dir, mappings);
+        let mappings = r#"
+            //a/b/c/d/    //workspace/a/b/
+            //a/b/c/      //workspace/a/b/c/d/
+            "#;
+        assert_ok(root_dir, mappings);
+        let mappings = r#"
+            //a/b/...     //workspace/a/b/
+            //a/b/c/d/e/... //workspace/a/b/c/d/
+            "#;
+        assert_conflict(root_dir, mappings);
+        let mappings = r#"
+            //a/b/...    //workspace/a/b/
+            //a/b/c/d/e/ //workspace/a/b/c/d/
+            "#;
+        assert_conflict(root_dir, mappings);
+        let mappings = r#"
+            //a/b/       //workspace/a/b/
+            //a/b/c/d/e/... //workspace/a/b/c/d/
+            "#;
+        assert_ok(root_dir, mappings);
+        let mappings = r#"
+            //a/b/d/...  //workspace/a/b/
+            //a/b/c/...  //workspace/a/b/c/d/
+            "#;
+        assert_conflict(root_dir, mappings);
+        let mappings = r#"
+            //a/b/d/...  //workspace/a/b/
+            //a/b/c/     //workspace/a/b/c/d/
+            "#;
+        assert_conflict(root_dir, mappings);
+        let mappings = r#"
+            //a/b/d/     //workspace/a/b/
+            //a/b/c/...  //workspace/a/b/c/d/
+            "#;
+        assert_ok(root_dir, mappings);
+        let mappings = r#"
+            //a/b/d/...  //workspace/a/b/c/d/
+            //a/b/...    //workspace/a/b/
+            "#;
+        assert_ok(root_dir, mappings);
+        let mappings = r#"
+            //a/b/c/...  //workspace/a/b/c/d/
+            //a/b/d/...  //workspace/a/b/
+            "#;
+        assert_conflict(root_dir, mappings);
+        let mappings = r#"
+            //a/b/c/...  //workspace/a/b/c/d/
+            //a/b/d/     //workspace/a/b/
+            "#;
+        assert_ok(root_dir, mappings);
+        let mappings = r#"
+            //a/b/...   //workspace/a/b/c/d/
+            //a/b/d/... //workspace/a/b/
+            "#;
+        assert_conflict(root_dir, mappings);
+        let mappings = r#"
+            //a/b/...   //workspace/a/b/c/d/
+            //a/b/d/    //workspace/a/b/
+            "#;
+        assert_ok(root_dir, mappings);
+        let mappings = r#"
+            //a/b/c/   //workspace/a/b/
+            //a/b/     //workspace/a/b/
+            "#;
+        assert_conflict(root_dir, mappings);
+        let mappings = r#"
+            //a/b/c/... //workspace/a/b/
+            //a/b/...  //workspace/a/b/
+            "#;
+        assert_ok(root_dir, mappings);
+        let mappings = r#"
+            //a/b/c/   //workspace/a/b/
+            //a/b/d/   //workspace/a/b/
+            "#;
+        assert_conflict(root_dir, mappings);
+        let mappings = r#"
+            //a/b/...  //workspace/a/b/
+            //a/b/d/   //workspace/a/b/
+            "#;
+        assert_conflict(root_dir, mappings);
+        let mappings = r#"
+            //a/b/c/... //workspace/a/b/
+            //a/b/d/old_name.txt //workspace/a/b/1/new_name.txt
+            "#;
+        assert_conflict(root_dir, mappings);
+        let mappings = r#"
+            //a/b/c/   //workspace/a/b/
+            //a/b/d/old_name.txt //workspace/a/b/1/new_name.txt
+            "#;
+        assert_ok(root_dir, mappings);
+        let mappings = r#"
+            //a/b/c/ //workspace/a/b/
+            //a/b/d/old_name.txt //workspace/a/b/new_name.txt
+            "#;
+        assert_conflict(root_dir, mappings);
+        let mappings = r#"
+            //a/b/ //workspace/a/b/
+            //a/b/file.txt //workspace/a/b/file.txt
+            "#;
+        assert_ok(root_dir, mappings);
+        let mappings = r#"
+            //a/b/... //workspace/a/b/
+            //a/b/file.txt //workspace/a/b/file.txt
+            "#;
+        assert_ok(root_dir, mappings);
+        let mappings = r#"
+            //a/b/ //workspace/a/b/
+            //a/b/old_name.txt //workspace/a/b/new_name.txt
+            "#;
+        assert_conflict(root_dir, mappings);
+        let mappings = r#"
+            //a/b/... //workspace/a/b/
+            //a/b/c/old_name.txt //workspace/a/b/new_name.txt
+            "#;
+        assert_conflict(root_dir, mappings);
+        let mappings = r#"
+            //a/b/ //workspace/a/b/
+            //a/b/old_name.txt //workspace/a/b/c/new_name.txt
+            "#;
+        assert_ok(root_dir, mappings); // todo
+        let mappings = r#"
+            //a/b/d/... //workspace/a/b/c/
+            //a/b/c/old_name.txt //workspace/a/b/new_name.txt
+            "#;
+        assert_ok(root_dir, mappings);
+        let mappings = r#"
+            //a/b/... //workspace/a/b/c/
+            //a/b/c/old_name.txt //workspace/a/b/new_name.txt
+            "#;
+        assert_ok(root_dir, mappings);
+        let mappings = r#"
+            //a/b/old_name.txt //workspace/a/b/new_name.txt
+            //a/b/c/ //workspace/a/b/c/
+            "#;
+        assert_ok(root_dir, mappings);
+
+        let mappings = r#"
+            //a/b/old_name.txt //workspace/a/b/new_name.txt
+            //a/b/... //workspace/a/b/
+            "#;
+        assert_ok(root_dir, mappings);
+        let mappings = r#"
+            //a/b/old_name.txt //workspace/a/b/new_name.txt
+            //a/b/ //workspace/a/b/
+            "#;
+        assert_ok(root_dir, mappings);
+        let mappings = r#"
+            //a/b/new_name.txt //workspace/a/b/new_name.txt
+            //a/b/ //workspace/a/b/
+            "#;
+        assert_ok(root_dir, mappings);
+        let mappings = r#"
+            //a/b/c/old_name.txt //workspace/a/b/new_name.txt
+            //a/b/ //workspace/a/b/
+            "#;
+        assert_conflict(root_dir, mappings);
+        let mappings = r#"
+            //a/b/file.txt //workspace/a/b/file.txt
+            //a/b/ //workspace/a/b/c/
+            "#;
+        assert_ok(root_dir, mappings);
+        let mappings = r#"
+            //a/b/c/file.txt //workspace/a/b/file.txt
+            //a/b/ //workspace/a/b/c/
+            "#;
+        assert_ok(root_dir, mappings);
+        let mappings = r#"
+            //a/b/file.txt //workspace/a/b/c/file.txt
+            //a/b/c/ //workspace/a/b/
+            "#;
+        assert_ok(root_dir, mappings);
+        let mappings = r#"
+            //a/b/file.txt //workspace/a/b/c/file.txt
+            //a/b/c/... //workspace/a/b/
+            "#;
+        assert_conflict(root_dir, mappings);
+        let mappings = r#"
+            //a/b/file.txt //workspace/a/b/file.txt
+            //a/b/c/ //workspace/a/b/
+            "#;
+        assert_conflict(root_dir, mappings);
+        let mappings = r#"
+            //a/b/file.txt //workspace/a/b/file.txt
+            //a/b/c/... //workspace/a/b/
+            "#;
+        assert_conflict(root_dir, mappings);
     }
 }

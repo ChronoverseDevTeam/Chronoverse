@@ -131,8 +131,8 @@ pub fn depot_path_wildcard(input: &str) -> PathResult<DepotPathWildcard> {
     Ok(result)
 }
 
-pub fn local_dir_parser<'src>()
--> impl Parser<'src, &'src str, LocalDir, extra::Err<Rich<'src, char>>> {
+fn local_dir_parser<'src>() -> impl Parser<'src, &'src str, LocalDir, extra::Err<Rich<'src, char>>>
+{
     // 路径分隔符
     let path_separator = one_of("/\\").labelled("path separator");
 
@@ -180,8 +180,8 @@ pub fn local_dir(input: &str) -> PathResult<LocalDir> {
     Ok(result)
 }
 
-pub fn local_path_parser<'src>()
--> impl Parser<'src, &'src str, LocalPath, extra::Err<Rich<'src, char>>> {
+fn local_path_parser<'src>() -> impl Parser<'src, &'src str, LocalPath, extra::Err<Rich<'src, char>>>
+{
     // 路径分隔符
     let path_separator = one_of("/\\").labelled("path separator");
 
@@ -289,6 +289,89 @@ pub fn local_path_wildcard(input: &str) -> PathResult<LocalPathWildcard> {
     // 使用 chumsky parser 解析基本结构
     let result = local_path_wildcard_parser()
         .then_ignore(end().labelled("end of local path wildcard"))
+        .parse(input)
+        .into_result()
+        .map_err(|errors| {
+            let error = errors.into_iter().next().unwrap();
+            PathError::SyntaxError(format!("{}", error))
+        })?;
+
+    Ok(result)
+}
+
+pub fn workspace_path_parser<'src>()
+-> impl Parser<'src, &'src str, WorkspacePath, extra::Err<Rich<'src, char>>> {
+    just("//")
+        .labelled("depot path prefix '//'")
+        .then(
+            path_segment_parser()
+                .separated_by(just("/"))
+                .at_least(2)
+                .collect::<Vec<&str>>()
+                .labelled("path segments"),
+        )
+        .then_ignore(just("/").not().rewind())
+        .map(|(_, segments)| {
+            let mut parts: Vec<String> = segments.iter().map(|s| s.to_string()).collect();
+            // 第一个段是 workspace 名称
+            let workspace_name = parts.remove(0);
+
+            // 最后一个段是文件名
+            let file = parts.pop().unwrap(); // 安全，因为 at_least(2)
+            let dirs = parts;
+
+            WorkspacePath {
+                workspace_name,
+                dirs,
+                file,
+            }
+        })
+}
+
+pub fn workspace_path(input: &str) -> PathResult<WorkspacePath> {
+    let result = workspace_path_parser()
+        .then_ignore(end().labelled("end of workspace path"))
+        .parse(input)
+        .into_result()
+        .map_err(|errors| {
+            let error = errors.into_iter().next().unwrap();
+            PathError::SyntaxError(format!("{}", error))
+        })?;
+
+    Ok(result)
+}
+
+pub fn workspace_dir_parser<'src>()
+-> impl Parser<'src, &'src str, WorkspaceDir, extra::Err<Rich<'src, char>>> {
+    just("//")
+        .labelled("depot path prefix '//'")
+        .then(
+            path_segment_parser()
+                .then_ignore(just("/"))
+                .repeated()
+                .at_least(1)
+                .collect::<Vec<&str>>()
+                .labelled("path segments"),
+        )
+        .then_ignore(path_segment_parser().not().rewind())
+        .map(|(_, segments)| {
+            let mut parts: Vec<String> = segments.iter().map(|s| s.to_string()).collect();
+            // 第一个段是 workspace 名称
+            let workspace_name = parts.remove(0);
+
+            // 剩下的是目录
+            let dirs = parts;
+
+            WorkspaceDir {
+                workspace_name,
+                dirs,
+            }
+        })
+}
+
+pub fn workspace_dir(input: &str) -> PathResult<WorkspaceDir> {
+    let result = workspace_dir_parser()
+        .then_ignore(end().labelled("end of workspace dir"))
         .parse(input)
         .into_result()
         .map_err(|errors| {
