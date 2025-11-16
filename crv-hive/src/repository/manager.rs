@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::RwLock;
 
 use super::bundle::PackBundle;
 use super::chunk::{ChunkHash, ChunkRecord, Compression, compute_chunk_hash};
@@ -17,7 +17,7 @@ const DEFAULT_HARD_PACK_CHUNK_LIMIT: u64 = 100_000;
 
 pub struct RepositoryManager {
     layout: RepositoryLayout,
-    shards: Vec<Mutex<ShardState>>,
+    shards: Vec<RwLock<ShardState>>,
     pack_soft_limit: u64,
     hard_size_limit: u64,
     hard_chunk_limit: u64,
@@ -48,7 +48,7 @@ impl RepositoryManager {
         for shard in 0u16..=0xFF {
             let shard = shard as u8;
             let (known_packs, next_pack_id) = discover_existing_packs(&layout, shard)?;
-            shards.push(Mutex::new(ShardState::new(known_packs, next_pack_id)));
+            shards.push(RwLock::new(ShardState::new(known_packs, next_pack_id)));
         }
         Ok(Self {
             layout,
@@ -62,11 +62,14 @@ impl RepositoryManager {
     pub fn write_chunk(&self, data: &[u8], compression: Compression) -> Result<ChunkRecord> {
         let hash = compute_chunk_hash(data);
         let shard = hash[0];
-        let mutex = &self.shards[shard as usize];
-        let mut guard = mutex.lock().expect("shard mutex poisoned");
+        let lock = &self.shards[shard as usize];
+        let mut guard = lock.write().expect("shard lock poisoned");
         guard.enforce_hard_limits(self.hard_size_limit, self.hard_chunk_limit)?;
-        let pack_ids = guard.pack_ids();
-        if locate_in_pack_ids(&self.layout, shard, &pack_ids, &hash)?.is_some() {
+        if guard.active_contains(&hash) {
+            return Err(RepositoryError::DuplicateHash { hash });
+        }
+        let sealed_pack_ids = guard.sealed_pack_ids();
+        if locate_in_pack_ids(&self.layout, shard, &sealed_pack_ids, &hash)?.is_some() {
             return Err(RepositoryError::DuplicateHash { hash });
         }
         let bundle = guard.ensure_active_bundle(&self.layout, shard)?;
@@ -86,8 +89,8 @@ impl RepositoryManager {
     }
 
     pub fn seal_shard(&self, shard: u8) -> Result<()> {
-        let mutex = &self.shards[shard as usize];
-        let mut guard = mutex.lock().expect("shard mutex poisoned");
+        let lock = &self.shards[shard as usize];
+        let mut guard = lock.write().expect("shard lock poisoned");
         let _ = guard.seal_active()?;
         Ok(())
     }
@@ -100,20 +103,22 @@ impl RepositoryManager {
     }
 
     pub fn seal_bundle(&self, shard: u8, pack_id: u32) -> Result<bool> {
-        let mutex = &self.shards[shard as usize];
-        let mut guard = mutex.lock().expect("shard mutex poisoned");
+        let lock = &self.shards[shard as usize];
+        let mut guard = lock.write().expect("shard lock poisoned");
         guard.seal_specific(pack_id)
     }
 
     pub fn locate_chunk(&self, hash: &ChunkHash) -> Result<Option<(IndexEntry, PathBuf)>> {
         let shard = hash[0];
-        let pack_ids = {
-            let guard = self.shards[shard as usize]
-                .lock()
-                .expect("shard mutex poisoned");
-            guard.pack_ids()
+        let lock = &self.shards[shard as usize];
+        let sealed_pack_ids = {
+            let guard = lock.read().expect("shard lock poisoned");
+            if let Some(result) = guard.find_in_active(hash) {
+                return Ok(Some(result));
+            }
+            guard.sealed_pack_ids()
         };
-        locate_in_pack_ids(&self.layout, shard, &pack_ids, hash)
+        locate_in_pack_ids(&self.layout, shard, &sealed_pack_ids, hash)
     }
 }
 
@@ -132,8 +137,28 @@ impl ShardState {
         }
     }
 
-    fn pack_ids(&self) -> Vec<u32> {
-        self.known_packs.iter().copied().collect()
+    fn sealed_pack_ids(&self) -> Vec<u32> {
+        let active_id = self.active.as_ref().map(|bundle| bundle.identity().pack_id);
+        self.known_packs
+            .iter()
+            .copied()
+            .filter(|id| Some(*id) != active_id)
+            .collect()
+    }
+
+    fn active_contains(&self, hash: &ChunkHash) -> bool {
+        self.active
+            .as_ref()
+            .and_then(|bundle| bundle.find_entry(hash))
+            .is_some()
+    }
+
+    fn find_in_active(&self, hash: &ChunkHash) -> Option<(IndexEntry, PathBuf)> {
+        self.active.as_ref().and_then(|bundle| {
+            bundle
+                .find_entry(hash)
+                .map(|entry| (entry, bundle.pack_path()))
+        })
     }
 
     fn ensure_active_bundle(
@@ -275,7 +300,7 @@ mod tests {
         let record = manager.write_chunk(b"bundle control", Compression::None)?;
         let shard = record.hash[0];
         let pack_id = {
-            let guard = manager.shards[shard as usize].lock().unwrap();
+            let guard = manager.shards[shard as usize].read().unwrap();
             guard
                 .active
                 .as_ref()
@@ -285,7 +310,7 @@ mod tests {
         let sealed = manager.seal_bundle(shard, pack_id)?;
         assert!(sealed);
         {
-            let guard = manager.shards[shard as usize].lock().unwrap();
+            let guard = manager.shards[shard as usize].read().unwrap();
             assert!(guard.active.is_none());
         }
         let _ = manager.write_chunk(b"next bundle chunk", Compression::None)?;
@@ -300,7 +325,7 @@ mod tests {
         let first = manager.write_chunk(&chunks[0], Compression::None)?;
         let shard = first.hash[0];
         let initial_pack_id = {
-            let guard = manager.shards[shard as usize].lock().unwrap();
+            let guard = manager.shards[shard as usize].read().unwrap();
             guard
                 .active
                 .as_ref()
@@ -309,7 +334,7 @@ mod tests {
         };
         manager.write_chunk(&chunks[1], Compression::None)?;
         manager.write_chunk(&chunks[2], Compression::None)?;
-        let guard = manager.shards[shard as usize].lock().unwrap();
+        let guard = manager.shards[shard as usize].read().unwrap();
         assert!(
             guard
                 .active
@@ -328,7 +353,7 @@ mod tests {
         let first = manager.write_chunk(&chunks[0], Compression::None)?;
         let shard = first.hash[0];
         let initial_pack_id = {
-            let guard = manager.shards[shard as usize].lock().unwrap();
+            let guard = manager.shards[shard as usize].read().unwrap();
             guard
                 .active
                 .as_ref()
@@ -336,7 +361,7 @@ mod tests {
                 .expect("active bundle must exist")
         };
         manager.write_chunk(&chunks[1], Compression::None)?;
-        let guard = manager.shards[shard as usize].lock().unwrap();
+        let guard = manager.shards[shard as usize].read().unwrap();
         assert!(
             guard
                 .active

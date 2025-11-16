@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use super::chunk::{ChunkRecord, Compression, compute_chunk_hash};
+use super::chunk::{ChunkHash, ChunkRecord, Compression, compute_chunk_hash};
 use super::error::{RepositoryError, Result};
 use super::index::{IndexEntry, MutableIndex};
 use super::layout::RepositoryLayout;
@@ -71,6 +71,14 @@ impl PackBundle {
 
     pub fn identity(&self) -> &PackIdentity {
         &self.identity
+    }
+
+    pub fn find_entry(&self, hash: &ChunkHash) -> Option<IndexEntry> {
+        self.index.find(hash).cloned()
+    }
+
+    pub fn pack_path(&self) -> PathBuf {
+        self.pack.path().to_path_buf()
     }
 }
 
