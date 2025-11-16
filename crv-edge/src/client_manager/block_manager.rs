@@ -1,10 +1,10 @@
+use std::collections::HashMap;
+use std::fs::{self, File};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
-use std::fs::{self, File};
-use std::collections::HashMap;
 use twox_hash::xxh3::hash64;
 
-use crate::client_manager::block::{BlockMetadata, BLOCK_SIZE};
+use crate::client_manager::block::{BLOCK_SIZE, BlockMetadata};
 
 pub struct BlockManager {
     store_path: PathBuf,
@@ -15,11 +15,15 @@ pub struct BlockManager {
 //懒加载block，当访问某个hash后，从本地进行加载，或者从远程加载
 impl BlockManager {
     pub fn new(store_path: &Path, depot_path: &Path) -> io::Result<Self> {
-        Ok(BlockManager {store_path: store_path.to_path_buf(), cache: HashMap::new(), depot_store_path: depot_path.to_path_buf() })
+        Ok(BlockManager {
+            store_path: store_path.to_path_buf(),
+            cache: HashMap::new(),
+            depot_store_path: depot_path.to_path_buf(),
+        })
     }
 
     pub fn get_block_metadata_by_hash(&mut self, hash: u64) -> io::Result<&BlockMetadata> {
-        if self.cache.contains_key(&hash) { 
+        if self.cache.contains_key(&hash) {
             return Ok(&self.cache[&hash]);
         }
 
@@ -30,13 +34,15 @@ impl BlockManager {
                 Ok(&self.cache[&hash])
             }
             Err(_) => {
-                let depot_block_path = self.depot_store_path.join(BlockMetadata::get_local_path(hash));
+                let depot_block_path = self
+                    .depot_store_path
+                    .join(BlockMetadata::get_local_path(hash));
                 if depot_block_path.exists() {
                     // 使用流式复制替代全量读写
                     let mut source = File::open(&depot_block_path)?;
                     let mut dest = File::create(&block_path)?;
                     io::copy(&mut source, &mut dest)?;
-                    
+
                     let metadata = BlockMetadata::read_from_path(&block_path)?;
                     self.cache.insert(hash, metadata);
                     Ok(&self.cache[&hash])
@@ -63,7 +69,7 @@ impl BlockManager {
         for &hash in &hashs {
             self.get_block_metadata_by_hash(hash)?;
         }
-        
+
         Ok(BlockReader {
             block_manager: self,
             hashs,
@@ -74,7 +80,10 @@ impl BlockManager {
 
     pub fn create_single_block(&mut self, data: &[u8]) -> io::Result<u64> {
         if data.len() > BLOCK_SIZE {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "block size exceeds"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "block size exceeds",
+            ));
         }
 
         let hash = hash64(data);

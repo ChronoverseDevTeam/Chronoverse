@@ -1,5 +1,5 @@
 use crate::storage::file_block::FileBlock;
-use crate::storage::{chunk_and_store_file, ChunkingOptions};
+use crate::storage::{ChunkingOptions, chunk_and_store_file};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
@@ -15,7 +15,7 @@ pub struct MetaFileRevision {
     #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
     pub created_at: DateTime<Utc>,
     #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
-    pub updated_at: DateTime<Utc>
+    pub updated_at: DateTime<Utc>,
 }
 
 impl MetaFileRevision {

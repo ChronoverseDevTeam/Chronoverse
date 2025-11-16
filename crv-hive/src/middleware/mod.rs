@@ -18,7 +18,9 @@ pub fn apply_renew_metadata<T>(renew: Option<RenewToken>, resp: &mut tonic::Resp
         if let Ok(v) = tonic::metadata::MetadataValue::try_from(newt.token.as_str()) {
             let _ = resp.metadata_mut().insert("x-renew-token", v);
         }
-        if let Ok(v) = tonic::metadata::MetadataValue::try_from(newt.expires_at.to_string().as_str()) {
+        if let Ok(v) =
+            tonic::metadata::MetadataValue::try_from(newt.expires_at.to_string().as_str())
+        {
             let _ = resp.metadata_mut().insert("x-renew-expires-at", v);
         }
     }
@@ -66,8 +68,10 @@ fn verify_jwt_and_extract(token: &str) -> Result<(String, Vec<String>, i64), ()>
         exp: i64,
         scopes: Option<Vec<String>>,
     }
-    use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
-    let key = crate::config::holder::get_or_init_config().jwt_secret.clone();
+    use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
+    let key = crate::config::holder::get_or_init_config()
+        .jwt_secret
+        .clone();
     let data = decode::<Claims>(
         token,
         &DecodingKey::from_secret(key.as_bytes()),
@@ -103,7 +107,9 @@ fn issue_jwt(username: &str, scopes: &[String], ttl_secs: i64) -> Result<(String
         exp,
         scopes: scopes.to_vec(),
     };
-    let key = crate::config::holder::get_or_init_config().jwt_secret.clone();
+    let key = crate::config::holder::get_or_init_config()
+        .jwt_secret
+        .clone();
     let token = jsonwebtoken::encode(
         &jsonwebtoken::Header::default(),
         &claims,
@@ -112,5 +118,3 @@ fn issue_jwt(username: &str, scopes: &[String], ttl_secs: i64) -> Result<(String
     .map_err(|_| ())?;
     Ok((token, exp))
 }
-
-

@@ -1,14 +1,14 @@
 use std::collections::HashMap;
 
-use chrono::{DateTime, Utc};
 use ::serde::{Deserialize, Serialize};
+use chrono::{DateTime, Utc};
 
 use crate::metadata::file_revision::MetaFileRevision;
 
 mod chrono_dt_option_as_bson_dt {
     use chrono::{DateTime, Utc};
-    use serde::{Deserialize, Deserializer, Serializer};
     use serde::Serialize as SerdeSerialize;
+    use serde::{Deserialize, Deserializer, Serializer};
 
     pub fn serialize<S>(value: &Option<DateTime<Utc>>, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -45,7 +45,7 @@ pub struct Changelist {
     pub owner: String,
     pub workspace_name: String,
     // Key 是 depot_path
-    pub files: HashMap<String, MetaFileRevision>
+    pub files: HashMap<String, MetaFileRevision>,
 }
 
 impl Changelist {

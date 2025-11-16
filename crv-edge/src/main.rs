@@ -26,17 +26,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(windows)]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    use crv_edge::pb::BonjourReq;
+    use crv_edge::pb::edge_daemon_service_client::EdgeDaemonServiceClient;
+    use image::GenericImageView;
+    use image::ImageReader;
+    use std::time::Duration;
     use tao::event::Event;
     use tao::event_loop::{ControlFlow, EventLoopBuilder};
     use tokio::runtime::Builder as TokioRuntimeBuilder;
     use tokio::sync::oneshot;
     use tray_icon::menu::{Menu, MenuEvent, MenuItem};
     use tray_icon::{Icon, TrayIconBuilder};
-    use image::ImageReader;
-    use image::GenericImageView;
-    use std::time::Duration;
-    use crv_edge::pb::edge_daemon_service_client::EdgeDaemonServiceClient;
-    use crv_edge::pb::BonjourReq;
 
     let addr: SocketAddr = "127.0.0.1:34562".parse()?;
 
@@ -51,7 +51,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let shutdown = async move {
             let _ = shutdown_rx.await;
         };
-        let _ = crv_edge::daemon_server::server_entry::start_server_with_shutdown(addr, shutdown).await;
+        let _ =
+            crv_edge::daemon_server::server_entry::start_server_with_shutdown(addr, shutdown).await;
     });
 
     // 创建托盘菜单
@@ -81,7 +82,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 自定义用户事件用于更新状态
     #[derive(Clone)]
-    enum AppEvent { StatusRunning, StatusFailed }
+    enum AppEvent {
+        StatusRunning,
+        StatusFailed,
+    }
 
     // 事件循环
     let event_loop = EventLoopBuilder::<AppEvent>::with_user_event().build();
@@ -108,9 +112,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let endpoint = format!("http://{}:{}", "127.0.0.1", 34562);
         let result = async {
             let mut client = EdgeDaemonServiceClient::connect(endpoint).await.ok()?;
-            let _ = client.bonjour(tonic::Request::new(BonjourReq{})).await.ok()?;
+            let _ = client
+                .bonjour(tonic::Request::new(BonjourReq {}))
+                .await
+                .ok()?;
             Some(())
-        }.await;
+        }
+        .await;
         let _ = match result {
             Some(_) => proxy_clone.send_event(AppEvent::StatusRunning),
             None => proxy_clone.send_event(AppEvent::StatusFailed),
@@ -135,7 +143,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 // 等待 gRPC 任务结束（仅一次）
                 if let Some(handle) = server_handle.take() {
-                    let _ = runtime.block_on(async { let _ = handle.await; });
+                    let _ = runtime.block_on(async {
+                        let _ = handle.await;
+                    });
                 }
 
                 *control_flow = ControlFlow::Exit;
@@ -152,8 +162,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             Event::LoopDestroyed => {
                 // 事件循环销毁时确保触发关闭
-                if let Some(tx) = shutdown_tx.take() { let _ = tx.send(()); }
-                if let Some(handle) = server_handle.take() { let _ = runtime.block_on(async { let _ = handle.await; }); }
+                if let Some(tx) = shutdown_tx.take() {
+                    let _ = tx.send(());
+                }
+                if let Some(handle) = server_handle.take() {
+                    let _ = runtime.block_on(async {
+                        let _ = handle.await;
+                    });
+                }
             }
             _ => {}
         }

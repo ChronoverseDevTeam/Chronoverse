@@ -1,12 +1,11 @@
 /// S3 客户端使用示例
-/// 
+///
 /// 此示例展示如何使用 S3 客户端进行常见的对象存储操作
 ///
 /// 运行此示例：
 /// ```bash
 /// cargo run --example s3_usage
 /// ```
-
 use bytes::Bytes;
 use crv_hive::{config, s3client};
 
@@ -38,7 +37,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("4. 上传对象...");
     let test_data = Bytes::from("Hello, S3! 这是一个测试文件。");
     let object_name = "test/example.txt";
-    
+
     s3.put_object(bucket, object_name, test_data.clone(), Some("text/plain"))
         .await?;
     println!("   ✓ 上传成功: {}", object_name);
@@ -78,4 +77,3 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
-

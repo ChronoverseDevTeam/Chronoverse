@@ -10,4 +10,3 @@ pub use minio_adapter::MinioAdapter;
 
 /// S3 操作结果类型别名
 pub type S3Result<T> = Result<T, S3Error>;
-

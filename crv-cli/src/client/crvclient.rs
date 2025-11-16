@@ -1,25 +1,19 @@
-use std::collections::HashMap;
-use std::fs;
-use std::io;
-use std::path::{Path, PathBuf};
+use crate::pb::edge_daemon_service_client::EdgeDaemonServiceClient;
+use crate::pb::{
+    BonjourReq, BonjourRsp, CheckoutReq, CreateWorkspaceReq, CreateWorkspaceRsp, GetLatestReq,
+    HiveConnectReq, HiveConnectRsp, HiveListWorkspacesReq, HiveListWorkspacesRsp, HiveLoginReq,
+    HiveLoginRsp, HiveRegisterReq, HiveRegisterRsp, SubmitReq,
+};
 use chrono::Utc;
 use crv_core::metadata::changelist::Changelist;
 use crv_core::metadata::file::MetaFile;
 use crv_core::metadata::file_revision::MetaFileRevision;
 use crv_core::storage::ChunkingOptions;
+use std::collections::HashMap;
+use std::fs;
+use std::io;
+use std::path::{Path, PathBuf};
 use tonic::transport::Channel;
-use crate::pb::edge_daemon_service_client::EdgeDaemonServiceClient;
-use crate::pb::{
-    BonjourReq, BonjourRsp,
-    CreateWorkspaceReq, CreateWorkspaceRsp,
-    GetLatestReq,
-    CheckoutReq,
-    SubmitReq,
-    HiveConnectReq, HiveConnectRsp,
-    HiveLoginReq, HiveLoginRsp,
-    HiveRegisterReq, HiveRegisterRsp,
-    HiveListWorkspacesReq, HiveListWorkspacesRsp,
-};
 
 /// Local workspace file state - tracks what's checked out locally
 #[derive(Debug)]
@@ -35,12 +29,12 @@ pub struct LocalFileState {
 }
 
 /// CRV Client - 支持本地模拟和 gRPC 两种模式
-/// 
+///
 /// **本地模拟模式** (`use_local_simulation = true`):
 /// - 完整模拟客户端-服务器交互
 /// - 使用 metadata 类型（MetaFile, MetaFileRevision, Changelist）
 /// - 用于测试和开发
-/// 
+///
 /// **gRPC 模式** (`use_local_simulation = false`):
 /// - 连接真实的 crv-edge 守护进程
 /// - 通过 gRPC 调用服务器接口
@@ -48,10 +42,10 @@ pub struct LocalFileState {
 pub struct CrvClient {
     /// 是否使用本地模拟（true=本地模拟，false=gRPC）
     use_local_simulation: bool,
-    
+
     // === gRPC 客户端（仅在 gRPC 模式下使用）===
     grpc_client: Option<EdgeDaemonServiceClient<Channel>>,
-    
+
     // === 本地模拟字段（仅在本地模拟模式下使用）===
     /// Local workspace root directory
     workspace_root: PathBuf,
@@ -73,11 +67,11 @@ pub struct CrvClient {
 
 impl CrvClient {
     /// 创建本地模拟模式的客户端
-    /// 
+    ///
     /// # Arguments
     /// * `workspace_root` - 本地工作空间根目录
     /// * `server_depot_root` - 模拟服务器仓库根目录
-    /// 
+    ///
     /// # Example
     /// ```no_run
     /// use crv_cli::client::CrvClient;
@@ -107,21 +101,21 @@ impl CrvClient {
             changelists: HashMap::new(),
             next_changelist_id: 1,
             chunking_options: ChunkingOptions {
-                fixed_block_size: 4 * 1024 * 1024,  // 4MB for large files
+                fixed_block_size: 4 * 1024 * 1024,     // 4MB for large files
                 small_file_threshold: 4 * 1024 * 1024, // 4MB threshold
                 cdc_window_size: 48,
-                cdc_min_size: 8 * 1024,              // 8KB
-                cdc_avg_size: 32 * 1024,             // 32KB
-                cdc_max_size: 64 * 1024,             // 64KB
+                cdc_min_size: 8 * 1024,  // 8KB
+                cdc_avg_size: 32 * 1024, // 32KB
+                cdc_max_size: 64 * 1024, // 64KB
             },
         })
     }
 
     /// 创建 gRPC 模式的客户端（连接真实服务器）
-    /// 
+    ///
     /// # Arguments
     /// * `server_addr` - 服务器地址（例如: "http://127.0.0.1:34562"）
-    /// 
+    ///
     /// # Example
     /// ```no_run
     /// use crv_cli::client::CrvClient;
@@ -133,9 +127,9 @@ impl CrvClient {
         let channel = Channel::from_shared(server_addr.to_string())?
             .connect()
             .await?;
-        
+
         let grpc_client = EdgeDaemonServiceClient::new(channel);
-        
+
         Ok(Self {
             use_local_simulation: false,
             grpc_client: Some(grpc_client),
@@ -152,7 +146,7 @@ impl CrvClient {
     }
 
     /// 启用本地模拟模式
-    /// 
+    ///
     /// 在已有的 gRPC 客户端基础上启用本地模拟功能。
     /// 此时会同时发送 gRPC 请求（打印回包）和执行本地模拟逻辑。
     pub fn enable_local_simulation<P: AsRef<Path>, Q: AsRef<Path>>(
@@ -186,21 +180,27 @@ impl CrvClient {
     }
 
     /// 创建工作空间
-    /// 
+    ///
     /// 总是发送 gRPC 请求并打印回包。
     /// 如果启用本地模拟，则返回本地模拟结果；否则返回服务器响应。
-    pub async fn create_workspace(&mut self) -> Result<CreateWorkspaceRsp, Box<dyn std::error::Error>> {
+    pub async fn create_workspace(
+        &mut self,
+    ) -> Result<CreateWorkspaceRsp, Box<dyn std::error::Error>> {
         // 总是发送 gRPC 请求
         let request = tonic::Request::new(CreateWorkspaceReq {});
-        let grpc_response = self.grpc_client.as_mut()
+        let grpc_response = self
+            .grpc_client
+            .as_mut()
             .ok_or("gRPC client not initialized")?
             .create_workspace(request)
             .await?;
-        
+
         let grpc_rsp = grpc_response.into_inner();
-        println!("📦 gRPC 回包: success={}, message={}, path={}", 
-            grpc_rsp.success, grpc_rsp.message, grpc_rsp.workspace_path);
-        
+        println!(
+            "📦 gRPC 回包: success={}, message={}, path={}",
+            grpc_rsp.success, grpc_rsp.message, grpc_rsp.workspace_path
+        );
+
         if self.use_local_simulation {
             // 本地模拟模式：初始化服务器数据并返回本地结果
             self.init_server_with_sample_data()?;
@@ -216,21 +216,25 @@ impl CrvClient {
     }
 
     /// 发送问候消息到服务器
-    /// 
+    ///
     /// 总是发送 gRPC 请求并打印回包。
     /// 如果启用本地模拟，则返回本地模拟结果；否则返回服务器响应。
     pub async fn bonjour(&mut self) -> Result<BonjourRsp, Box<dyn std::error::Error>> {
         // 总是发送 gRPC 请求
         let request = tonic::Request::new(BonjourReq {});
-        let grpc_response = self.grpc_client.as_mut()
+        let grpc_response = self
+            .grpc_client
+            .as_mut()
             .ok_or("gRPC client not initialized")?
             .bonjour(request)
             .await?;
-        
+
         let grpc_rsp = grpc_response.into_inner();
-        println!("📦 gRPC 回包: version={}, api_level={}, platform={}", 
-            grpc_rsp.daemon_version, grpc_rsp.api_level, grpc_rsp.platform);
-        
+        println!(
+            "📦 gRPC 回包: version={}, api_level={}, platform={}",
+            grpc_rsp.daemon_version, grpc_rsp.api_level, grpc_rsp.platform
+        );
+
         if self.use_local_simulation {
             // 本地模拟模式：返回模拟响应
             Ok(BonjourRsp {
@@ -280,12 +284,15 @@ impl CrvClient {
             ],
         )?;
 
-        println!("✅ Server initialized with {} files", self.server_files.len());
+        println!(
+            "✅ Server initialized with {} files",
+            self.server_files.len()
+        );
         Ok(())
     }
 
     /// Helper: Create a server file with multiple versions
-    /// 
+    ///
     /// This simulates the server having pre-existing file history.
     /// Each version creates a MetaFileRevision and associated Changelist.
     fn create_server_file_with_versions(
@@ -340,7 +347,7 @@ impl CrvClient {
         //     depot_path: depot_path.to_string(),
         //     revisions,
         // };
-        
+
         // self.server_files.insert(depot_path.to_string(), meta_file);
 
         // println!("  ✓ Created {} with {} versions", depot_path, versions.len());
@@ -348,21 +355,26 @@ impl CrvClient {
     }
 
     /// Get latest files from server
-    /// 
+    ///
     /// 总是发送 gRPC 请求并打印回包。
     /// 如果启用本地模拟，则返回本地模拟结果；否则返回服务器响应。
     pub async fn get_latest(&mut self) -> Result<Vec<String>, String> {
         // 总是发送 gRPC 请求
         let request = tonic::Request::new(GetLatestReq {});
-        let grpc_response = self.grpc_client.as_mut()
+        let grpc_response = self
+            .grpc_client
+            .as_mut()
             .ok_or("gRPC client not initialized")?
             .get_latest(request)
             .await
             .map_err(|e| format!("gRPC error: {}", e))?;
-        
+
         let grpc_rsp = grpc_response.into_inner();
-        println!("📦 gRPC 回包: success={}, files={:?}", grpc_rsp.success, grpc_rsp.file_paths);
-        
+        println!(
+            "📦 gRPC 回包: success={}, files={:?}",
+            grpc_rsp.success, grpc_rsp.file_paths
+        );
+
         if self.use_local_simulation {
             // 本地模拟模式：返回模拟服务器的文件列表
             let file_list: Vec<String> = self.server_files.keys().cloned().collect();
@@ -378,7 +390,7 @@ impl CrvClient {
     }
 
     /// Checkout a file from server (latest version by default)
-    /// 
+    ///
     /// 总是发送 gRPC 请求并打印回包。
     /// 如果启用本地模拟，则返回本地模拟结果；否则返回服务器响应。
     pub async fn checkout(&mut self, depot_path: &str) -> Result<String, String> {
@@ -386,15 +398,20 @@ impl CrvClient {
         let request = tonic::Request::new(CheckoutReq {
             relative_path: depot_path.to_string(),
         });
-        let grpc_response = self.grpc_client.as_mut()
+        let grpc_response = self
+            .grpc_client
+            .as_mut()
             .ok_or("gRPC client not initialized")?
             .checkout(request)
             .await
             .map_err(|e| format!("gRPC error: {}", e))?;
-        
+
         let grpc_rsp = grpc_response.into_inner();
-        println!("📦 gRPC 回包: success={}, message={}", grpc_rsp.success, grpc_rsp.message);
-        
+        println!(
+            "📦 gRPC 回包: success={}, message={}",
+            grpc_rsp.success, grpc_rsp.message
+        );
+
         if self.use_local_simulation {
             // 本地模拟模式：执行本地检出
             self.checkout_revision_local(depot_path, None)
@@ -409,29 +426,35 @@ impl CrvClient {
     }
 
     /// Checkout a specific revision of a file (仅本地模拟模式)
-    /// 
+    ///
     /// Simulates: client requests file from server, server sends blocks,
     /// client reconstructs file in workspace
-    fn checkout_revision_local(&mut self, depot_path: &str, revision: Option<u64>) -> Result<String, String> {
+    fn checkout_revision_local(
+        &mut self,
+        depot_path: &str,
+        revision: Option<u64>,
+    ) -> Result<String, String> {
         // Get MetaFile from server
-        let meta_file = self.server_files.get(depot_path)
+        let meta_file = self
+            .server_files
+            .get(depot_path)
             .ok_or_else(|| format!("File not found on server: {}", depot_path))?;
 
         // Determine which revision to checkout (default to latest)
-        let target_revision = revision.unwrap_or_else(|| {
-            meta_file.revisions.last()
-                .map(|r| r.revision)
-                .unwrap_or(1)
-        });
+        let target_revision =
+            revision.unwrap_or_else(|| meta_file.revisions.last().map(|r| r.revision).unwrap_or(1));
 
         // Find the MetaFileRevision
-        let file_revision = meta_file.revisions.iter()
+        let file_revision = meta_file
+            .revisions
+            .iter()
             .find(|r| r.revision == target_revision)
             .ok_or_else(|| format!("Revision {} not found for {}", target_revision, depot_path))?;
 
         // Restore file to workspace from blocks
         let local_path = self.workspace_root.join(depot_path);
-        file_revision.restore_to_path(&self.server_block_store, &local_path)
+        file_revision
+            .restore_to_path(&self.server_block_store, &local_path)
             .map_err(|e| format!("Failed to restore file: {}", e))?;
 
         // Update local workspace state
@@ -445,28 +468,40 @@ impl CrvClient {
             },
         );
 
-        Ok(format!("Checked out {} revision {} to {:?}", depot_path, target_revision, local_path))
+        Ok(format!(
+            "Checked out {} revision {} to {:?}",
+            depot_path, target_revision, local_path
+        ))
     }
 
     /// Submit local changes to server (creates new revision)
-    /// 
+    ///
     /// 总是发送 gRPC 请求并打印回包。
     /// 如果启用本地模拟，则返回本地模拟结果；否则返回服务器响应。
-    pub async fn submit(&mut self, depot_path: &str, description: String) -> Result<String, String> {
+    pub async fn submit(
+        &mut self,
+        depot_path: &str,
+        description: String,
+    ) -> Result<String, String> {
         // 总是发送 gRPC 请求
         let request = tonic::Request::new(SubmitReq {
             changelist_id: 1, // TODO: 支持指定 changelist_id
             description: description.clone(),
         });
-        let grpc_response = self.grpc_client.as_mut()
+        let grpc_response = self
+            .grpc_client
+            .as_mut()
             .ok_or("gRPC client not initialized")?
             .submit(request)
             .await
             .map_err(|e| format!("gRPC error: {}", e))?;
-        
+
         let grpc_rsp = grpc_response.into_inner();
-        println!("📦 gRPC 回包: success={}, message={}", grpc_rsp.success, grpc_rsp.message);
-        
+        println!(
+            "📦 gRPC 回包: success={}, message={}",
+            grpc_rsp.success, grpc_rsp.message
+        );
+
         if self.use_local_simulation {
             // 本地模拟模式：执行本地提交
             self.submit_local(depot_path, description)
@@ -481,7 +516,7 @@ impl CrvClient {
     }
 
     /// Submit local changes (仅本地模拟模式)
-    /// 
+    ///
     /// Simulates: client chunks modified file, sends blocks to server,
     /// server creates new MetaFileRevision and Changelist
     fn submit_local(&mut self, depot_path: &str, description: String) -> Result<String, String> {
@@ -544,13 +579,20 @@ impl CrvClient {
         //     local.is_modified = false;
         // }
 
-        Ok(format!("Submitted {} as revision {} (changelist {})", depot_path, "", ""))
+        Ok(format!(
+            "Submitted {} as revision {} (changelist {})",
+            depot_path, "", ""
+        ))
     }
 
     /// Change local file to a different revision (仅本地模拟模式支持)
-    /// 
+    ///
     /// 注意：gRPC 模式下此功能需要服务器支持特定版本检出
-    pub fn change_revision(&mut self, depot_path: &str, target_revision: u64) -> Result<String, String> {
+    pub fn change_revision(
+        &mut self,
+        depot_path: &str,
+        target_revision: u64,
+    ) -> Result<String, String> {
         if self.use_local_simulation {
             self.checkout_revision_local(depot_path, Some(target_revision))
         } else {
@@ -563,10 +605,17 @@ impl CrvClient {
         println!("\n📁 Workspace Status:");
         println!("   Workspace: {:?}", self.workspace_root);
         println!("   Local files: {}", self.local_files.len());
-        
+
         for (depot_path, state) in &self.local_files {
-            let status = if state.is_modified { "MODIFIED" } else { "CLEAN" };
-            println!("     - {} [rev {}] {}", depot_path, state.current_revision, status);
+            let status = if state.is_modified {
+                "MODIFIED"
+            } else {
+                "CLEAN"
+            };
+            println!(
+                "     - {} [rev {}] {}",
+                depot_path, state.current_revision, status
+            );
         }
     }
 
@@ -575,26 +624,31 @@ impl CrvClient {
         println!("\n🖥️  Server Status:");
         println!("   Depot: {:?}", self.server_depot_root);
         println!("   Files: {}", self.server_files.len());
-        
+
         for (depot_path, meta_file) in &self.server_files {
-            let latest_rev = meta_file.revisions.last()
-                .map(|r| r.revision)
-                .unwrap_or(0);
+            let latest_rev = meta_file.revisions.last().map(|r| r.revision).unwrap_or(0);
             let locked_status = if meta_file.locked_by.is_empty() {
                 "unlocked"
             } else {
                 &format!("locked by {}", meta_file.locked_by)
             };
-            println!("     - {} [latest: rev {}, total: {} revisions, {}]", 
-                depot_path, latest_rev, meta_file.revisions.len(), locked_status);
+            println!(
+                "     - {} [latest: rev {}, total: {} revisions, {}]",
+                depot_path,
+                latest_rev,
+                meta_file.revisions.len(),
+                locked_status
+            );
         }
-        
+
         println!("   Changelists: {}", self.changelists.len());
     }
 
     /// Get file content for inspection
     pub fn get_local_file_content(&self, depot_path: &str) -> io::Result<String> {
-        let local_state = self.local_files.get(depot_path)
+        let local_state = self
+            .local_files
+            .get(depot_path)
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "File not checked out"))?;
         fs::read_to_string(&local_state.local_path)
     }
@@ -609,90 +663,111 @@ impl CrvClient {
     // ========== Hive 相关方法（通过 Edge 转发）==========
 
     /// 连接到 Hive 服务器（通过 Edge）
-    /// 
+    ///
     /// # Arguments
     /// * `hive_addr` - Hive 服务器地址（例如: "http://127.0.0.1:34560"）
-    pub async fn connect_hive(&mut self, hive_addr: &str) -> Result<HiveConnectRsp, Box<dyn std::error::Error>> {
+    pub async fn connect_hive(
+        &mut self,
+        hive_addr: &str,
+    ) -> Result<HiveConnectRsp, Box<dyn std::error::Error>> {
         let request = tonic::Request::new(HiveConnectReq {
             hive_address: hive_addr.to_string(),
         });
-        
-        let response = self.grpc_client.as_mut()
+
+        let response = self
+            .grpc_client
+            .as_mut()
             .ok_or("gRPC client not initialized")?
             .hive_connect(request)
             .await?;
-        
+
         let rsp = response.into_inner();
-        
+
         if rsp.success {
             println!("✅ {}", rsp.message);
         } else {
             println!("❌ {}", rsp.message);
         }
-        
+
         Ok(rsp)
     }
 
     /// 登录到 Hive 服务器（通过 Edge）
-    /// 
+    ///
     /// # Arguments
     /// * `username` - 用户名
     /// * `password` - 密码
-    pub async fn hive_login(&mut self, username: String, password: String) -> Result<HiveLoginRsp, Box<dyn std::error::Error>> {
+    pub async fn hive_login(
+        &mut self,
+        username: String,
+        password: String,
+    ) -> Result<HiveLoginRsp, Box<dyn std::error::Error>> {
         let request = tonic::Request::new(HiveLoginReq {
             username: username.clone(),
             password,
         });
-        
-        let response = self.grpc_client.as_mut()
+
+        let response = self
+            .grpc_client
+            .as_mut()
             .ok_or("gRPC client not initialized")?
             .hive_login(request)
             .await?;
-        
+
         let login_rsp = response.into_inner();
-        
+
         if login_rsp.success {
             println!("✅ {}", login_rsp.message);
-            println!("  Access Token: {}...", &login_rsp.access_token[..20.min(login_rsp.access_token.len())]);
+            println!(
+                "  Access Token: {}...",
+                &login_rsp.access_token[..20.min(login_rsp.access_token.len())]
+            );
             println!("  Expires At: {}", login_rsp.expires_at);
         } else {
             println!("❌ {}", login_rsp.message);
         }
-        
+
         Ok(login_rsp)
     }
 
     /// 注册新用户到 Hive 服务器（通过 Edge）
-    /// 
+    ///
     /// # Arguments
     /// * `username` - 用户名
     /// * `password` - 密码
     /// * `email` - 电子邮件
-    pub async fn hive_register(&mut self, username: String, password: String, email: String) -> Result<HiveRegisterRsp, Box<dyn std::error::Error>> {
+    pub async fn hive_register(
+        &mut self,
+        username: String,
+        password: String,
+        email: String,
+    ) -> Result<HiveRegisterRsp, Box<dyn std::error::Error>> {
         let request = tonic::Request::new(HiveRegisterReq {
             username: username.clone(),
             password,
             email,
         });
-        
-        let response = self.grpc_client.as_mut()
+
+        let response = self
+            .grpc_client
+            .as_mut()
             .ok_or("gRPC client not initialized")?
             .hive_register(request)
             .await?;
-        
+
         let register_rsp = response.into_inner();
-        
+
         if register_rsp.success {
             println!("✅ {}", register_rsp.message);
         } else {
             println!("❌ {}", register_rsp.message);
         }
-        
+
         Ok(register_rsp)
     }
 
     /// 从 Hive 服务器获取工作空间列表（通过 Edge）
-    /// 
+    ///
     /// # Arguments
     /// * `name` - 可选的工作空间名称过滤
     /// * `owner` - 可选的所有者过滤
@@ -707,24 +782,31 @@ impl CrvClient {
             owner,
             device_finger_print,
         });
-        
-        let response = self.grpc_client.as_mut()
+
+        let response = self
+            .grpc_client
+            .as_mut()
             .ok_or("gRPC client not initialized")?
             .hive_list_workspaces(request)
             .await?;
-        
+
         let list_rsp = response.into_inner();
-        
+
         if list_rsp.success {
             println!("📋 工作空间列表 ({} 个):", list_rsp.workspaces.len());
             for (idx, ws) in list_rsp.workspaces.iter().enumerate() {
-                println!("  {}. {} (owner: {}, path: {})", 
-                    idx + 1, ws.name, ws.owner, ws.path);
+                println!(
+                    "  {}. {} (owner: {}, path: {})",
+                    idx + 1,
+                    ws.name,
+                    ws.owner,
+                    ws.path
+                );
             }
         } else {
             println!("❌ {}", list_rsp.message);
         }
-        
+
         Ok(list_rsp)
     }
 }
@@ -736,12 +818,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_version_control_simulation() -> Result<(), Box<dyn std::error::Error>> {
-        
         if std::env::var("GITHUB_ACTIONS").is_ok() || std::env::var("CI").is_ok() {
             eprintln!("Skip test_version_control_simulation on GitHub Actions CI");
             return Ok(());
         }
-        
+
         // Setup test directories
         let workspace_root = PathBuf::from("test_workspace");
         let server_root = PathBuf::from("test_server");
@@ -760,7 +841,9 @@ mod tests {
             }
             Err(_) => {
                 // No server available, fall back to pure local simulation for testing
-                println!("⚠️  No gRPC server available, using pure local simulation mode for testing");
+                println!(
+                    "⚠️  No gRPC server available, using pure local simulation mode for testing"
+                );
                 CrvClient::new(&workspace_root, &server_root)?
             }
         };
@@ -781,7 +864,7 @@ mod tests {
         println!("{}", "=".repeat(60));
         let result = client.checkout("file1.txt").await?;
         println!("{}", result);
-        
+
         let content = client.get_local_file_content("file1.txt")?;
         println!("Content: {}", content);
         assert!(content.contains("Version 3"));
@@ -791,7 +874,7 @@ mod tests {
         println!("{}", "=".repeat(60));
         let result = client.change_revision("file1.txt", 1)?;
         println!("{}", result);
-        
+
         let content = client.get_local_file_content("file1.txt")?;
         println!("Content: {}", content);
         assert!(content.contains("Version 1"));
@@ -800,9 +883,14 @@ mod tests {
         println!("🧪 Test 4: Modify file locally and submit");
         println!("{}", "=".repeat(60));
         let local_file = workspace_root.join("file1.txt");
-        fs::write(&local_file, "Version 4 - User modified content\nNew features added")?;
-        
-        let result = client.submit("file1.txt", "User modification".to_string()).await?;
+        fs::write(
+            &local_file,
+            "Version 4 - User modified content\nNew features added",
+        )?;
+
+        let result = client
+            .submit("file1.txt", "User modification".to_string())
+            .await?;
         println!("{}", result);
 
         println!("\n{}", "=".repeat(60));
@@ -810,7 +898,7 @@ mod tests {
         println!("{}", "=".repeat(60));
         let result = client.checkout("docs/readme.md").await?;
         println!("{}", result);
-        
+
         let content = client.get_local_file_content("docs/readme.md")?;
         println!("Content: {}", content);
         assert!(content.contains("README v4"));
@@ -839,4 +927,3 @@ mod tests {
         Ok(())
     }
 }
-

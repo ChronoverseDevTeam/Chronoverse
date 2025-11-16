@@ -1,6 +1,6 @@
 use futures::stream::StreamExt;
-use mongodb::bson::doc;
 use mongodb::bson;
+use mongodb::bson::doc;
 
 use crate::database::get_mongo;
 
@@ -12,7 +12,9 @@ fn collection() -> mongodb::Collection<WorkspaceEntity> {
     get_mongo().collection::<WorkspaceEntity>(COLLECTION_NAME)
 }
 
-pub async fn ensure_indexes() -> Result<(), mongodb::error::Error> { Ok(()) }
+pub async fn ensure_indexes() -> Result<(), mongodb::error::Error> {
+    Ok(())
+}
 
 pub async fn create_workspace(entity: WorkspaceEntity) -> Result<(), mongodb::error::Error> {
     let coll = collection();
@@ -25,27 +27,32 @@ pub async fn create_workspace(entity: WorkspaceEntity) -> Result<(), mongodb::er
 pub async fn upsert_workspace(entity: WorkspaceEntity) -> Result<bool, mongodb::error::Error> {
     let coll = collection();
     let filter = doc! {"_id": &entity.name};
-    
+
     // 使用 replace_one 替换整个文档，保留 created_at
     use mongodb::options::ReplaceOptions;
-    
+
     // 先尝试获取现有文档的 created_at
     let existing = get_workspace_by_name(&entity.name).await?;
-    
+
     let mut final_entity = entity;
     if let Some(existing_workspace) = existing {
         // 如果存在，保留原来的 created_at
         final_entity.created_at = existing_workspace.created_at;
     }
-    
+
     let options = ReplaceOptions::builder().upsert(true).build();
-    let result = coll.replace_one(filter, final_entity).with_options(options).await?;
-    
+    let result = coll
+        .replace_one(filter, final_entity)
+        .with_options(options)
+        .await?;
+
     // upserted_id 存在表示是新创建的
     Ok(result.upserted_id.is_some())
 }
 
-pub async fn get_workspace_by_name(name: &str) -> Result<Option<WorkspaceEntity>, mongodb::error::Error> {
+pub async fn get_workspace_by_name(
+    name: &str,
+) -> Result<Option<WorkspaceEntity>, mongodb::error::Error> {
     let coll = collection();
     let filter = doc! {"_id": name};
     let found = coll.find_one(filter).await?;
@@ -75,7 +82,9 @@ pub async fn list_workspaces_filtered(
     if let Some(o) = owner.and_then(|s| if s.trim().is_empty() { None } else { Some(s) }) {
         filter.insert("owner", o);
     }
-    if let Some(d) = device_finger_print.and_then(|s| if s.trim().is_empty() { None } else { Some(s) }) {
+    if let Some(d) =
+        device_finger_print.and_then(|s| if s.trim().is_empty() { None } else { Some(s) })
+    {
         filter.insert("device_finger_print", d);
     }
 
@@ -87,7 +96,10 @@ pub async fn list_workspaces_filtered(
     Ok(items)
 }
 
-pub async fn update_workspace_path(name: &str, new_path: &str) -> Result<bool, mongodb::error::Error> {
+pub async fn update_workspace_path(
+    name: &str,
+    new_path: &str,
+) -> Result<bool, mongodb::error::Error> {
     let coll = collection();
     let filter = doc! {"_id": name};
     let update = doc! {
@@ -105,5 +117,3 @@ pub async fn delete_workspace(name: &str) -> Result<bool, mongodb::error::Error>
     let res = coll.delete_one(doc! {"_id": name}).await?;
     Ok(res.deleted_count > 0)
 }
-
-

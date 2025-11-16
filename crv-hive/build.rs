@@ -10,11 +10,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     tonic_prost_build::configure()
         // 可选配置，比如关闭生成 server、client、改变输出路径等
         // .build_server(false)
-        // .out_dir("src/generated")  
-        .compile_protos(
-            &["../proto/hive.proto"],
-            &["../proto"],
-        )?;
+        // .out_dir("src/generated")
+        .compile_protos(&["../proto/hive.proto"], &["../proto"])?;
     // 可选：将包名暴露为编译期环境变量便于lib.rs include自定义路径
     // println!("cargo:rustc-env=MY_PROTO_OUT={}", std::env::var("OUT_DIR").unwrap());
     Ok(())

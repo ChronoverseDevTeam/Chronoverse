@@ -10,5 +10,5 @@ pub struct UserEntity {
     #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
     pub created_at: DateTime<Utc>,
     #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
-    pub updated_at: DateTime<Utc>
+    pub updated_at: DateTime<Utc>,
 }

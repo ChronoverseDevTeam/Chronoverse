@@ -1,6 +1,6 @@
 use futures::stream::StreamExt;
-use mongodb::bson::doc;
 use mongodb::bson;
+use mongodb::bson::doc;
 
 use crate::database::get_mongo;
 
@@ -28,7 +28,9 @@ pub async fn get_changelist_by_id(id: u64) -> Result<Option<Changelist>, mongodb
 }
 
 /// 根据 workspace 名称获取所有变更列表
-pub async fn list_changelists_by_workspace(workspace_name: &str) -> Result<Vec<Changelist>, mongodb::error::Error> {
+pub async fn list_changelists_by_workspace(
+    workspace_name: &str,
+) -> Result<Vec<Changelist>, mongodb::error::Error> {
     let coll = collection();
     let filter = doc! {"workspace_name": workspace_name};
     let mut cursor = coll.find(filter).await?;
@@ -40,7 +42,9 @@ pub async fn list_changelists_by_workspace(workspace_name: &str) -> Result<Vec<C
 }
 
 /// 根据 owner 获取所有变更列表
-pub async fn list_changelists_by_owner(owner: &str) -> Result<Vec<Changelist>, mongodb::error::Error> {
+pub async fn list_changelists_by_owner(
+    owner: &str,
+) -> Result<Vec<Changelist>, mongodb::error::Error> {
     let coll = collection();
     let filter = doc! {"owner": owner};
     let mut cursor = coll.find(filter).await?;
@@ -86,7 +90,9 @@ pub async fn get_default_changelist(
 }
 
 /// 获取所有已提交的变更列表
-pub async fn list_submitted_changelists(workspace_name: &str) -> Result<Vec<Changelist>, mongodb::error::Error> {
+pub async fn list_submitted_changelists(
+    workspace_name: &str,
+) -> Result<Vec<Changelist>, mongodb::error::Error> {
     let coll = collection();
     let filter = doc! {
         "workspace_name": workspace_name,
@@ -148,14 +154,14 @@ pub async fn delete_changelist(id: u64) -> Result<bool, mongodb::error::Error> {
 pub async fn get_next_changelist_id() -> Result<u64, mongodb::error::Error> {
     let coll = collection();
     use mongodb::options::FindOptions;
-    
+
     let options = FindOptions::builder()
         .sort(doc! {"_id": -1})
         .limit(1)
         .build();
-    
+
     let mut cursor = coll.find(doc! {}).with_options(options).await?;
-    
+
     if let Some(res) = cursor.next().await {
         let last = res?;
         Ok(last.id + 1)
@@ -173,15 +179,16 @@ pub async fn list_changelists_filtered(
 ) -> Result<Vec<Changelist>, mongodb::error::Error> {
     let coll = collection();
     let mut filter = doc! {};
-    
-    if let Some(ws) = workspace_name.and_then(|s| if s.trim().is_empty() { None } else { Some(s) }) {
+
+    if let Some(ws) = workspace_name.and_then(|s| if s.trim().is_empty() { None } else { Some(s) })
+    {
         filter.insert("workspace_name", ws);
     }
-    
+
     if let Some(o) = owner.and_then(|s| if s.trim().is_empty() { None } else { Some(s) }) {
         filter.insert("owner", o);
     }
-    
+
     if let Some(is_submitted) = submitted {
         if is_submitted {
             filter.insert("submitted_at", doc! { "$exists": true });
@@ -189,7 +196,7 @@ pub async fn list_changelists_filtered(
             filter.insert("submitted_at", doc! { "$exists": false });
         }
     }
-    
+
     let mut cursor = coll.find(filter).await?;
     let mut items = Vec::new();
     while let Some(res) = cursor.next().await {
@@ -219,10 +226,10 @@ pub async fn add_files_to_default_changelist(
     files: Vec<(String, crv_core::metadata::file_revision::MetaFileRevision)>,
 ) -> Result<(), mongodb::error::Error> {
     use mongodb::bson;
-    
+
     // 先确保默认变更列表存在
     ensure_default_changelist(workspace_name, owner).await?;
-    
+
     // 构建更新文档
     let coll = collection();
     let filter = doc! {
@@ -230,15 +237,15 @@ pub async fn add_files_to_default_changelist(
         "workspace_name": workspace_name,
         "owner": owner
     };
-    
+
     // 将文件转换为 BSON 文档
     let mut updates = doc! {};
     for (path, revision) in files {
-        let revision_bson = bson::to_bson(&revision)
-            .map_err(|e| mongodb::error::Error::custom(e))?;
+        let revision_bson =
+            bson::to_bson(&revision).map_err(|e| mongodb::error::Error::custom(e))?;
         updates.insert(format!("files.{}", path), revision_bson);
     }
-    
+
     let update = doc! { "$set": updates };
     coll.update_one(filter, update).await?;
     Ok(())
@@ -256,13 +263,13 @@ pub async fn remove_files_from_default_changelist(
         "workspace_name": workspace_name,
         "owner": owner
     };
-    
+
     // 构建 $unset 操作
     let mut unset_doc = doc! {};
     for path in depot_paths {
         unset_doc.insert(format!("files.{}", path), "");
     }
-    
+
     let update = doc! { "$unset": unset_doc };
     coll.update_one(filter, update).await?;
     Ok(())
@@ -279,9 +286,8 @@ pub async fn clear_default_changelist(
         "workspace_name": workspace_name,
         "owner": owner
     };
-    
+
     let update = doc! { "$set": { "files": {} } };
     coll.update_one(filter, update).await?;
     Ok(())
 }
-

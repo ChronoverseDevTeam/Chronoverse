@@ -1,9 +1,9 @@
+use crate::client_manager::block_manager::BlockManager;
+use crate::client_manager::changelist::ChangelistMetadata;
+use crate::client_manager::file_manager::FileManager;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use crate::client_manager::changelist::ChangelistMetadata;
-use crate::client_manager::file_manager::FileManager;
-use crate::client_manager::block_manager::BlockManager;
 
 /// ChangeList 管理器
 pub struct WorkSpaceMetadata {
@@ -17,7 +17,11 @@ pub struct WorkSpaceMetadata {
 
 impl WorkSpaceMetadata {
     /// 新建管理器
-    pub fn new(root_path: &Path, depot_root_path: &Path, path_mapping: HashMap<PathBuf, PathBuf>) -> Self {
+    pub fn new(
+        root_path: &Path,
+        depot_root_path: &Path,
+        path_mapping: HashMap<PathBuf, PathBuf>,
+    ) -> Self {
         let block_store_path = root_path.join(".vcs").join("blocks");
         let depot_store_path = depot_root_path.join(".vcs").join("blocks");
         let block_manager = BlockManager::new(&block_store_path, &depot_store_path).unwrap();
@@ -53,7 +57,14 @@ impl WorkSpaceMetadata {
 
     /// 将文件加入指定 changelist
     pub fn checkout(&mut self, file_path: String, changelist_id: u32) -> std::io::Result<()> {
-        let changelist = self.changelists.entry(changelist_id).or_insert(ChangelistMetadata::new(changelist_id, Vec::new(), String::new()));
+        let changelist = self
+            .changelists
+            .entry(changelist_id)
+            .or_insert(ChangelistMetadata::new(
+                changelist_id,
+                Vec::new(),
+                String::new(),
+            ));
         changelist.file_paths.push(file_path.clone());
         Ok(())
     }
@@ -61,13 +72,21 @@ impl WorkSpaceMetadata {
     pub fn submit_changelist(&mut self, changelist_id: u32, desc: String) -> std::io::Result<()> {
         // 先取出文件路径列表，避免在循环中同时持有 &mut self 和 &changelist
         let file_paths = {
-            let changelist = self.changelists.entry(changelist_id).or_insert(ChangelistMetadata::new(changelist_id, Vec::new(), String::new()));
+            let changelist =
+                self.changelists
+                    .entry(changelist_id)
+                    .or_insert(ChangelistMetadata::new(
+                        changelist_id,
+                        Vec::new(),
+                        String::new(),
+                    ));
             changelist.desc = desc;
             changelist.file_paths.clone()
         };
 
         for file_path in &file_paths {
-            self.file_manager.submit_file_local(Path::new(file_path), changelist_id)?;
+            self.file_manager
+                .submit_file_local(Path::new(file_path), changelist_id)?;
             let mapped_path = self.get_mapped_path(Path::new(file_path)).unwrap();
             fs::write(mapped_path, fs::read(Path::new(file_path))?)?;
         }

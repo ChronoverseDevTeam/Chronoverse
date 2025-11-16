@@ -1,6 +1,6 @@
+use crv_hive::{config, database, hive_server, s3client};
 use std::net::SocketAddr;
 use tokio::signal;
-use crv_hive::{config, hive_server, database, s3client};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -16,7 +16,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .expect(&format!("unable to parse addr `{}`", addr_str));
 
     database::mongo::init_mongo_from_config().await?;
-    
+
     // 初始化 S3 客户端
     s3client::init_s3_client().await?;
 

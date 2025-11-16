@@ -1,20 +1,17 @@
-use tonic::{transport::Server, Request, Response, Status};
+use crate::middleware::{RenewToken, apply_renew_metadata, enforce_jwt};
 use crate::pb::hive_service_server::{HiveService, HiveServiceServer};
 use crate::pb::{
-    UpsertWorkspaceReq, GreetingReq, ListWorkspaceReq, ListWorkspaceRsp, NilRsp, 
-    LoginReq, LoginRsp, RegisterReq, RegisterRsp
+    GreetingReq, ListWorkspaceReq, ListWorkspaceRsp, LoginReq, LoginRsp, NilRsp, RegisterReq,
+    RegisterRsp, UpsertWorkspaceReq,
 };
-use crate::middleware::{RenewToken, apply_renew_metadata, enforce_jwt};
+use tonic::{Request, Response, Status, transport::Server};
 
 #[derive(Default)]
 pub struct CrvHiveService;
 
 #[tonic::async_trait]
 impl HiveService for CrvHiveService {
-    async fn greeting(
-        &self,
-        request: Request<GreetingReq>,
-    ) -> Result<Response<NilRsp>, Status> {
+    async fn greeting(&self, request: Request<GreetingReq>) -> Result<Response<NilRsp>, Status> {
         let renew = request.extensions().get::<RenewToken>().cloned();
         let mut resp = Response::new(NilRsp {});
         apply_renew_metadata(renew, &mut resp);
@@ -43,10 +40,7 @@ impl HiveService for CrvHiveService {
         Ok(resp)
     }
 
-    async fn login(
-        &self,
-        request: Request<LoginReq>,
-    ) -> Result<Response<LoginRsp>, Status> {
+    async fn login(&self, request: Request<LoginReq>) -> Result<Response<LoginRsp>, Status> {
         crate::logic::auth::login(request).await
     }
 

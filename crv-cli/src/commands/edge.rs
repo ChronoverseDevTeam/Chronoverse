@@ -39,7 +39,7 @@ pub enum EdgeCommands {
         #[arg(short, long)]
         description: String,
     },
-    
+
     // === Hive 相关命令 ===
     /// 连接到 Hive 服务器
     HiveConnect {
@@ -109,7 +109,7 @@ pub async fn handle(
                 println!("❌ {}", result.message);
             }
         }
-        
+
         EdgeCommands::Checkout { file_path } => {
             println!("正在检出文件: {}", file_path);
             let result = client.checkout(&file_path).await?;
@@ -119,7 +119,7 @@ pub async fn handle(
         EdgeCommands::GetLatest => {
             println!("正在获取最新文件列表...");
             let files = client.get_latest().await?;
-            
+
             if files.is_empty() {
                 println!("服务器上没有文件");
             } else {
@@ -130,7 +130,10 @@ pub async fn handle(
             }
         }
 
-        EdgeCommands::GetRevision { file_path, revision } => {
+        EdgeCommands::GetRevision {
+            file_path,
+            revision,
+        } => {
             if !is_local {
                 return Err("get-revision 仅在本地模拟模式下可用".into());
             }
@@ -139,7 +142,10 @@ pub async fn handle(
             println!("✅ {}", result);
         }
 
-        EdgeCommands::Submit { file_path, description } => {
+        EdgeCommands::Submit {
+            file_path,
+            description,
+        } => {
             println!("正在提交文件: {}", file_path);
             println!("描述: {}", description);
             let result = client.submit(&file_path, description).await?;
@@ -158,12 +164,20 @@ pub async fn handle(
             let _response = client.hive_login(username, password).await?;
         }
 
-        EdgeCommands::HiveRegister { username, password, email } => {
+        EdgeCommands::HiveRegister {
+            username,
+            password,
+            email,
+        } => {
             println!("正在注册用户: {}", username);
             let _response = client.hive_register(username, password, email).await?;
         }
 
-        EdgeCommands::HiveListWorkspaces { name, owner, device } => {
+        EdgeCommands::HiveListWorkspaces {
+            name,
+            owner,
+            device,
+        } => {
             println!("正在获取工作空间列表...");
             let _response = client.hive_list_workspaces(name, owner, device).await?;
         }

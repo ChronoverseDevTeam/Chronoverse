@@ -1,9 +1,9 @@
-use std::io;
+use flate2::{Compression, write::ZlibEncoder};
 use std::fs;
+use std::io;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use twox_hash::xxh3::hash64;
-use flate2::{Compression, write::ZlibEncoder};
-use std::io::Write;
 
 pub const BLOCK_SIZE: usize = 4096; // 4KB blocks
 
@@ -13,21 +13,21 @@ pub struct BlockMetadata {
     pub size: usize,
     pub hash: u64,
     pub compressed_size: usize,
-    pub ref_count: u64
+    pub ref_count: u64,
 }
 
 impl BlockMetadata {
     pub fn new(data: &[u8]) -> io::Result<Self> {
         let hash = hash64(data);
-        
+
         // 压缩数据以获取压缩后的大小
         let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
         encoder.write_all(data)?;
         let compressed_data = encoder.finish()?;
 
         Ok(BlockMetadata {
-            offset: 0,  // 这个值会在处理文件时设置
-            size: data.len(), 
+            offset: 0, // 这个值会在处理文件时设置
+            size: data.len(),
             hash,
             compressed_size: compressed_data.len(),
             ref_count: 1,
@@ -48,8 +48,9 @@ impl BlockMetadata {
     pub fn hash_from_abs_path(abs_path: &Path) -> io::Result<u64> {
         // 取路径最后三段
         // 去掉扩展名后再拆分路径
-        let stem = abs_path.file_stem()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "无法获取文件名（无扩展名）"))?;
+        let stem = abs_path.file_stem().ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "无法获取文件名（无扩展名）")
+        })?;
         let stem_path = Path::new(stem);
         let components: Vec<_> = stem_path.components().collect();
         if components.len() < 3 {
@@ -74,11 +75,10 @@ impl BlockMetadata {
         // 拼接三段并去掉 .block 后缀
         let combined = last_three.into_iter().rev().collect::<String>();
 
-        u64::from_str_radix(&combined, 16).map_err(|_| {
-            io::Error::new(io::ErrorKind::InvalidData, "路径中的哈希格式无效")
-        })
+        u64::from_str_radix(&combined, 16)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "路径中的哈希格式无效"))
     }
- 
+
     pub fn get_local_path(hash: u64) -> PathBuf {
         let hash_str = format!("{:016x}", hash);
         let (dir1, rest) = hash_str.split_at(2);

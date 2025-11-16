@@ -1,12 +1,14 @@
 use std::sync::OnceLock;
 
+use crate::config::entity::ConfigEntity;
+use crate::config::holder::get_or_init_config;
 use mongodb::options::ClientOptions;
 use mongodb::{Client, Collection, Database};
-use crate::config::holder::get_or_init_config;
-use crate::config::entity::ConfigEntity;
 
 fn inject_auth_in_uri(base_uri: &str, username: &str, password: Option<&str>) -> String {
-    if base_uri.contains('@') { return base_uri.to_string(); }
+    if base_uri.contains('@') {
+        return base_uri.to_string();
+    }
     if let Some(idx) = base_uri.find("://") {
         let (scheme, rest) = base_uri.split_at(idx);
         let rest = &rest[3..]; // skip ://
@@ -38,7 +40,9 @@ impl std::fmt::Display for MongoError {
 impl std::error::Error for MongoError {}
 
 impl From<mongodb::error::Error> for MongoError {
-    fn from(value: mongodb::error::Error) -> Self { Self::Mongo(value) }
+    fn from(value: mongodb::error::Error) -> Self {
+        Self::Mongo(value)
+    }
 }
 
 pub type Result<T> = std::result::Result<T, MongoError>;
@@ -71,7 +75,9 @@ impl MongoManager {
         Ok(Self { client, database })
     }
 
-    pub fn database(&self) -> Database { self.database.clone() }
+    pub fn database(&self) -> Database {
+        self.database.clone()
+    }
 
     pub fn collection<T>(&self, name: &str) -> Collection<T>
     where
@@ -80,7 +86,9 @@ impl MongoManager {
         self.database.collection::<T>(name)
     }
 
-    pub fn client(&self) -> Client { self.client.clone() }
+    pub fn client(&self) -> Client {
+        self.client.clone()
+    }
 }
 
 static MONGO: OnceLock<MongoManager> = OnceLock::new();
@@ -91,7 +99,9 @@ pub async fn init_mongo_with_config(cfg: &ConfigEntity) -> Result<()> {
     }
 
     let manager = MongoManager::connect_from_entity(cfg).await?;
-    MONGO.set(manager).map_err(|_| MongoError::AlreadyInitialized)?;
+    MONGO
+        .set(manager)
+        .map_err(|_| MongoError::AlreadyInitialized)?;
     Ok(())
 }
 
@@ -100,9 +110,10 @@ pub async fn init_mongo_from_config() -> Result<()> {
     init_mongo_with_config(cfg).await
 }
 
-
 pub fn get_mongo() -> &'static MongoManager {
-    MONGO.get().expect("MongoDB 未初始化，请先调用 init_mongo_from_config 或 init_mongo_with_config")
+    MONGO
+        .get()
+        .expect("MongoDB 未初始化，请先调用 init_mongo_from_config 或 init_mongo_with_config")
 }
 
 /// 关闭全局 Mongo 连接（在优雅关停时调用）。
@@ -112,4 +123,3 @@ pub async fn shutdown_mongo() {
     // OnceLock 不支持 take，这里通过不再使用句柄让其在进程结束时释放。
     // 如后续需要更严格的关闭，可在此添加驱动提供的显式关闭（若提供）。
 }
-

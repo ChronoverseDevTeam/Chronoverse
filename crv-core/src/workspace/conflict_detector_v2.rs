@@ -94,7 +94,7 @@ impl PathMapping {
     }
 
     /// 从字符串创建映射（用于测试，默认递归且无后缀名限制）
-    /// 
+    ///
     /// 路径规则：以 '/' 结尾的是文件夹，否则是文件（需要带后缀名）
     pub fn from_strings(server_path: &str, local_path: &str) -> Self {
         Self::new(
@@ -106,7 +106,7 @@ impl PathMapping {
     }
 
     /// 从字符串创建映射，带参数（用于测试）
-    /// 
+    ///
     /// 路径规则：以 '/' 结尾的是文件夹，否则是文件（需要带后缀名）
     pub fn from_strings_with_params(
         server_path: &str,
@@ -134,30 +134,28 @@ impl ConflictDetector {
     }
 
     /// 验证映射是否合法
-    /// 
+    ///
     /// 这个方法遍历所有映射，检查是否有多个服务器路径映射到同一个本地路径，
     /// 并且它们的文件名过滤器类型相同或兼容。
-    /// 
+    ///
     /// # 算法步骤
-    /// 
+    ///
     /// 1. 遍历所有映射
     /// 2. 对每个映射，统计能到达它的本地路径的其他映射，按文件名过滤器分组
     /// 3. 如果某个过滤器类型的计数 > 1，或者 All 类型与其他类型共存，则存在冲突
     pub fn verify_mappings(&self) -> ConflictResult<()> {
         // 直接遍历所有映射，检查每个映射的本地路径是否有冲突
         for mapping in &self.mappings {
-            let filter_counts = self.count_mappings_by_filter(
-                &mapping.local_path,
-                mapping.is_file_mapping(),
-            );
-            
+            let filter_counts =
+                self.count_mappings_by_filter(&mapping.local_path, mapping.is_file_mapping());
+
             println!(
                 "local_path: {}, is_file_mapping: {}, filter_counts: {:?}",
                 mapping.local_path,
                 mapping.is_file_mapping(),
                 filter_counts
             );
-            
+
             // 检查是否有冲突
             if self.has_filter_conflict(&filter_counts) {
                 return Err(ConflictError::PathConflict(mapping.local_path.clone()));
@@ -168,7 +166,7 @@ impl ConflictDetector {
     }
 
     /// 统计能到达指定本地路径的映射，按文件名过滤器分组计数
-    /// 
+    ///
     /// 返回：HashMap<FilenameFilter, usize>，键是过滤器类型，值是该类型的映射数量
     fn count_mappings_by_filter(
         &self,
@@ -182,7 +180,9 @@ impl ConflictDetector {
             // 检查该映射是否可以将某个服务器路径映射到 local_path
             if self.can_mapping_reach_local_path(mapping_idx, local_path, is_file_node) {
                 // 按过滤器类型计数
-                *filter_counts.entry(mapping.filename_filter.clone()).or_insert(0) += 1;
+                *filter_counts
+                    .entry(mapping.filename_filter.clone())
+                    .or_insert(0) += 1;
             }
         }
 
@@ -190,7 +190,7 @@ impl ConflictDetector {
     }
 
     /// 检查过滤器计数是否存在冲突
-    /// 
+    ///
     /// 冲突条件：
     /// 1. 某个特定过滤器类型（如 Extension("png")）的计数 > 1
     /// 2. All 类型存在且计数 > 1
@@ -231,13 +231,18 @@ impl ConflictDetector {
     }
 
     /// 检查指定映射是否可以将某个服务器路径映射到指定的本地路径
-    /// 
+    ///
     /// 算法：
     /// 1. 检查本地路径是否匹配（只需判断前缀）
     /// 2. 将本地路径转换为服务器路径
     /// 3. 检查映射的 server_path 是否能到达该服务器路径（判断递归、文件名过滤器）
     /// 4. 检查所有优先级更高的映射，如果它们能到达这个 local_path 且能到达该服务器路径，则当前映射被覆盖
-    fn can_mapping_reach_local_path(&self, mapping_idx: usize, local_path: &str, is_file_node: bool) -> bool {
+    fn can_mapping_reach_local_path(
+        &self,
+        mapping_idx: usize,
+        local_path: &str,
+        is_file_node: bool,
+    ) -> bool {
         let mapping = &self.mappings[mapping_idx];
 
         // 步骤1: 检查本地路径是否匹配（只需判断前缀）
@@ -266,12 +271,12 @@ impl ConflictDetector {
         // 步骤4: 检查所有优先级更高的映射
         for higher_priority_idx in (mapping_idx + 1)..self.mappings.len() {
             let higher_mapping = &self.mappings[higher_priority_idx];
-            
+
             // 检查更高优先级的映射是否能到达这个 local_path（只需判断前缀）
             if !self.is_prefix(&higher_mapping.local_path, local_path) {
                 continue;
             }
-            
+
             // 更高优先级的映射能到达这个 local_path
             // 现在检查它的 server_path 是否也能到达该服务器路径
             if self.can_server_path_reach(
@@ -282,7 +287,10 @@ impl ConflictDetector {
                 is_file_node,
             ) {
                 // 如果文件名过滤器兼容，则当前映射被覆盖
-                if mapping.filename_filter.is_compatible_with(&higher_mapping.filename_filter) {
+                if mapping
+                    .filename_filter
+                    .is_compatible_with(&higher_mapping.filename_filter)
+                {
                     return false;
                 }
             }
@@ -292,7 +300,7 @@ impl ConflictDetector {
     }
 
     /// 检查一个映射的 server_path 是否能到达实际的服务器路径
-    /// 
+    ///
     /// 参数：
     /// - mapping_server_path: 映射的服务器路径
     /// - actual_server_path: 实际的服务器路径
@@ -300,7 +308,7 @@ impl ConflictDetector {
     /// - recursive: 是否递归
     /// - is_file_path: actual_server_path 是否为文件路径
     ///   规则：以 '/' 结尾的是文件夹，否则是文件（需要检查后缀名）
-    /// 
+    ///
     /// 返回：如果能到达则返回 true
     fn can_server_path_reach(
         &self,
@@ -345,7 +353,10 @@ impl ConflictDetector {
         if result {
             if is_file_path {
                 // 提取文件名（最后一个 '/' 之后的部分，如果没有 '/' 则是整个路径）
-                let filename = actual_server_path.rsplit('/').next().unwrap_or(actual_server_path);
+                let filename = actual_server_path
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or(actual_server_path);
                 if !self.filename_matches_filter(filename, filename_filter) {
                     println!("filename not matches filter");
                     result = false;
@@ -390,7 +401,7 @@ mod tests {
 
         let detector = ConflictDetector::new(mappings);
         let result = detector.verify_mappings();
-        
+
         assert!(result.is_err());
         println!("检测到冲突: {:?}", result.err());
     }
@@ -407,7 +418,7 @@ mod tests {
 
         let detector = ConflictDetector::new(mappings);
         let result = detector.verify_mappings();
-        
+
         assert!(result.is_ok());
         println!("没有冲突");
     }
@@ -428,7 +439,7 @@ mod tests {
 
         let detector = ConflictDetector::new(mappings);
         let result = detector.verify_mappings();
-        
+
         assert!(result.is_ok());
         println!("多个映射：没有冲突");
     }
@@ -444,7 +455,7 @@ mod tests {
 
         let detector = ConflictDetector::new(mappings);
         let result = detector.verify_mappings();
-        
+
         assert!(result.is_ok());
         println!("没有冲突（不相交的映射）");
     }
@@ -463,7 +474,7 @@ mod tests {
 
         let detector = ConflictDetector::new(mappings);
         let result = detector.verify_mappings();
-        
+
         assert!(result.is_err());
         println!("嵌套映射：检测到冲突 {:?}", result.err());
     }
@@ -482,7 +493,7 @@ mod tests {
 
         let detector = ConflictDetector::new(mappings);
         let result = detector.verify_mappings();
-        
+
         assert!(result.is_err());
         println!("检测到冲突（只检查有映射的节点）: {:?}", result.err());
     }
@@ -503,7 +514,7 @@ mod tests {
 
         let detector = ConflictDetector::new(mappings);
         let result = detector.verify_mappings();
-        
+
         assert!(result.is_ok());
         println!("复杂场景：没有冲突");
     }
@@ -518,12 +529,17 @@ mod tests {
         // 因此不应该有冲突
         let mappings = vec![
             PathMapping::from_strings_with_params("a/b/", "z/x/", false, FilenameFilter::All),
-            PathMapping::from_strings_with_params("a/b/c/d/", "z/x/y/t/", true, FilenameFilter::All),
+            PathMapping::from_strings_with_params(
+                "a/b/c/d/",
+                "z/x/y/t/",
+                true,
+                FilenameFilter::All,
+            ),
         ];
 
         let detector = ConflictDetector::new(mappings);
         let result = detector.verify_mappings();
-        
+
         println!("非递归映射结果: {:?}", result);
         assert!(result.is_ok());
     }
@@ -542,7 +558,7 @@ mod tests {
 
         let detector = ConflictDetector::new(mappings);
         let result = detector.verify_mappings();
-        
+
         println!("非递归映射冲突结果: {:?}", result);
         assert!(result.is_ok());
     }
@@ -571,7 +587,7 @@ mod tests {
 
         let detector = ConflictDetector::new(mappings);
         let result = detector.verify_mappings();
-        
+
         println!("文件名过滤器兼容结果: {:?}", result);
         assert!(result.is_err());
     }
@@ -600,7 +616,7 @@ mod tests {
 
         let detector = ConflictDetector::new(mappings);
         let result = detector.verify_mappings();
-        
+
         println!("文件名过滤器不兼容结果: {:?}", result);
         assert!(result.is_ok());
     }
@@ -624,7 +640,7 @@ mod tests {
 
         let detector = ConflictDetector::new(mappings);
         let result = detector.verify_mappings();
-        
+
         println!("All vs Extension 结果: {:?}", result);
         assert!(result.is_err());
     }
@@ -662,7 +678,7 @@ mod tests {
 
         let detector = ConflictDetector::new(mappings);
         let result = detector.verify_mappings();
-        
+
         println!("复杂递归和过滤器结果: {:?}", result);
         assert!(result.is_ok());
     }
@@ -681,7 +697,7 @@ mod tests {
 
         let detector = ConflictDetector::new(mappings);
         let result = detector.verify_mappings();
-        
+
         println!("非递归与直接子节点结果: {:?}", result);
         assert!(result.is_ok());
     }
@@ -706,9 +722,24 @@ mod tests {
         //       //a/b/...~b //workspace/a/b/
         //       //a/b/txt.a //workspace/a/b/txt.a
         let mappings = vec![
-            PathMapping::from_strings_with_params("a/b/", "workspace/a/b/", true, FilenameFilter::Extension("a".to_string())),
-            PathMapping::from_strings_with_params("a/b/", "workspace/a/b/", true, FilenameFilter::Extension("b".to_string())),
-            PathMapping::new("a/b/txt.a".to_string(), "workspace/a/b/txt.a".to_string(), false, FilenameFilter::Extension("a".to_string())),
+            PathMapping::from_strings_with_params(
+                "a/b/",
+                "workspace/a/b/",
+                true,
+                FilenameFilter::Extension("a".to_string()),
+            ),
+            PathMapping::from_strings_with_params(
+                "a/b/",
+                "workspace/a/b/",
+                true,
+                FilenameFilter::Extension("b".to_string()),
+            ),
+            PathMapping::new(
+                "a/b/txt.a".to_string(),
+                "workspace/a/b/txt.a".to_string(),
+                false,
+                FilenameFilter::Extension("a".to_string()),
+            ),
         ];
         let detector = ConflictDetector::new(mappings);
         assert!(detector.verify_mappings().is_ok());
@@ -719,8 +750,18 @@ mod tests {
         // 原始: //a/b/txt.a //workspace/a/b/
         //       //a/b/txt.a //workspace/a/b/txt.a
         let mappings = vec![
-            PathMapping::new("a/b/txt.a".to_string(), "workspace/a/b/".to_string(), false, FilenameFilter::Extension("a".to_string())),
-            PathMapping::new("a/b/txt.a".to_string(), "workspace/a/b/txt.a".to_string(), false, FilenameFilter::Extension("a".to_string())),
+            PathMapping::new(
+                "a/b/txt.a".to_string(),
+                "workspace/a/b/".to_string(),
+                false,
+                FilenameFilter::Extension("a".to_string()),
+            ),
+            PathMapping::new(
+                "a/b/txt.a".to_string(),
+                "workspace/a/b/txt.a".to_string(),
+                false,
+                FilenameFilter::Extension("a".to_string()),
+            ),
         ];
         let detector = ConflictDetector::new(mappings);
         assert!(detector.verify_mappings().is_ok());
@@ -732,9 +773,24 @@ mod tests {
         //       //a/b/~b //workspace/a/b/
         //       //a/b/txt.a //workspace/a/b/txt.a
         let mappings = vec![
-            PathMapping::from_strings_with_params("a/b/", "workspace/a/b/", false, FilenameFilter::Extension("a".to_string())),
-            PathMapping::from_strings_with_params("a/b/", "workspace/a/b/", false, FilenameFilter::Extension("b".to_string())),
-            PathMapping::new("a/b/txt.a".to_string(), "workspace/a/b/txt.a".to_string(), false, FilenameFilter::Extension("a".to_string())),
+            PathMapping::from_strings_with_params(
+                "a/b/",
+                "workspace/a/b/",
+                false,
+                FilenameFilter::Extension("a".to_string()),
+            ),
+            PathMapping::from_strings_with_params(
+                "a/b/",
+                "workspace/a/b/",
+                false,
+                FilenameFilter::Extension("b".to_string()),
+            ),
+            PathMapping::new(
+                "a/b/txt.a".to_string(),
+                "workspace/a/b/txt.a".to_string(),
+                false,
+                FilenameFilter::Extension("a".to_string()),
+            ),
         ];
         let detector = ConflictDetector::new(mappings);
         assert!(detector.verify_mappings().is_ok());
@@ -773,7 +829,12 @@ mod tests {
         // 冲突
         let mappings = vec![
             PathMapping::from_strings("a/b/", "workspace/a/b/"),
-            PathMapping::from_strings_with_params("a/b/c/e/", "workspace/a/b/c/d/", false, FilenameFilter::All),
+            PathMapping::from_strings_with_params(
+                "a/b/c/e/",
+                "workspace/a/b/c/d/",
+                false,
+                FilenameFilter::All,
+            ),
         ];
         let detector = ConflictDetector::new(mappings);
         assert!(detector.verify_mappings().is_err());
@@ -785,7 +846,12 @@ mod tests {
         //       //a/b/c/e/... //workspace/a/b/c/d/
         // 无冲突
         let mappings = vec![
-            PathMapping::from_strings_with_params("a/b/", "workspace/a/b/", false, FilenameFilter::All),
+            PathMapping::from_strings_with_params(
+                "a/b/",
+                "workspace/a/b/",
+                false,
+                FilenameFilter::All,
+            ),
             PathMapping::from_strings("a/b/c/e/", "workspace/a/b/c/d/"),
         ];
         let detector = ConflictDetector::new(mappings);
@@ -812,7 +878,12 @@ mod tests {
         // 冲突
         let mappings = vec![
             PathMapping::from_strings("a/b/c/d/", "workspace/a/b/"),
-            PathMapping::from_strings_with_params("a/b/c/", "workspace/a/b/c/d/", false, FilenameFilter::All),
+            PathMapping::from_strings_with_params(
+                "a/b/c/",
+                "workspace/a/b/c/d/",
+                false,
+                FilenameFilter::All,
+            ),
         ];
         let detector = ConflictDetector::new(mappings);
         assert!(detector.verify_mappings().is_err());
@@ -824,8 +895,18 @@ mod tests {
         //       //a/b/c/      //workspace/a/b/c/d/
         // 无冲突
         let mappings = vec![
-            PathMapping::from_strings_with_params("a/b/c/d/", "workspace/a/b/", false, FilenameFilter::All),
-            PathMapping::from_strings_with_params("a/b/c/", "workspace/a/b/c/d/", false, FilenameFilter::All),
+            PathMapping::from_strings_with_params(
+                "a/b/c/d/",
+                "workspace/a/b/",
+                false,
+                FilenameFilter::All,
+            ),
+            PathMapping::from_strings_with_params(
+                "a/b/c/",
+                "workspace/a/b/c/d/",
+                false,
+                FilenameFilter::All,
+            ),
         ];
         let detector = ConflictDetector::new(mappings);
         assert!(detector.verify_mappings().is_ok());
@@ -851,7 +932,12 @@ mod tests {
         // 冲突
         let mappings = vec![
             PathMapping::from_strings("a/b/", "workspace/a/b/"),
-            PathMapping::from_strings_with_params("a/b/c/d/e/", "workspace/a/b/c/d/", false, FilenameFilter::All),
+            PathMapping::from_strings_with_params(
+                "a/b/c/d/e/",
+                "workspace/a/b/c/d/",
+                false,
+                FilenameFilter::All,
+            ),
         ];
         let detector = ConflictDetector::new(mappings);
         assert!(detector.verify_mappings().is_err());
@@ -863,7 +949,12 @@ mod tests {
         //       //a/b/c/d/e/... //workspace/a/b/c/d/
         // 无冲突
         let mappings = vec![
-            PathMapping::from_strings_with_params("a/b/", "workspace/a/b/", false, FilenameFilter::All),
+            PathMapping::from_strings_with_params(
+                "a/b/",
+                "workspace/a/b/",
+                false,
+                FilenameFilter::All,
+            ),
             PathMapping::from_strings("a/b/c/d/e/", "workspace/a/b/c/d/"),
         ];
         let detector = ConflictDetector::new(mappings);
@@ -890,7 +981,12 @@ mod tests {
         // 冲突
         let mappings = vec![
             PathMapping::from_strings("a/b/d/", "workspace/a/b/"),
-            PathMapping::from_strings_with_params("a/b/c/", "workspace/a/b/c/d/", false, FilenameFilter::All),
+            PathMapping::from_strings_with_params(
+                "a/b/c/",
+                "workspace/a/b/c/d/",
+                false,
+                FilenameFilter::All,
+            ),
         ];
         let detector = ConflictDetector::new(mappings);
         assert!(detector.verify_mappings().is_err());
@@ -902,7 +998,12 @@ mod tests {
         //       //a/b/c/...  //workspace/a/b/c/d/
         // 无冲突
         let mappings = vec![
-            PathMapping::from_strings_with_params("a/b/d/", "workspace/a/b/", false, FilenameFilter::All),
+            PathMapping::from_strings_with_params(
+                "a/b/d/",
+                "workspace/a/b/",
+                false,
+                FilenameFilter::All,
+            ),
             PathMapping::from_strings("a/b/c/", "workspace/a/b/c/d/"),
         ];
         let detector = ConflictDetector::new(mappings);
@@ -942,7 +1043,12 @@ mod tests {
         // 无冲突
         let mappings = vec![
             PathMapping::from_strings("a/b/c/", "workspace/a/b/c/d/"),
-            PathMapping::from_strings_with_params("a/b/d/", "workspace/a/b/", false, FilenameFilter::All),
+            PathMapping::from_strings_with_params(
+                "a/b/d/",
+                "workspace/a/b/",
+                false,
+                FilenameFilter::All,
+            ),
         ];
         let detector = ConflictDetector::new(mappings);
         assert!(detector.verify_mappings().is_ok());
@@ -968,7 +1074,12 @@ mod tests {
         // 无冲突
         let mappings = vec![
             PathMapping::from_strings("a/b/", "workspace/a/b/c/d/"),
-            PathMapping::from_strings_with_params("a/b/d/", "workspace/a/b/", false, FilenameFilter::All),
+            PathMapping::from_strings_with_params(
+                "a/b/d/",
+                "workspace/a/b/",
+                false,
+                FilenameFilter::All,
+            ),
         ];
         let detector = ConflictDetector::new(mappings);
         assert!(detector.verify_mappings().is_ok());
@@ -980,8 +1091,18 @@ mod tests {
         //       //a/b/     //workspace/a/b/
         // 冲突
         let mappings = vec![
-            PathMapping::from_strings_with_params("a/b/c/", "workspace/a/b/", false, FilenameFilter::All),
-            PathMapping::from_strings_with_params("a/b/", "workspace/a/b/", false, FilenameFilter::All),
+            PathMapping::from_strings_with_params(
+                "a/b/c/",
+                "workspace/a/b/",
+                false,
+                FilenameFilter::All,
+            ),
+            PathMapping::from_strings_with_params(
+                "a/b/",
+                "workspace/a/b/",
+                false,
+                FilenameFilter::All,
+            ),
         ];
         let detector = ConflictDetector::new(mappings);
         assert!(detector.verify_mappings().is_err());
@@ -1006,8 +1127,18 @@ mod tests {
         //       //a/b/d/   //workspace/a/b/
         // 冲突
         let mappings = vec![
-            PathMapping::from_strings_with_params("a/b/c/", "workspace/a/b/", false, FilenameFilter::All),
-            PathMapping::from_strings_with_params("a/b/d/", "workspace/a/b/", false, FilenameFilter::All),
+            PathMapping::from_strings_with_params(
+                "a/b/c/",
+                "workspace/a/b/",
+                false,
+                FilenameFilter::All,
+            ),
+            PathMapping::from_strings_with_params(
+                "a/b/d/",
+                "workspace/a/b/",
+                false,
+                FilenameFilter::All,
+            ),
         ];
         let detector = ConflictDetector::new(mappings);
         assert!(detector.verify_mappings().is_err());
@@ -1020,7 +1151,12 @@ mod tests {
         // 冲突
         let mappings = vec![
             PathMapping::from_strings("a/b/", "workspace/a/b/"),
-            PathMapping::from_strings_with_params("a/b/d/", "workspace/a/b/", false, FilenameFilter::All),
+            PathMapping::from_strings_with_params(
+                "a/b/d/",
+                "workspace/a/b/",
+                false,
+                FilenameFilter::All,
+            ),
         ];
         let detector = ConflictDetector::new(mappings);
         assert!(detector.verify_mappings().is_err());
@@ -1033,7 +1169,12 @@ mod tests {
         // 冲突
         let mappings = vec![
             PathMapping::from_strings("a/b/c/", "workspace/a/b/"),
-            PathMapping::new("a/b/d/old_name.txt".to_string(), "workspace/a/b/1/new_name.txt".to_string(), false, FilenameFilter::Extension("txt".to_string())),
+            PathMapping::new(
+                "a/b/d/old_name.txt".to_string(),
+                "workspace/a/b/1/new_name.txt".to_string(),
+                false,
+                FilenameFilter::Extension("txt".to_string()),
+            ),
         ];
         let detector = ConflictDetector::new(mappings);
         assert!(detector.verify_mappings().is_err());
@@ -1045,8 +1186,18 @@ mod tests {
         //       //a/b/d/old_name.txt //workspace/a/b/1/new_name.txt
         // 无冲突
         let mappings = vec![
-            PathMapping::from_strings_with_params("a/b/c/", "workspace/a/b/", false, FilenameFilter::All),
-            PathMapping::new("a/b/d/old_name.txt".to_string(), "workspace/a/b/1/new_name.txt".to_string(), false, FilenameFilter::Extension("txt".to_string())),
+            PathMapping::from_strings_with_params(
+                "a/b/c/",
+                "workspace/a/b/",
+                false,
+                FilenameFilter::All,
+            ),
+            PathMapping::new(
+                "a/b/d/old_name.txt".to_string(),
+                "workspace/a/b/1/new_name.txt".to_string(),
+                false,
+                FilenameFilter::Extension("txt".to_string()),
+            ),
         ];
         let detector = ConflictDetector::new(mappings);
         assert!(detector.verify_mappings().is_ok());
@@ -1058,8 +1209,18 @@ mod tests {
         //       //a/b/d/old_name.txt //workspace/a/b/new_name.txt
         // 冲突
         let mappings = vec![
-            PathMapping::from_strings_with_params("a/b/c/", "workspace/a/b/", false, FilenameFilter::All),
-            PathMapping::new("a/b/d/old_name.txt".to_string(), "workspace/a/b/new_name.txt".to_string(), false, FilenameFilter::Extension("txt".to_string())),
+            PathMapping::from_strings_with_params(
+                "a/b/c/",
+                "workspace/a/b/",
+                false,
+                FilenameFilter::All,
+            ),
+            PathMapping::new(
+                "a/b/d/old_name.txt".to_string(),
+                "workspace/a/b/new_name.txt".to_string(),
+                false,
+                FilenameFilter::Extension("txt".to_string()),
+            ),
         ];
         let detector = ConflictDetector::new(mappings);
         assert!(detector.verify_mappings().is_err());
@@ -1071,8 +1232,18 @@ mod tests {
         //       //a/b/file.txt //workspace/a/b/file.txt
         // 无冲突
         let mappings = vec![
-            PathMapping::from_strings_with_params("a/b/", "workspace/a/b/", false, FilenameFilter::All),
-            PathMapping::new("a/b/file.txt".to_string(), "workspace/a/b/file.txt".to_string(), false, FilenameFilter::Extension("txt".to_string())),
+            PathMapping::from_strings_with_params(
+                "a/b/",
+                "workspace/a/b/",
+                false,
+                FilenameFilter::All,
+            ),
+            PathMapping::new(
+                "a/b/file.txt".to_string(),
+                "workspace/a/b/file.txt".to_string(),
+                false,
+                FilenameFilter::Extension("txt".to_string()),
+            ),
         ];
         let detector = ConflictDetector::new(mappings);
         assert!(detector.verify_mappings().is_ok());
@@ -1085,7 +1256,12 @@ mod tests {
         // 无冲突（优先级）
         let mappings = vec![
             PathMapping::from_strings("a/b/", "workspace/a/b/"),
-            PathMapping::new("a/b/file.txt".to_string(), "workspace/a/b/file.txt".to_string(), false, FilenameFilter::Extension("txt".to_string())),
+            PathMapping::new(
+                "a/b/file.txt".to_string(),
+                "workspace/a/b/file.txt".to_string(),
+                false,
+                FilenameFilter::Extension("txt".to_string()),
+            ),
         ];
         let detector = ConflictDetector::new(mappings);
         assert!(detector.verify_mappings().is_ok());
@@ -1097,8 +1273,18 @@ mod tests {
         //       //a/b/old_name.txt //workspace/a/b/new_name.txt
         // 冲突
         let mappings = vec![
-            PathMapping::from_strings_with_params("a/b/", "workspace/a/b/", false, FilenameFilter::All),
-            PathMapping::new("a/b/old_name.txt".to_string(), "workspace/a/b/new_name.txt".to_string(), false, FilenameFilter::Extension("txt".to_string())),
+            PathMapping::from_strings_with_params(
+                "a/b/",
+                "workspace/a/b/",
+                false,
+                FilenameFilter::All,
+            ),
+            PathMapping::new(
+                "a/b/old_name.txt".to_string(),
+                "workspace/a/b/new_name.txt".to_string(),
+                false,
+                FilenameFilter::Extension("txt".to_string()),
+            ),
         ];
         let detector = ConflictDetector::new(mappings);
         assert!(detector.verify_mappings().is_err());
@@ -1111,7 +1297,12 @@ mod tests {
         // 冲突
         let mappings = vec![
             PathMapping::from_strings("a/b/", "workspace/a/b/"),
-            PathMapping::new("a/b/c/old_name.txt".to_string(), "workspace/a/b/new_name.txt".to_string(), false, FilenameFilter::Extension("txt".to_string())),
+            PathMapping::new(
+                "a/b/c/old_name.txt".to_string(),
+                "workspace/a/b/new_name.txt".to_string(),
+                false,
+                FilenameFilter::Extension("txt".to_string()),
+            ),
         ];
         let detector = ConflictDetector::new(mappings);
         assert!(detector.verify_mappings().is_err());
@@ -1123,8 +1314,18 @@ mod tests {
         //       //a/b/old_name.txt //workspace/a/b/c/new_name.txt
         // 无冲突
         let mappings = vec![
-            PathMapping::from_strings_with_params("a/b/", "workspace/a/b/", false, FilenameFilter::All),
-            PathMapping::new("a/b/old_name.txt".to_string(), "workspace/a/b/c/new_name.txt".to_string(), false, FilenameFilter::Extension("txt".to_string())),
+            PathMapping::from_strings_with_params(
+                "a/b/",
+                "workspace/a/b/",
+                false,
+                FilenameFilter::All,
+            ),
+            PathMapping::new(
+                "a/b/old_name.txt".to_string(),
+                "workspace/a/b/c/new_name.txt".to_string(),
+                false,
+                FilenameFilter::Extension("txt".to_string()),
+            ),
         ];
         let detector = ConflictDetector::new(mappings);
         assert!(detector.verify_mappings().is_ok());
@@ -1137,7 +1338,12 @@ mod tests {
         // 无冲突
         let mappings = vec![
             PathMapping::from_strings("a/b/d/", "workspace/a/b/c/"),
-            PathMapping::new("a/b/c/old_name.txt".to_string(), "workspace/a/b/new_name.txt".to_string(), false, FilenameFilter::Extension("txt".to_string())),
+            PathMapping::new(
+                "a/b/c/old_name.txt".to_string(),
+                "workspace/a/b/new_name.txt".to_string(),
+                false,
+                FilenameFilter::Extension("txt".to_string()),
+            ),
         ];
         let detector = ConflictDetector::new(mappings);
         assert!(detector.verify_mappings().is_ok());
@@ -1150,7 +1356,12 @@ mod tests {
         // 无冲突
         let mappings = vec![
             PathMapping::from_strings("a/b/", "workspace/a/b/c/"),
-            PathMapping::new("a/b/c/old_name.txt".to_string(), "workspace/a/b/new_name.txt".to_string(), false, FilenameFilter::Extension("txt".to_string())),
+            PathMapping::new(
+                "a/b/c/old_name.txt".to_string(),
+                "workspace/a/b/new_name.txt".to_string(),
+                false,
+                FilenameFilter::Extension("txt".to_string()),
+            ),
         ];
         let detector = ConflictDetector::new(mappings);
         assert!(detector.verify_mappings().is_ok());
@@ -1162,8 +1373,18 @@ mod tests {
         //       //a/b/c/ //workspace/a/b/c/
         // 无冲突
         let mappings = vec![
-            PathMapping::new("a/b/old_name.txt".to_string(), "workspace/a/b/new_name.txt".to_string(), false, FilenameFilter::Extension("txt".to_string())),
-            PathMapping::from_strings_with_params("a/b/c/", "workspace/a/b/c/", false, FilenameFilter::All),
+            PathMapping::new(
+                "a/b/old_name.txt".to_string(),
+                "workspace/a/b/new_name.txt".to_string(),
+                false,
+                FilenameFilter::Extension("txt".to_string()),
+            ),
+            PathMapping::from_strings_with_params(
+                "a/b/c/",
+                "workspace/a/b/c/",
+                false,
+                FilenameFilter::All,
+            ),
         ];
         let detector = ConflictDetector::new(mappings);
         assert!(detector.verify_mappings().is_ok());
@@ -1175,7 +1396,12 @@ mod tests {
         //       //a/b/... //workspace/a/b/
         // 无冲突（优先级）
         let mappings = vec![
-            PathMapping::new("a/b/old_name.txt".to_string(), "workspace/a/b/new_name.txt".to_string(), false, FilenameFilter::Extension("txt".to_string())),
+            PathMapping::new(
+                "a/b/old_name.txt".to_string(),
+                "workspace/a/b/new_name.txt".to_string(),
+                false,
+                FilenameFilter::Extension("txt".to_string()),
+            ),
             PathMapping::from_strings("a/b/", "workspace/a/b/"),
         ];
         let detector = ConflictDetector::new(mappings);
@@ -1188,8 +1414,18 @@ mod tests {
         //       //a/b/ //workspace/a/b/
         // 无冲突
         let mappings = vec![
-            PathMapping::new("a/b/old_name.txt".to_string(), "workspace/a/b/new_name.txt".to_string(), false, FilenameFilter::Extension("txt".to_string())),
-            PathMapping::from_strings_with_params("a/b/", "workspace/a/b/", false, FilenameFilter::All),
+            PathMapping::new(
+                "a/b/old_name.txt".to_string(),
+                "workspace/a/b/new_name.txt".to_string(),
+                false,
+                FilenameFilter::Extension("txt".to_string()),
+            ),
+            PathMapping::from_strings_with_params(
+                "a/b/",
+                "workspace/a/b/",
+                false,
+                FilenameFilter::All,
+            ),
         ];
         let detector = ConflictDetector::new(mappings);
         assert!(detector.verify_mappings().is_ok());
@@ -1201,8 +1437,18 @@ mod tests {
         //       //a/b/ //workspace/a/b/
         // 无冲突
         let mappings = vec![
-            PathMapping::new("a/b/new_name.txt".to_string(), "workspace/a/b/new_name.txt".to_string(), false, FilenameFilter::Extension("txt".to_string())),
-            PathMapping::from_strings_with_params("a/b/", "workspace/a/b/", false, FilenameFilter::All),
+            PathMapping::new(
+                "a/b/new_name.txt".to_string(),
+                "workspace/a/b/new_name.txt".to_string(),
+                false,
+                FilenameFilter::Extension("txt".to_string()),
+            ),
+            PathMapping::from_strings_with_params(
+                "a/b/",
+                "workspace/a/b/",
+                false,
+                FilenameFilter::All,
+            ),
         ];
         let detector = ConflictDetector::new(mappings);
         assert!(detector.verify_mappings().is_ok());
@@ -1214,8 +1460,18 @@ mod tests {
         //       //a/b/ //workspace/a/b/
         // 冲突
         let mappings = vec![
-            PathMapping::new("a/b/c/old_name.txt".to_string(), "workspace/a/b/new_name.txt".to_string(), false, FilenameFilter::Extension("txt".to_string())),
-            PathMapping::from_strings_with_params("a/b/", "workspace/a/b/", false, FilenameFilter::All),
+            PathMapping::new(
+                "a/b/c/old_name.txt".to_string(),
+                "workspace/a/b/new_name.txt".to_string(),
+                false,
+                FilenameFilter::Extension("txt".to_string()),
+            ),
+            PathMapping::from_strings_with_params(
+                "a/b/",
+                "workspace/a/b/",
+                false,
+                FilenameFilter::All,
+            ),
         ];
         let detector = ConflictDetector::new(mappings);
         assert!(detector.verify_mappings().is_err());
@@ -1227,8 +1483,18 @@ mod tests {
         //       //a/b/ //workspace/a/b/c/
         // 无冲突
         let mappings = vec![
-            PathMapping::new("a/b/file.txt".to_string(), "workspace/a/b/file.txt".to_string(), false, FilenameFilter::Extension("txt".to_string())),
-            PathMapping::from_strings_with_params("a/b/", "workspace/a/b/c/", false, FilenameFilter::All),
+            PathMapping::new(
+                "a/b/file.txt".to_string(),
+                "workspace/a/b/file.txt".to_string(),
+                false,
+                FilenameFilter::Extension("txt".to_string()),
+            ),
+            PathMapping::from_strings_with_params(
+                "a/b/",
+                "workspace/a/b/c/",
+                false,
+                FilenameFilter::All,
+            ),
         ];
         let detector = ConflictDetector::new(mappings);
         assert!(detector.verify_mappings().is_ok());
@@ -1240,8 +1506,18 @@ mod tests {
         //       //a/b/ //workspace/a/b/c/
         // 无冲突
         let mappings = vec![
-            PathMapping::new("a/b/c/file.txt".to_string(), "workspace/a/b/file.txt".to_string(), false, FilenameFilter::Extension("txt".to_string())),
-            PathMapping::from_strings_with_params("a/b/", "workspace/a/b/c/", false, FilenameFilter::All),
+            PathMapping::new(
+                "a/b/c/file.txt".to_string(),
+                "workspace/a/b/file.txt".to_string(),
+                false,
+                FilenameFilter::Extension("txt".to_string()),
+            ),
+            PathMapping::from_strings_with_params(
+                "a/b/",
+                "workspace/a/b/c/",
+                false,
+                FilenameFilter::All,
+            ),
         ];
         let detector = ConflictDetector::new(mappings);
         assert!(detector.verify_mappings().is_ok());
@@ -1253,8 +1529,18 @@ mod tests {
         //       //a/b/c/ //workspace/a/b/
         // 无冲突
         let mappings = vec![
-            PathMapping::new("a/b/file.txt".to_string(), "workspace/a/b/c/file.txt".to_string(), false, FilenameFilter::Extension("txt".to_string())),
-            PathMapping::from_strings_with_params("a/b/c/", "workspace/a/b/", false, FilenameFilter::All),
+            PathMapping::new(
+                "a/b/file.txt".to_string(),
+                "workspace/a/b/c/file.txt".to_string(),
+                false,
+                FilenameFilter::Extension("txt".to_string()),
+            ),
+            PathMapping::from_strings_with_params(
+                "a/b/c/",
+                "workspace/a/b/",
+                false,
+                FilenameFilter::All,
+            ),
         ];
         let detector = ConflictDetector::new(mappings);
         assert!(detector.verify_mappings().is_ok());
@@ -1266,7 +1552,12 @@ mod tests {
         //       //a/b/c/... //workspace/a/b/
         // 冲突
         let mappings = vec![
-            PathMapping::new("a/b/file.txt".to_string(), "workspace/a/b/c/file.txt".to_string(), false, FilenameFilter::Extension("txt".to_string())),
+            PathMapping::new(
+                "a/b/file.txt".to_string(),
+                "workspace/a/b/c/file.txt".to_string(),
+                false,
+                FilenameFilter::Extension("txt".to_string()),
+            ),
             PathMapping::from_strings("a/b/c/", "workspace/a/b/"),
         ];
         let detector = ConflictDetector::new(mappings);
@@ -1279,8 +1570,18 @@ mod tests {
         //       //a/b/c/ //workspace/a/b/
         // 冲突
         let mappings = vec![
-            PathMapping::new("a/b/file.txt".to_string(), "workspace/a/b/file.txt".to_string(), false, FilenameFilter::Extension("txt".to_string())),
-            PathMapping::from_strings_with_params("a/b/c/", "workspace/a/b/", false, FilenameFilter::All),
+            PathMapping::new(
+                "a/b/file.txt".to_string(),
+                "workspace/a/b/file.txt".to_string(),
+                false,
+                FilenameFilter::Extension("txt".to_string()),
+            ),
+            PathMapping::from_strings_with_params(
+                "a/b/c/",
+                "workspace/a/b/",
+                false,
+                FilenameFilter::All,
+            ),
         ];
         let detector = ConflictDetector::new(mappings);
         assert!(detector.verify_mappings().is_err());
@@ -1292,11 +1593,15 @@ mod tests {
         //       //a/b/c/... //workspace/a/b/
         // 冲突
         let mappings = vec![
-            PathMapping::new("a/b/file.txt".to_string(), "workspace/a/b/file.txt".to_string(), false, FilenameFilter::Extension("txt".to_string())),
+            PathMapping::new(
+                "a/b/file.txt".to_string(),
+                "workspace/a/b/file.txt".to_string(),
+                false,
+                FilenameFilter::Extension("txt".to_string()),
+            ),
             PathMapping::from_strings("a/b/c/", "workspace/a/b/"),
         ];
         let detector = ConflictDetector::new(mappings);
         assert!(detector.verify_mappings().is_err());
     }
 }
-

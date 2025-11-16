@@ -8,19 +8,19 @@ mod commands;
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
-    
+
     /// 服务器地址
     #[arg(short, long, default_value = "http://127.0.0.1:34562")]
     server: String,
-    
+
     /// 使用本地模拟模式
     #[arg(short, long)]
     local: bool,
-    
+
     /// 本地模拟：工作空间根目录
     #[arg(short = 'w', long, default_value = "./workspace")]
     workspace: String,
-    
+
     /// 本地模拟：服务器根目录
     #[arg(long, default_value = "./server")]
     server_root: String,
@@ -42,12 +42,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 async fn run_interactive_mode(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     use crv_cli::client::CrvClient;
-    
+
     // 初始化客户端（总是使用 gRPC 连接）
     println!("连接服务器: {}", cli.server);
     let mut client = CrvClient::new_grpc(&cli.server).await?;
     println!("连接成功");
-    
+
     // 如果选择本地模拟模式，设置本地模拟参数
     if cli.local {
         println!("启用本地模拟模式");
@@ -55,7 +55,7 @@ async fn run_interactive_mode(cli: Cli) -> Result<(), Box<dyn std::error::Error>
         println!("服务器根: {}", cli.server_root);
         client.enable_local_simulation(&cli.workspace, &cli.server_root)?;
     }
-    
+
     println!("输入 'help' 查看帮助，'exit' 退出\n");
 
     loop {
@@ -89,7 +89,10 @@ async fn run_interactive_mode(cli: Cli) -> Result<(), Box<dyn std::error::Error>
                 if let Some(command) = parsed.command {
                     match command {
                         Commands::Edge(edge_args) => {
-                            if let Err(e) = commands::edge::handle(edge_args.command, &mut client, cli.local).await {
+                            if let Err(e) =
+                                commands::edge::handle(edge_args.command, &mut client, cli.local)
+                                    .await
+                            {
                                 eprintln!("错误: {}", e);
                             }
                         }

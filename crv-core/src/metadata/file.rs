@@ -1,5 +1,5 @@
-use serde::{self, Deserialize, Serialize};
 use crate::metadata::file_revision::MetaFileRevision;
+use serde::{self, Deserialize, Serialize};
 use std::hash::{Hash, Hasher};
 
 // Only used in edge, not exists in mongo db
@@ -8,7 +8,7 @@ pub struct MetaFile {
     #[serde(rename = "_id")]
     pub depot_path: String,
     pub locked_by: String,
-    pub revisions: Vec<MetaFileRevision>
+    pub revisions: Vec<MetaFileRevision>,
 }
 
 impl PartialEq for MetaFile {

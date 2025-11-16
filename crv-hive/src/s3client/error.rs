@@ -40,4 +40,3 @@ impl From<minio::s3::error::Error> for S3Error {
         S3Error::Other(err.to_string())
     }
 }
-

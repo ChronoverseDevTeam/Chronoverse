@@ -131,7 +131,11 @@ fn cdc_chunk_ranges(bytes: &[u8], options: &ChunkingOptions) -> Vec<(usize, usiz
 
         // Advance rolling hash by one byte
         let incoming = bytes[i] as usize;
-        let outgoing = if i >= w { bytes[i - w] as usize } else { 0usize };
+        let outgoing = if i >= w {
+            bytes[i - w] as usize
+        } else {
+            0usize
+        };
         let out_rot = rotl64(table[outgoing], (w % 64) as u32);
         h = rotl64(h, 1) ^ table[incoming] ^ out_rot;
         i += 1;
@@ -172,7 +176,10 @@ fn nanos_seed() -> u64 {
 }
 
 /// Persist a block under 3-level directory based on its hex id.
-fn persist_block_if_needed<P: AsRef<Path>>(block: &FileBlock, store_root: P) -> std::io::Result<PathBuf> {
+fn persist_block_if_needed<P: AsRef<Path>>(
+    block: &FileBlock,
+    store_root: P,
+) -> std::io::Result<PathBuf> {
     let id = &block.id;
     let p1 = &id[0..2];
     let p2 = &id[2..4];

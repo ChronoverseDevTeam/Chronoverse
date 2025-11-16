@@ -3,10 +3,11 @@ pub mod pb {
     include!(concat!(env!("OUT_DIR"), "/hive_proto.rs"));
 }
 
-pub mod hive_server;
-pub mod database;
 pub mod config;
+pub mod database;
+pub mod hive_server;
 pub mod logic;
 pub mod middleware;
-pub mod test;
+pub mod repository;
 pub mod s3client;
+pub mod test;

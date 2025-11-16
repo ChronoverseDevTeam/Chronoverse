@@ -1,10 +1,10 @@
+use std::collections::HashMap;
 use std::fs::{self};
 use std::io::{self};
 use std::path::{Path, PathBuf};
-use std::collections::HashMap;
 
-use crate::client_manager::file::{FileMetadata};
 use crate::client_manager::block_manager::BlockManager;
+use crate::client_manager::file::FileMetadata;
 
 pub struct FileManager {
     file_pool: HashMap<PathBuf, FileMetadata>,
@@ -19,10 +19,17 @@ impl FileManager {
         })
     }
 
-    pub fn submit_file_local(&mut self, file_path: &Path, changelist: u32) -> io::Result<&FileMetadata> {
-        let block_hashes = self.block_manager.create_blocks_at_path(file_path)?; 
+    pub fn submit_file_local(
+        &mut self,
+        file_path: &Path,
+        changelist: u32,
+    ) -> io::Result<&FileMetadata> {
+        let block_hashes = self.block_manager.create_blocks_at_path(file_path)?;
 
-        let res = self.file_pool.entry(file_path.to_path_buf()).or_insert(FileMetadata::new(file_path));
+        let res = self
+            .file_pool
+            .entry(file_path.to_path_buf())
+            .or_insert(FileMetadata::new(file_path));
         res.add_revision(changelist, block_hashes);
 
         Ok(res)
@@ -62,7 +69,7 @@ impl FileManager {
 //         let temp_dir = tempdir()?;
 //         let store_path = temp_dir.path().join("blocks");
 //         let test_file = temp_dir.path().join("test.txt");
-        
+
 //         // 创建测试文件
 //         let test_data = b"Hello, World! This is a test file.".repeat(1000);
 //         fs::write(&test_file, &test_data)?;
@@ -90,7 +97,7 @@ impl FileManager {
 //         let store_path = temp_dir.path().join("blocks");
 //         let test_file1 = temp_dir.path().join("test1.txt");
 //         let test_file2 = temp_dir.path().join("test2.txt");
-        
+
 //         // 创建两个包含相同数据的测试文件
 //         let test_data = b"Hello, World! This is a test file.".repeat(1000);
 //         fs::write(&test_file1, &test_data)?;

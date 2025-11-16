@@ -7,12 +7,12 @@ use minio::s3::types::S3Api;
 
 use crate::config::entity::ConfigEntity;
 
+use super::S3Result;
 use super::adapter::S3Adapter;
 use super::error::S3Error;
-use super::S3Result;
 
 /// MinIO S3 适配器实现
-/// 
+///
 /// 这是一个具体的 S3 适配器实现，使用 MinIO Rust SDK
 pub struct MinioAdapter {
     client: Client,
@@ -21,10 +21,10 @@ pub struct MinioAdapter {
 
 impl MinioAdapter {
     /// 从配置创建 MinioAdapter 实例
-    /// 
+    ///
     /// # 参数
     /// * `config` - 配置实体
-    /// 
+    ///
     /// # 返回
     /// 成功返回 MinioAdapter 实例，失败返回 S3Error
     pub fn from_config(config: &ConfigEntity) -> S3Result<Self> {
@@ -35,11 +35,8 @@ impl MinioAdapter {
             .map_err(|e| S3Error::ConfigError(format!("无效的 S3 endpoint: {}", e)))?;
 
         // 创建静态凭证提供者
-        let static_provider = StaticProvider::new(
-            &config.s3_access_key,
-            &config.s3_secret_key,
-            None,
-        );
+        let static_provider =
+            StaticProvider::new(&config.s3_access_key, &config.s3_secret_key, None);
 
         // 构建 MinIO 客户端
         let client = ClientBuilder::new(base_url.clone())
@@ -89,7 +86,7 @@ impl S3Adapter for MinioAdapter {
 
         // 读取对象数据 - bytes() 返回的是一个字节迭代器
         let body_bytes: Vec<u8> = response.object.bytes().collect();
-        
+
         Ok(Bytes::from(body_bytes))
     }
 
@@ -127,7 +124,7 @@ impl S3Adapter for MinioAdapter {
         } else {
             self.client.list_objects(bucket)
         };
-        
+
         // 在异步上下文中处理 list 操作
         let objects = tokio::task::block_in_place(|| {
             let result = Vec::new();

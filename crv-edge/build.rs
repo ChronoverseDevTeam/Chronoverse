@@ -10,7 +10,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     tonic_prost_build::configure()
         // 可选配置，比如关闭生成 server、client、改变输出路径等
         // .build_server(false)
-        // .out_dir("src/generated")  
+        // .out_dir("src/generated")
         .compile_protos(
             &["../proto/daemon.proto", "../proto/hive.proto"],
             &["../proto"],

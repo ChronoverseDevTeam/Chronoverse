@@ -2,7 +2,7 @@ use tonic::{Request, Response, Status};
 
 use crate::{
     middleware::UserContext,
-    pb::{UpsertWorkspaceReq, NilRsp},
+    pb::{NilRsp, UpsertWorkspaceReq},
 };
 
 pub async fn upsert_workspace(
