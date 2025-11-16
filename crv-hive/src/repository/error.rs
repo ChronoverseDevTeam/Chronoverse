@@ -31,6 +31,10 @@ pub enum RepositoryError {
     UnsupportedCompression(u16),
     #[error("读取 chunk 数据时检测到损坏: {0}")]
     Corrupted(&'static str),
+    #[error("未找到指定 chunk")]
+    ChunkNotFound { hash: ChunkHash },
+    #[error("pack id 已达上限，无法继续创建新的 pack")]
+    PackIdOverflow,
 }
 
 pub type Result<T> = std::result::Result<T, RepositoryError>;

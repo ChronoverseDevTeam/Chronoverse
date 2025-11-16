@@ -5,6 +5,7 @@ mod error;
 mod index;
 mod io_utils;
 mod layout;
+mod manager;
 mod pack;
 
 pub use bundle::{PackBundle, PackIdentity};
@@ -15,4 +16,5 @@ pub use constants::*;
 pub use error::{RepositoryError, Result};
 pub use index::{IndexEntry, IndexSnapshot, MutableIndex};
 pub use layout::RepositoryLayout;
+pub use manager::RepositoryManager;
 pub use pack::{PackReader, PackStats, PackWriter};
