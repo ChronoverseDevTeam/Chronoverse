@@ -11,12 +11,6 @@ pub struct ConfigEntity {
 
     pub hive_address: Option<String>,
     pub jwt_secret: String,
-
-    pub s3_endpoint: String,
-    pub s3_region: String,
-    pub s3_access_key: String,
-    pub s3_secret_key: String,
-    pub s3_bucket: String,
 }
 
 impl Default for ConfigEntity {
@@ -31,12 +25,6 @@ impl Default for ConfigEntity {
 
             hive_address: Some("0.0.0.0:34560".to_string()),
             jwt_secret: "dev-secret".to_string(),
-
-            s3_endpoint: "http://localhost:9000".to_string(),
-            s3_region: "us-east-1".to_string(),
-            s3_access_key: "minioadmin".to_string(),
-            s3_secret_key: "minioadmin".to_string(),
-            s3_bucket: "crv-file-blocks".to_string(),
         }
     }
 }

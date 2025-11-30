@@ -9,5 +9,4 @@ pub mod hive_server;
 pub mod logic;
 pub mod middleware;
 pub mod repository;
-pub mod s3client;
 pub mod test;

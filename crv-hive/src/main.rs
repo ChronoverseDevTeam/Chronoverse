@@ -1,4 +1,4 @@
-use crv_hive::{config, database, hive_server, s3client};
+use crv_hive::{config, database, hive_server };
 use std::net::SocketAddr;
 use tokio::signal;
 
@@ -16,9 +16,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .expect(&format!("unable to parse addr `{}`", addr_str));
 
     database::mongo::init_mongo_from_config().await?;
-
-    // 初始化 S3 客户端
-    s3client::init_s3_client().await?;
 
     println!("Hive gRPC sevice now is available at {}", addr);
 

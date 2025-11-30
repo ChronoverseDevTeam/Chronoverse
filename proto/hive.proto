@@ -33,6 +33,12 @@ message ListWorkspaceRsp {
   repeated Workspace workspaces = 1;
 }
 
+message FileChunk {
+  bytes chunk_hash = 1;
+  bytes data = 2;
+  int64 offset = 3;
+}
+
 // Authentication & Token management
 message LoginReq {
   string username = 1;
@@ -56,6 +62,9 @@ service HiveService {
   rpc Greeting(GreetingReq) returns (NilRsp);
   rpc UpsertWorkspace(UpsertWorkspaceReq) returns (NilRsp);
   rpc ListWorkspaces(ListWorkspaceReq) returns (ListWorkspaceRsp);
+
+  // File Upload Protocol
+  rpc Upload(stream FileChunk) returns (NilRsp);
 
   // Auth & Token management
   rpc Login(LoginReq) returns (LoginRsp);

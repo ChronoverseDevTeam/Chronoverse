@@ -40,6 +40,17 @@ impl HiveService for CrvHiveService {
         Ok(resp)
     }
 
+    async fn upload(
+        &self,
+        request: Request<tonic::Streaming<crate::pb::FileChunk>>,
+    ) -> Result<Response<NilRsp>, Status> {
+        let request = enforce_jwt(request)?;
+        let renew = request.extensions().get::<RenewToken>().cloned();
+        let mut resp = crate::logic::upload::upload(request).await?;
+        apply_renew_metadata(renew, &mut resp);
+        Ok(resp)
+    }
+
     async fn login(&self, request: Request<LoginReq>) -> Result<Response<LoginRsp>, Status> {
         crate::logic::auth::login(request).await
     }
