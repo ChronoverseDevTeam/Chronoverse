@@ -10,6 +10,7 @@ pub struct ConfigEntity {
     pub mongo_password: Option<String>,
 
     pub hive_address: Option<String>,
+    pub repository_path: String,
     pub jwt_secret: String,
 }
 
@@ -24,7 +25,24 @@ impl Default for ConfigEntity {
             mongo_password: None,
 
             hive_address: Some("0.0.0.0:34560".to_string()),
+            repository_path: default_repository_path(),
             jwt_secret: "dev-secret".to_string(),
         }
+    }
+}
+
+fn default_repository_path() -> String {
+    if cfg!(target_os = "windows") {
+        if let Ok(appdata) = std::env::var("APPDATA") {
+            let mut path = std::path::PathBuf::from(appdata);
+            path.push("crv");
+            path.push("shards");
+            path.to_string_lossy().into_owned()
+        } else {
+            "%AppData%/crv/shards".to_string()
+        }
+    } else {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "~".to_string());
+        format!("{home}/.crv/shards")
     }
 }
