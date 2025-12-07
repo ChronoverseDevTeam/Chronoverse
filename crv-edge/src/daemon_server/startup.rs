@@ -1,6 +1,6 @@
 //! 服务启动引导
 use super::config::BootstrapConfig;
-use super::middleware::{auth::AuthInterceptor, config::ConfigInterceptor};
+use super::middleware::CombinedInterceptor;
 use super::service::CrvEdgeDaemonServiceImpl;
 use crate::daemon_server::db::DbManager;
 use crate::daemon_server::state::AppState;
@@ -17,12 +17,16 @@ where
     let bootstrap_config = BootstrapConfig::load()?;
     let db = DbManager::new(bootstrap_config.embedded_database_root)?;
     let app_state = AppState::new(Arc::new(db));
+    let interceptor = CombinedInterceptor::new(app_state.clone());
     let edge_daemon_service_impl = CrvEdgeDaemonServiceImpl::new(app_state);
 
     let addr: SocketAddr = format!("127.0.0.1:{}", bootstrap_config.daemon_port).parse()?;
 
     Server::builder()
-        .add_service(EdgeDaemonServiceServer::new(edge_daemon_service_impl))
+        .add_service(EdgeDaemonServiceServer::with_interceptor(
+            edge_daemon_service_impl,
+            interceptor,
+        ))
         .serve_with_shutdown(addr, shutdown)
         .await?;
 
@@ -34,12 +38,16 @@ pub async fn start_server() -> Result<(), Box<dyn std::error::Error>> {
     let bootstrap_config = BootstrapConfig::load()?;
     let db = DbManager::new(bootstrap_config.embedded_database_root)?;
     let app_state = AppState::new(Arc::new(db));
+    let interceptor = CombinedInterceptor::new(app_state.clone());
     let edge_daemon_service_impl = CrvEdgeDaemonServiceImpl::new(app_state);
 
     let addr: SocketAddr = format!("127.0.0.1:{}", bootstrap_config.daemon_port).parse()?;
 
     Server::builder()
-        .add_service(EdgeDaemonServiceServer::new(edge_daemon_service_impl))
+        .add_service(EdgeDaemonServiceServer::with_interceptor(
+            edge_daemon_service_impl,
+            interceptor,
+        ))
         .serve(addr)
         .await?;
 
