@@ -1,17 +1,11 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
-use std::net::SocketAddr;
-
 #[cfg(not(windows))]
 use tokio::signal;
 
 #[cfg(not(windows))]
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let addr: SocketAddr = "127.0.0.1:34562".parse()?;
-
-    println!("Starting gRPC server on {}", addr);
-
     // Ctrl+C 优雅关闭触发器
     let shutdown = async {
         signal::ctrl_c()
@@ -21,7 +15,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // 使用支持优雅关闭的启动函数
-    crv_edge::daemon_server::server_entry::start_server_with_shutdown(addr, shutdown).await
+    crv_edge::daemon_server::startup::start_server_with_shutdown(shutdown).await
 }
 
 #[cfg(windows)]
@@ -38,8 +32,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     use tray_icon::menu::{Menu, MenuEvent, MenuItem};
     use tray_icon::{Icon, TrayIconBuilder};
 
-    let addr: SocketAddr = "127.0.0.1:34562".parse()?;
-
     // 启动 Tokio 运行时与 gRPC 服务
     let runtime = TokioRuntimeBuilder::new_multi_thread()
         .enable_all()
@@ -51,8 +43,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let shutdown = async move {
             let _ = shutdown_rx.await;
         };
-        let _ =
-            crv_edge::daemon_server::server_entry::start_server_with_shutdown(addr, shutdown).await;
+        let _ = crv_edge::daemon_server::startup::start_server_with_shutdown(shutdown).await;
     });
 
     // 创建托盘菜单

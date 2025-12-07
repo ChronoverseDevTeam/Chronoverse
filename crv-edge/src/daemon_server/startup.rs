@@ -22,6 +22,8 @@ where
 
     let addr: SocketAddr = format!("127.0.0.1:{}", bootstrap_config.daemon_port).parse()?;
 
+    println!("Starting gRPC server on {}", addr);
+
     Server::builder()
         .add_service(EdgeDaemonServiceServer::with_interceptor(
             edge_daemon_service_impl,
