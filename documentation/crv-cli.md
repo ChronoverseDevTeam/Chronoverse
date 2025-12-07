@@ -240,11 +240,11 @@ TODO
 
 ### 2.1.5 向 changelist 中添加文件
 
-用户使用 `crv changelist 3577 append /home/project_name/05_Delivery_交付/05.3_Marketing_宣传材料/PPT/超前点映.pptx` 将被修改的文件添加到刚刚创建的 changelist 中。
+用户使用 `crv changelist append 3577 /home/project_name/05_Delivery_交付/05.3_Marketing_宣传材料/PPT/超前点映.pptx` 将被修改的文件添加到刚刚创建的 changelist 中。
 
 ### 2.1.6 提交 changelist
 
-用户使用 `crv changelist 3577 submit` 将刚刚创建的 changelist 中的文件修改提交到服务端。
+用户使用 `crv changelist submit 3577` 将刚刚创建的 changelist 中的文件修改提交到服务端。
 
 ### 2.1.7 直接提交
 
@@ -310,6 +310,8 @@ TODO
 - `crv changelist delete <changelist number>`：删除一个编号为 `<changelist number>` 的 changelist。
 - `crv changelist list`：列出所有 changelist。
 - `crv changelist describe <changelist number>`：查看一个编号为 `<changelist number>` 的 changelist 的状态。
+- `crv changelist append <changelist number> (<file>|<dir>)`：向编号为 `<changelist number>` 的 changelist 中添加文件。
+- `crv changelist submit <changelist number>`：提交编号为 `<changelist number>` 的 changelist 中的所有文件。
 
 `crv changelist describe <changelist number>` 具有状语：
 

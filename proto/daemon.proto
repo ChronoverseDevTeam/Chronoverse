@@ -52,16 +52,6 @@ message DescribeWorkspaceRsp {
   repeated string file_paths = 5;
 }
 
-message CurrentWorkspaceReq {
-}
-
-message CurrentWorkspaceRsp {
-  bool success = 1;
-  string message = 2;
-  string workspace_name = 3;
-  string workspace_path = 4;
-}
-
 // File operations
 message AddReq {
   repeated string paths = 1;
@@ -94,14 +84,24 @@ message LockRsp {
   repeated string locked_paths = 3;
 }
 
-message UnlockReq {
+message RevertReq {
   repeated string paths = 1;
 }
 
-message UnlockRsp {
+message RevertRsp {
   bool success = 1;
   string message = 2;
-  repeated string unlocked_paths = 3;
+  repeated string reverted_paths = 3;
+}
+
+message SubmitReq {
+  repeated string paths = 1;
+}
+
+message SubmitRsp {
+  bool success = 1;
+  string message = 2;
+  repeated string submitted_paths = 3;
 }
 
 // Changelist management
@@ -112,11 +112,11 @@ message CreateChangelistReq {
 message CreateChangelistRsp {
   bool success = 1;
   string message = 2;
-  int32 changelist_id = 3;
+  string changelist_id = 3;
 }
 
 message DeleteChangelistReq {
-  int32 changelist_id = 1;
+  string changelist_id = 1;
 }
 
 message DeleteChangelistRsp {
@@ -134,14 +134,14 @@ message ListChangelistsRsp {
 }
 
 message ChangelistInfo {
-  int32 id = 1;
+  string id = 1;
   string description = 2;
   int32 file_count = 3;
   string status = 4;
 }
 
 message DescribeChangelistReq {
-  int32 changelist_id = 1;
+  string changelist_id = 1;
   bool list_files = 2;
 }
 
@@ -152,309 +152,47 @@ message DescribeChangelistRsp {
   repeated string file_paths = 4;
 }
 
-// File operations
-message RevertReq {
-  repeated string paths = 1;
+message AppendChangelistReq {
+  string changelist_id = 1;
+  repeated string paths = 2;
 }
 
-message RevertRsp {
-  bool success = 1;
-  string message = 2;
-  repeated string reverted_paths = 3;
-}
-
-message SubmitReq {
-  int32 changelist_id = 1;
-  string description = 2;
-}
-
-message SubmitRsp {
-  bool success = 1;
-  string message = 2;
-  int32 changelist_id = 3;
-}
-
-// Snapshot management
-message CreateSnapshotReq {
-  int32 changelist_id = 1;
-  string description = 2;
-}
-
-message CreateSnapshotRsp {
-  bool success = 1;
-  string message = 2;
-  string snapshot_id = 3;
-}
-
-message DeleteSnapshotReq {
-  string snapshot_id = 1;
-}
-
-message DeleteSnapshotRsp {
+message AppendChangelistRsp {
   bool success = 1;
   string message = 2;
 }
 
-message ListSnapshotsReq {
+message SubmitChangelistReq {
+  string changelist_id = 1;
 }
 
-message ListSnapshotsRsp {
+message SubmitChangelistRsp {
   bool success = 1;
   string message = 2;
-  repeated SnapshotInfo snapshots = 3;
-}
-
-message SnapshotInfo {
-  string id = 1;
-  string description = 2;
-  string created_at = 3;
-  int32 file_count = 4;
-}
-
-message DescribeSnapshotReq {
-  string snapshot_id = 1;
-}
-
-message DescribeSnapshotRsp {
-  bool success = 1;
-  string message = 2;
-  SnapshotInfo snapshot = 3;
-  repeated string file_paths = 4;
-}
-
-message RestoreSnapshotReq {
-  string snapshot_id = 1;
-}
-
-message RestoreSnapshotRsp {
-  bool success = 1;
-  string message = 2;
-  repeated string restored_paths = 3;
-}
-
-// Merge and resolve
-message MergeReq {
-  string branch_name = 1;
-  repeated string depot_paths = 2;
-}
-
-message MergeRsp {
-  bool success = 1;
-  string message = 2;
-  repeated string merged_paths = 3;
-  repeated string conflict_paths = 4;
-}
-
-message ResolveReq {
-  repeated string paths = 1;
-}
-
-message ResolveRsp {
-  bool success = 1;
-  string message = 2;
-  repeated string resolved_paths = 3;
-}
-
-// Describe files
-message DescribeReq {
-  repeated string paths = 1;
-}
-
-message DescribeRsp {
-  bool success = 1;
-  string message = 2;
-  repeated FileInfo files = 3;
-}
-
-message FileInfo {
-  string path = 1;
-  string status = 2;
-  string last_modified = 3;
-  int64 size = 4;
-  string hash = 5;
-}
-
-// Branch management
-message CreateBranchReq {
-  string branch_name = 1;
-  string base_branch = 2;
-}
-
-message CreateBranchRsp {
-  bool success = 1;
-  string message = 2;
-  string branch_name = 3;
-}
-
-message DeleteBranchReq {
-  string branch_name = 1;
-}
-
-message DeleteBranchRsp {
-  bool success = 1;
-  string message = 2;
-}
-
-message ListBranchesReq {
-}
-
-message ListBranchesRsp {
-  bool success = 1;
-  string message = 2;
-  repeated BranchInfo branches = 3;
-}
-
-message BranchInfo {
-  string name = 1;
-  bool is_current = 2;
-  string last_commit = 3;
-  string created_at = 4;
-}
-
-message SwitchBranchReq {
-  string branch_name = 1;
-}
-
-message SwitchBranchRsp {
-  bool success = 1;
-  string message = 2;
-  string branch_name = 3;
-}
-
-// Legacy support (keeping existing names)
-message GetLatestReq {
-}
-
-message GetLatestRsp {
-  bool success = 1;
-  string message = 2;
-  repeated string file_paths = 3;
-}
-
-message CheckoutReq {
-  string relative_path = 1;
-}
-
-message CheckoutRsp {
-  bool success = 1;
-  string message = 2;
-  string file_path = 3;
-}
-
-message SummitReq {
-  string relative_path = 1;
-}
-
-message SummitRsp {
-  bool success = 1;
-  string message = 2;
-  string file_path = 3;
-}
-
-// Hive integration messages
-message HiveConnectReq {
-  string hive_address = 1;
-}
-
-message HiveConnectRsp {
-  bool success = 1;
-  string message = 2;
-}
-
-message HiveLoginReq {
-  string username = 1;
-  string password = 2;
-}
-
-message HiveLoginRsp {
-  bool success = 1;
-  string message = 2;
-  string access_token = 3;
-  int64 expires_at = 4;
-}
-
-message HiveRegisterReq {
-  string username = 1;
-  string password = 2;
-  string email = 3;
-}
-
-message HiveRegisterRsp {
-  bool success = 1;
-  string message = 2;
-}
-
-message HiveListWorkspacesReq {
-  optional string name = 1;
-  optional string owner = 2;
-  optional string device_finger_print = 3;
-}
-
-message HiveWorkspaceInfo {
-  string name = 1;
-  string owner = 2;
-  string path = 3;
-}
-
-message HiveListWorkspacesRsp {
-  bool success = 1;
-  string message = 2;
-  repeated HiveWorkspaceInfo workspaces = 3;
 }
 
 service EdgeDaemonService {
   // Basic operations
   rpc Bonjour(BonjourReq) returns (BonjourRsp);
-  
+
   // Workspace management
   rpc CreateWorkspace(CreateWorkspaceReq) returns (CreateWorkspaceRsp);
   rpc DeleteWorkspace(DeleteWorkspaceReq) returns (DeleteWorkspaceRsp);
   rpc ListWorkspaces(ListWorkspacesReq) returns (ListWorkspacesRsp);
   rpc DescribeWorkspace(DescribeWorkspaceReq) returns (DescribeWorkspaceRsp);
-  rpc CurrentWorkspace(CurrentWorkspaceReq) returns (CurrentWorkspaceRsp);
-  
+
   // File operations
   rpc Add(AddReq) returns (AddRsp);
   rpc Sync(SyncReq) returns (SyncRsp);
   rpc Lock(LockReq) returns (LockRsp);
-  rpc Unlock(UnlockReq) returns (UnlockRsp);
   rpc Revert(RevertReq) returns (RevertRsp);
   rpc Submit(SubmitReq) returns (SubmitRsp);
-  
+
   // Changelist management
   rpc CreateChangelist(CreateChangelistReq) returns (CreateChangelistRsp);
   rpc DeleteChangelist(DeleteChangelistReq) returns (DeleteChangelistRsp);
   rpc ListChangelists(ListChangelistsReq) returns (ListChangelistsRsp);
   rpc DescribeChangelist(DescribeChangelistReq) returns (DescribeChangelistRsp);
-  
-  // Snapshot management
-  rpc CreateSnapshot(CreateSnapshotReq) returns (CreateSnapshotRsp);
-  rpc DeleteSnapshot(DeleteSnapshotReq) returns (DeleteSnapshotRsp);
-  rpc ListSnapshots(ListSnapshotsReq) returns (ListSnapshotsRsp);
-  rpc DescribeSnapshot(DescribeSnapshotReq) returns (DescribeSnapshotRsp);
-  rpc RestoreSnapshot(RestoreSnapshotReq) returns (RestoreSnapshotRsp);
-  
-  // Merge and resolve
-  rpc Merge(MergeReq) returns (MergeRsp);
-  rpc Resolve(ResolveReq) returns (ResolveRsp);
-  
-  // Describe files
-  rpc Describe(DescribeReq) returns (DescribeRsp);
-  
-  // Branch management
-  rpc CreateBranch(CreateBranchReq) returns (CreateBranchRsp);
-  rpc DeleteBranch(DeleteBranchReq) returns (DeleteBranchRsp);
-  rpc ListBranches(ListBranchesReq) returns (ListBranchesRsp);
-  rpc SwitchBranch(SwitchBranchReq) returns (SwitchBranchRsp);
-  
-  // Legacy operations (keeping for backward compatibility)
-  rpc GetLatest(GetLatestReq) returns (GetLatestRsp);
-  rpc Checkout(CheckoutReq) returns (CheckoutRsp);
-  rpc Summit(SummitReq) returns (SummitRsp);
-  
-  // Hive integration
-  rpc HiveConnect(HiveConnectReq) returns (HiveConnectRsp);
-  rpc HiveLogin(HiveLoginReq) returns (HiveLoginRsp);
-  rpc HiveRegister(HiveRegisterReq) returns (HiveRegisterRsp);
-  rpc HiveListWorkspaces(HiveListWorkspacesReq) returns (HiveListWorkspacesRsp);
+  rpc AppendChangelist(AppendChangelistReq) returns (AppendChangelistRsp);
+  rpc SubmitChangelist(SubmitChangelistReq) returns (SubmitChangelistRsp);
 }

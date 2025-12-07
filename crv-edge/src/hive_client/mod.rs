@@ -187,9 +187,11 @@ impl Clone for HiveClient {
 }
 
 fn default_jwt_path() -> PathBuf {
-    if let Some(home) = dirs::home_dir() {
+    if let Some(user_dirs) = directories::UserDirs::new() {
+        let home = user_dirs.home_dir();
         return home.join(".crv").join("jwt");
     }
+
     Path::new(".").join(".crv").join("jwt")
 }
 
