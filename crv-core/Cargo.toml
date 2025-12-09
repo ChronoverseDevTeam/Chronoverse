@@ -19,3 +19,7 @@ twox-hash = "1.6"
 blake3 = "1.8"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
 bson = { version = "2", features = ["chrono-0_4"] }
+
+# Shards Repository Related
+crc32fast = "1.5.0"
+lz4_flex = { version = "0.12.0", default-features = false, features = ["std"] }

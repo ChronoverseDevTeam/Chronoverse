@@ -8,5 +8,4 @@ pub mod database;
 pub mod hive_server;
 pub mod logic;
 pub mod middleware;
-pub mod repository;
 pub mod test;

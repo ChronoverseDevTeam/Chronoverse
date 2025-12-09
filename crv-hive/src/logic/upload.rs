@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::io::SeekFrom;
 use std::path::{Path, PathBuf};
 
+use crv_core::repository::{ChunkHash, Compression, HASH_SIZE, RepositoryError, RepositoryManager, compute_chunk_hash};
 use futures::StreamExt;
 use tokio::fs::{self, File, OpenOptions};
 use tokio::io::{AsyncSeekExt, AsyncWriteExt};
@@ -9,9 +10,6 @@ use tonic::{Request, Response, Status};
 
 use crate::config::holder::get_or_init_config;
 use crate::pb::{FileChunk, NilRsp};
-use crate::repository::{
-    ChunkHash, Compression, RepositoryError, RepositoryManager, HASH_SIZE, compute_chunk_hash,
-};
 
 struct TempChunkMeta {
     path: PathBuf,
