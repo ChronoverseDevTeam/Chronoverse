@@ -4,8 +4,5 @@ pub mod pb {
 }
 
 pub mod config;
-pub mod database;
+pub mod auth;
 pub mod hive_server;
-pub mod logic;
-pub mod middleware;
-pub mod test;

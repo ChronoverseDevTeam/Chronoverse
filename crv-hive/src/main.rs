@@ -1,4 +1,4 @@
-use crv_hive::{config, database, hive_server };
+use crv_hive::{config, hive_server };
 use std::net::SocketAddr;
 use tokio::signal;
 
@@ -15,8 +15,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .parse()
         .expect(&format!("unable to parse addr `{}`", addr_str));
 
-    database::mongo::init_mongo_from_config().await?;
-
     println!("Hive gRPC sevice now is available at {}", addr);
 
     // Ctrl+C to shutdown gracefully
@@ -30,7 +28,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         if let Err(e) = config::holder::shutdown_config().await {
             eprintln!("failed to save config on shutdown: {}", e);
         }
-        database::mongo::shutdown_mongo().await;
     };
 
     // Launching
