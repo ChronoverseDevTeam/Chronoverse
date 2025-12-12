@@ -24,8 +24,89 @@ message LoginRsp {
 }
 // Auth End
 
+// Submit Start
+message UploadFileChunkReq {
+    // 可支持同时上传多个 file chunk
+    string chunk_hash = 1;
+    int64 offset = 2;
+    bytes content = 3;
+    bool eof = 4;
+    // 本块使用的压缩方式，可选，例如 "none" / "lz4"
+    string compression = 5;
+    // 解压后的原始大小（字节），用于校验
+    uint32 uncompressed_size = 6;
+}
+
+message UploadFileChunkRsp {
+    bool success = 1;
+    string message = 2;
+    // 如果服务器端已经存在相同 chunk（基于 chunk_hash），则会返回 true
+    bool already_exists = 3;
+}
+
+// 客户端可先询问服务器当前缺少哪些 chunk，从而只上传需要的部分
+message CheckChunksReq {
+    repeated string chunk_hashes = 1;
+}
+
+message CheckChunksRsp {
+    // 服务器端当前不存在的 chunk_hash 列表
+    repeated string missing_chunk_hashes = 1;
+}
+
+message SubmitFile {
+    // 文件 ID（通常为路径的 Blake3 哈希，对应 `files` 集合中的 `_id`）
+    string file_id = 1;
+    // 可选：文件规范化路径，例如 `//src/module/a.cpp`
+    string path = 2;
+    // 期望在此次 changelist 提交之前文件所在的版本
+    string expect_file_revision = 3;
+    bool is_delete = 4;
+    // 文件的二进制数据索引
+    repeated string binary_id = 5;
+    int64 size = 6;         // 文件大小（字节）
+    // 以下字段可选：若客户端已知，可直接上报；否则服务器也可在落库时自行计算
+    optional string file_mode = 7;   // 如 "755"
+}
+
+message SubmitReq {
+    string branch_id = 1;
+    string description = 2;
+    repeated SubmitFile files = 3;
+
+    // 幂等请求 ID，用于防止重复提交
+    string request_id = 4;
+}
+
+message SubmitConflict {
+    string file_id = 1;
+    string expected_revision = 2;
+    string current_revision = 3;
+}
+
+message SubmitRsp {
+    bool success = 1;
+    // 如果成功，返回新建的 changelist ID 及提交时间
+    int64 changelist_id = 2;
+    int64 committed_at = 3;
+
+    // 如果由于文件版本冲突导致提交失败，列出冲突详情
+    repeated SubmitConflict conflicts = 4;
+
+    // 如果某些 binary_id 对应的 chunk 尚未全部上传，也可以在这里返回
+    repeated string missing_chunks = 5;
+
+    string message = 6;
+}
+// Submit End
+
 service HiveService {
     rpc bonjour(BonjourReq) returns (BonjourRsp);
 
     rpc Login(LoginReq) returns (LoginRsp);
+
+
+    rpc CheckChunks(CheckChunksReq) returns (CheckChunksRsp);
+    rpc UploadFileChunk(UploadFileChunkReq) returns (UploadFileChunkRsp);
+    rpc Submit(SubmitReq) returns (SubmitRsp);
 }
