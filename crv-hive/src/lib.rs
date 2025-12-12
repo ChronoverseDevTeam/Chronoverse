@@ -6,3 +6,4 @@ pub mod pb {
 pub mod config;
 pub mod auth;
 pub mod hive_server;
+pub mod database;

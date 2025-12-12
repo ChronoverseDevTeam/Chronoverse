@@ -1,10 +1,14 @@
-use crv_hive::{config, hive_server };
+use crv_hive::{config, hive_server, database};
 use std::net::SocketAddr;
 use tokio::signal;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     config::holder::load_config().await?;
+
+    // 初始化全局 MongoDB 单例
+    // 如果连接失败，会在这里返回错误并中止启动。
+    let _mongo = database::init_from_config().await?;
 
     let addr_str = config::holder::get_config()
         .unwrap()
@@ -28,6 +32,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         if let Err(e) = config::holder::shutdown_config().await {
             eprintln!("failed to save config on shutdown: {}", e);
         }
+
+        // 关闭 MongoDB 连接池（幂等）
+        database::shutdown().await;
     };
 
     // Launching
