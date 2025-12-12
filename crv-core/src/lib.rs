@@ -5,3 +5,4 @@ pub mod storage;
 pub mod user;
 pub mod workspace;
 pub mod repository;
+pub mod tree;

@@ -30,6 +30,24 @@
   "author": "userA",
   "description": "fix bug #123",
 
+  "changes": [
+    {
+      "file": "abc123",
+      "action": "create",
+      "revision": "<file-revision-hash-here>"
+    },
+    {
+      "file": "abb",
+      "action": "delete",
+      "revision": "<file-revision-hash-here>"
+    },
+    {
+      "file": "aab",
+      "action": "modify",
+      "revision": "<file-revision-hash-here>"
+    }
+  ],
+
   "committedAt": 12345678910,
 
   "filesCount": 1234,             // 统计字段，用于 UI 展示和快速过滤

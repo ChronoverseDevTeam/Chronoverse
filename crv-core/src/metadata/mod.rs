@@ -43,6 +43,27 @@ pub struct ChangelistMetadata {
     pub labels: Vec<String>,
 }
 
+/// `changelists` 集合中 `changes` 数组的元素
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChangelistChange {
+    /// 受影响的文件 ID（对应 `files` 集合中的 `_id`）
+    pub file: String,
+    /// 操作类型：create / modify / delete
+    pub action: ChangelistAction,
+    /// 本次变更对应的 fileRevision ID
+    pub revision: String,
+}
+
+/// Changelist 中的单条变更动作
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ChangelistAction {
+    Create,
+    Modify,
+    Delete,
+}
+
 /// `changelists` 集合
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -54,6 +75,8 @@ pub struct ChangelistDoc {
     pub branch_id: String,
     pub author: String,
     pub description: String,
+    /// 本次 changelist 中包含的变更列表
+    pub changes: Vec<ChangelistChange>,
     /// 提交时间（Linux 时间戳，毫秒）
     pub committed_at: i64,
     /// 文件数量统计字段
