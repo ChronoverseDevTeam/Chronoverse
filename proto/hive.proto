@@ -60,9 +60,9 @@ message SubmitFile {
     // 可选：文件规范化路径，例如 `//src/module/a.cpp`
     string path = 2;
     // 期望在此次 changelist 提交之前文件所在的版本
-    string expect_file_revision = 3;
+    string expected_file_revision = 3;
     bool is_delete = 4;
-    // 文件的二进制数据索引
+    // 文件内容对应的 chunk_hash 列表，按文件内顺序排列
     repeated string binary_id = 5;
     int64 size = 6;         // 文件大小（字节）
     // 以下字段可选：若客户端已知，可直接上报；否则服务器也可在落库时自行计算
@@ -78,9 +78,38 @@ message SubmitReq {
     string request_id = 4;
 }
 
+message FileToLock {
+    string file_id = 1;
+    string path = 2;
+    // 期望在锁定时文件的版本（为空表示不关心版本）
+    string expected_file_revision = 3;
+    // 若为 true，表示期望文件当前不存在
+    bool expected_file_not_exist = 4;
+}
+
+message TryLockFilesReq {
+    string branch_id = 1;
+    repeated FileToLock files = 2;
+}
+
+message FileUnableToLock {
+    string file_id = 1;
+    string branch_id = 2;
+    string path = 3;
+    string current_file_revision = 4;
+    string expected_file_revision = 5;
+    bool expected_file_not_exist = 6;
+}
+
+message TryLockFilesResp {
+    // 如果有任何文件无法被锁定则返回 false
+    bool success = 1;
+    repeated FileUnableToLock file_unable_to_lock = 2;
+}
+
 message SubmitConflict {
     string file_id = 1;
-    string expected_revision = 2;
+    string expected_file_revision = 2;
     string current_revision = 3;
 }
 
@@ -93,7 +122,7 @@ message SubmitRsp {
     // 如果由于文件版本冲突导致提交失败，列出冲突详情
     repeated SubmitConflict conflicts = 4;
 
-    // 如果某些 binary_id 对应的 chunk 尚未全部上传，也可以在这里返回
+    // 如果在检查时发现任何文件包含的 chunk 尚未全部上传，也可以在这里返回其 chunk_id
     repeated string missing_chunks = 5;
 
     string message = 6;
@@ -105,7 +134,7 @@ service HiveService {
 
     rpc Login(LoginReq) returns (LoginRsp);
 
-
+    rpc TryLockFiles(TryLockFilesReq) returns (TryLockFilesResp);
     rpc CheckChunks(CheckChunksReq) returns (CheckChunksRsp);
     rpc UploadFileChunk(UploadFileChunkReq) returns (UploadFileChunkRsp);
     rpc Submit(SubmitReq) returns (SubmitRsp);
