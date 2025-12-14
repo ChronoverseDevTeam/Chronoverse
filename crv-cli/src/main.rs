@@ -15,7 +15,7 @@ async fn main() -> Result<()> {
     let bootstrap_config = BootstrapConfig::load().expect("Can't load bootstrap config.");
 
     // 连接到 Daemon
-    let daemon_url = format!("127.0.0.1:{}", bootstrap_config.daemon_port);
+    let daemon_url = format!("http://[::1]:{}", bootstrap_config.daemon_port);
     let channel = Endpoint::from_shared(daemon_url.clone())?
         .connect()
         .await

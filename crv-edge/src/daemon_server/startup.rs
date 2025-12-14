@@ -26,7 +26,7 @@ where
     let file_service_impl = FileServiceImpl::new(app_state.clone());
     let changelist_service_impl = ChangelistServiceImpl::new(app_state);
 
-    let addr: SocketAddr = format!("127.0.0.1:{}", bootstrap_config.daemon_port).parse()?;
+    let addr: SocketAddr = format!("[::1]:{}", bootstrap_config.daemon_port).parse()?;
 
     println!("Starting gRPC server on {}", addr);
 
@@ -64,7 +64,7 @@ pub async fn start_server() -> Result<(), Box<dyn std::error::Error>> {
     let file_service_impl = FileServiceImpl::new(app_state.clone());
     let changelist_service_impl = ChangelistServiceImpl::new(app_state);
 
-    let addr: SocketAddr = format!("127.0.0.1:{}", bootstrap_config.daemon_port).parse()?;
+    let addr: SocketAddr = format!("[::1]:{}", bootstrap_config.daemon_port).parse()?;
 
     Server::builder()
         .add_service(SystemServiceServer::with_interceptor(
