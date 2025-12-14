@@ -1,3 +1,5 @@
+pub mod dao;
+
 use std::sync::{Arc, Mutex, OnceLock};
 
 use mongodb::{

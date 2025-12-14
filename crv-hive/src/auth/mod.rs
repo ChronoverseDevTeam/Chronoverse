@@ -7,7 +7,11 @@ use thiserror::Error;
 use tonic::{metadata::MetadataValue, Request, Response, Status};
 use tonic::service::Interceptor;
 
+use argon2::password_hash::{PasswordHash, PasswordVerifier};
+use argon2::Argon2;
+
 use crate::config::holder::get_or_init_config;
+use crate::database::dao;
 
 /// 领域层的用户身份信息（与具体传输协议无关）
 #[derive(Debug, Clone)]
@@ -255,18 +259,43 @@ impl Interceptor for AuthInterceptor {
     }
 }
 
-/// 校验用户名/密码是否合法的占位函数。
-///
-/// 当前实现始终返回 `Ok(false)`，表示无任何账号可以通过。
-/// 你可以在后续基于数据库或其他身份源来实现真实逻辑。
+/// 校验用户名/密码是否合法的函数
 pub async fn validate_user_credentials(
-    _username: &str,
-    _password: &str,
+    username: &str,
+    password: &str,
 ) -> Result<bool, AuthError> {
-    if _username == "admin" && _password == "admin" {
+    // 测试环境内置测试账号：admin / admin（仅在 `cargo test` 时生效，不影响生产/开发环境运行的服务进程）
+    if cfg!(test) && username == "admin" && password == "admin" {
         return Ok(true);
     }
-    Ok(false)
+
+    // 尝试从 MongoDB 中读取用户信息
+    let user_doc_opt = dao::find_user_by_username(username)
+        .await
+        // 对于 DAO 层错误，这里统一视为认证失败，而不是返回内部错误，避免泄露实现细节
+        .unwrap_or(None);
+
+    let user = match user_doc_opt {
+        Some(u) => u,
+        None => return Ok(false),
+    };
+
+    let stored = user.password;
+
+    // 优先尝试将 stored 作为 argon2 密文进行验证
+    if let Ok(parsed) = PasswordHash::new(&stored) {
+        if Argon2::default()
+            .verify_password(password.as_bytes(), &parsed)
+            .is_ok()
+        {
+            return Ok(true);
+        } else {
+            return Ok(false);
+        }
+    }
+
+    // 否则退回到明文比较（兼容老数据）
+    Ok(stored == password)
 }
 
 #[cfg(test)]

@@ -5,6 +5,8 @@ use crate::metadata::{BranchDoc, ChangelistAction, ChangelistDoc, FileDoc, FileR
 use crate::path::basic::{DepotPath, DepotPathWildcard};
 use thiserror::Error;
 
+pub mod depot_tree;
+
 /// 文件树整体结构，描述某个根目录下的层级关系
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -73,7 +75,7 @@ pub type FileTreeResult<T> = Result<T, FileTreeError>;
 /// - `depot_wildcard`：类似 `//src/module/...` 的 depot 路径通配符，仅支持范围通配形式。
 /// - `get_*` 系列函数：由调用方提供的访问后端存储的函数，用于按 ID 读取对象。
 #[allow(non_snake_case)]
-pub fn constructTreeFromHead<GB, GC, GF, GR>(
+pub fn construct_tree_from_changelist<GB, GC, GF, GR>(
     branch_id: &str,
     depot_wildcard: &str,
     changelist_id: i64,
@@ -499,7 +501,7 @@ mod tests {
         let get_file = move |id: &str| Ok(files.get(id).cloned());
         let get_file_revision = move |id: &str| Ok(revs.get(id).cloned());
 
-        let tree = constructTreeFromHead(
+        let tree = construct_tree_from_changelist(
             "branch_main",
             "//src/module/...",
             200,
@@ -547,7 +549,7 @@ mod tests {
         let get_file_revision = move |id: &str| Ok(revs.get(id).cloned());
 
         // 在 CL 300 之后，f1 被删除，因此树应为空
-        let tree = constructTreeFromHead(
+        let tree = construct_tree_from_changelist(
             "branch_main",
             "//src/module/...",
             300,
@@ -745,7 +747,7 @@ mod tests {
         let get_file = move |id: &str| Ok(files_clone.get(id).cloned());
         let get_file_revision = move |id: &str| Ok(revs_clone.get(id).cloned());
 
-        let tree = constructTreeFromHead(
+        let tree = construct_tree_from_changelist(
             "branch_rand",
             "//src/module/...",
             10,
@@ -908,7 +910,7 @@ mod tests {
         let get_file = move |id: &str| Ok(files_clone.get(id).cloned());
         let get_file_revision = move |id: &str| Ok(revs_clone.get(id).cloned());
 
-        let tree = constructTreeFromHead(
+        let tree = construct_tree_from_changelist(
             "branch_large",
             "//src/module/...",
             1,

@@ -50,6 +50,26 @@ pub fn blake3_hash_to_hex(hash: &[u8; 32]) -> String {
     hash.iter().map(|b| format!("{:02x}", b)).collect()
 }
 
+/// 将 64 位十六进制字符串解析为 Blake3 哈希字节数组（32 字节）。
+///
+/// - `s`：十六进制字符串，允许大小写，前后会自动 `trim()`；
+/// - 返回 `Some([u8; 32])` 表示解析成功，`None` 表示长度非法或包含非 hex 字符。
+pub fn blake3_hex_to_hash(s: &str) -> Option<[u8; 32]> {
+    let hex = s.trim();
+    if hex.len() != 64 {
+        return None;
+    }
+
+    let mut out = [0u8; 32];
+    for i in 0..32 {
+        let idx = i * 2;
+        let byte_str = &hex[idx..idx + 2];
+        let byte = u8::from_str_radix(byte_str, 16).ok()?;
+        out[i] = byte;
+    }
+    Some(out)
+}
+
 /// 针对 bytes 的流式 Blake3 哈希计算器。
 ///
 /// 用法示例：

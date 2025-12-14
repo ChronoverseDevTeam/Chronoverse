@@ -192,3 +192,139 @@ impl ChunkCache {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crv_core::repository::compute_chunk_hash;
+    use tempfile::tempdir;
+
+    fn hash_to_hex(data: &[u8]) -> String {
+        let hash = compute_chunk_hash(data);
+        hash.iter().map(|b| format!("{:02x}", b)).collect()
+    }
+
+    #[test]
+    fn append_and_read_single_chunk() {
+        let tmp = tempdir().unwrap();
+        let cache_root = tmp.path().join("cache");
+        let cache = ChunkCache::new(&cache_root).expect("create cache");
+
+        let data = b"hello world";
+        let hash_hex = hash_to_hex(data);
+
+        // 初始 should not exist
+        assert_eq!(cache.has_chunk(&hash_hex).unwrap(), false);
+
+        // 写入完整 chunk
+        cache
+            .append_chunk_part(&hash_hex, 0, data)
+            .expect("append_chunk_part should succeed");
+
+        // has_chunk 应为 true 且校验哈希
+        assert_eq!(cache.has_chunk(&hash_hex).unwrap(), true);
+
+        // read_chunk 返回原始数据并校验哈希
+        let read_back = cache.read_chunk(&hash_hex).expect("read_chunk should succeed");
+        assert_eq!(read_back, data);
+    }
+
+    #[test]
+    fn append_multiple_parts_and_read() {
+        let tmp = tempdir().unwrap();
+        let cache_root = tmp.path().join("cache");
+        let cache = ChunkCache::new(&cache_root).expect("create cache");
+
+        let part1 = b"hello ";
+        let part2 = b"world";
+        let full: Vec<u8> = [part1.as_ref(), part2.as_ref()].concat();
+        let hash_hex = hash_to_hex(&full);
+
+        cache
+            .append_chunk_part(&hash_hex, 0, part1)
+            .expect("append part1 should succeed");
+        cache
+            .append_chunk_part(&hash_hex, part1.len() as u64, part2)
+            .expect("append part2 should succeed");
+
+        assert_eq!(cache.has_chunk(&hash_hex).unwrap(), true);
+        let read_back = cache.read_chunk(&hash_hex).expect("read_chunk should succeed");
+        assert_eq!(read_back, full);
+    }
+
+    #[test]
+    fn append_with_wrong_offset_should_fail() {
+        let tmp = tempdir().unwrap();
+        let cache_root = tmp.path().join("cache");
+        let cache = ChunkCache::new(&cache_root).expect("create cache");
+
+        let data = b"abcd";
+        let hash_hex = hash_to_hex(data);
+
+        cache
+            .append_chunk_part(&hash_hex, 0, data)
+            .expect("first append should succeed");
+
+        // 再次从 offset=0 写入，应触发 offset mismatch 错误
+        let err = cache
+            .append_chunk_part(&hash_hex, 0, data)
+            .expect_err("second append with wrong offset should fail");
+        match err {
+            ChunkCacheError::InvalidChunkHash(msg) => {
+                assert!(msg.contains("offset mismatch"));
+            }
+            other => panic!("unexpected error type: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn has_chunk_detects_hash_mismatch() {
+        let tmp = tempdir().unwrap();
+        let cache_root = tmp.path().join("cache");
+        let cache = ChunkCache::new(&cache_root).expect("create cache");
+
+        let good_data = b"good data";
+        let bad_data = b"corrupted data";
+        let good_hash = hash_to_hex(good_data);
+        let bad_hash = hash_to_hex(bad_data);
+
+        // 手动在 good_hash 对应路径写入 bad_data，制造哈希不一致
+        let path = cache
+            .chunk_path_unchecked(&good_hash)
+            .expect("chunk_path_unchecked should succeed");
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        fs::write(&path, bad_data).unwrap();
+
+        let err = cache
+            .has_chunk(&good_hash)
+            .expect_err("has_chunk should fail on hash mismatch");
+        match err {
+            ChunkCacheError::HashMismatch { expected, actual } => {
+                assert_eq!(expected, good_hash.to_lowercase());
+                assert_eq!(actual, bad_hash.to_lowercase());
+            }
+            other => panic!("unexpected error type: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn clear_all_removes_cached_chunks() {
+        let tmp = tempdir().unwrap();
+        let cache_root = tmp.path().join("cache");
+        let cache = ChunkCache::new(&cache_root).expect("create cache");
+
+        let data = b"something";
+        let hash_hex = hash_to_hex(data);
+        cache
+            .append_chunk_part(&hash_hex, 0, data)
+            .expect("append should succeed");
+
+        assert_eq!(cache.has_chunk(&hash_hex).unwrap(), true);
+
+        cache.clear_all().expect("clear_all should succeed");
+        assert_eq!(cache.has_chunk(&hash_hex).unwrap(), false);
+    }
+}
+
+

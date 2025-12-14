@@ -15,6 +15,9 @@ pub use chunk::{
 pub use constants::*;
 pub use error::{RepositoryError, Result};
 pub use index::{IndexEntry, IndexSnapshot, MutableIndex};
+pub use io_utils::{
+    blake3_hash_to_hex, blake3_hex_to_hash, compute_blake3_bytes, compute_blake3_str, Blake3Stream,
+};
 pub use layout::RepositoryLayout;
 pub use manager::RepositoryManager;
 pub use pack::{PackReader, PackStats, PackWriter};

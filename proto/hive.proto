@@ -13,6 +13,16 @@ message BonjourRsp {
 }
 
 // Auth Starts
+message RegisterReq {
+    string username = 1;
+    string password = 2;
+}
+
+message RegisterRsp {
+    bool success = 1;
+    string message = 2;
+}
+
 message LoginReq {
     string username = 1;
     string password = 2;
@@ -133,6 +143,7 @@ service HiveService {
     rpc bonjour(BonjourReq) returns (BonjourRsp);
 
     rpc Login(LoginReq) returns (LoginRsp);
+    rpc Register(RegisterReq) returns (RegisterRsp);
 
     rpc TryLockFiles(TryLockFilesReq) returns (TryLockFilesResp);
     rpc CheckChunks(CheckChunksReq) returns (CheckChunksRsp);
