@@ -16,6 +16,8 @@ use std::collections::{HashMap, HashSet};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tonic::{Request, Response, Status};
 
+/// TODO: 增加锁定超时处理逻辑，增加状态机管理三个步骤，每个步骤视为同一个上下文
+/// TODO: 目前锁定的文件集合可以大于实际提交的文件集合，这会导致有些文件在 submit 后没有被解锁的问题
 /// 预检查一批文件是否可以被当前 changelist 锁定。
 pub async fn handle_try_lock_files(
     request: Request<TryLockFilesReq>,
@@ -442,6 +444,22 @@ pub async fn handle_submit(request: Request<SubmitReq>) -> Result<Response<Submi
         .unwrap_or_default()
         .as_millis() as i64;
 
+    // 预先计算本次提交涉及的 file_id 列表（去重），以便在函数返回前统一解锁。
+    let mut locked_file_ids: Vec<String> = Vec::new();
+    {
+        let mut seen = HashSet::new();
+        for f in &req.files {
+            let mut file_id = f.file_id.trim().to_string();
+            let path = f.path.trim().to_string();
+            if file_id.is_empty() && !path.is_empty() {
+                file_id = derive_file_id_from_path(&path);
+            }
+            if !file_id.is_empty() && seen.insert(file_id.clone()) {
+                locked_file_ids.push(file_id);
+            }
+        }
+    }
+
     // 打开底层 Repository，用于持久化本次提交相关的 chunk。
     let repo = repository_manager()?;
 
@@ -477,6 +495,12 @@ pub async fn handle_submit(request: Request<SubmitReq>) -> Result<Response<Submi
     }
 
     if !missing_chunks.is_empty() {
+        // 提交前发现缺失 chunk，直接失败并释放本次提交涉及的文件锁。
+        {
+            let mut tree = depot_tree().lock().await;
+            tree.unlock_files(branch_id, &locked_file_ids);
+        }
+
         let rsp = SubmitRsp {
             success: false,
             changelist_id: 0,
@@ -665,8 +689,13 @@ pub async fn handle_submit(request: Request<SubmitReq>) -> Result<Response<Submi
         });
     }
 
-    // 如果存在冲突，则直接返回，不进行任何写入。
+    // 如果存在冲突，则直接返回，不进行任何写入，并释放文件锁。
     if !conflicts.is_empty() {
+        {
+            let mut tree = depot_tree().lock().await;
+            tree.unlock_files(branch_id, &locked_file_ids);
+        }
+
         let rsp = SubmitRsp {
             success: false,
             changelist_id: 0,
@@ -724,6 +753,12 @@ pub async fn handle_submit(request: Request<SubmitReq>) -> Result<Response<Submi
                 }
             }
         }
+    }
+
+    // 正常提交成功后，释放本次提交涉及的文件锁。
+    {
+        let mut tree = depot_tree().lock().await;
+        tree.unlock_files(branch_id, &locked_file_ids);
     }
 
     let rsp = SubmitRsp {
