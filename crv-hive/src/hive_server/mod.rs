@@ -2,7 +2,6 @@ use crate::auth::{AuthInterceptor, AuthService};
 use crate::pb::{
     BonjourReq, BonjourRsp, CheckChunksReq, CheckChunksRsp, LoginReq, LoginRsp, RegisterReq,
     RegisterRsp, SubmitReq, SubmitRsp, TryLockFilesReq, TryLockFilesResp, UploadFileChunkReq,
-    UploadFileChunkRsp,
     hive_service_server::{HiveService, HiveServiceServer},
 };
 use argon2::password_hash::SaltString;
@@ -326,11 +325,14 @@ impl HiveService for CrvHiveService {
     }
 
     /// 上传文件内容块到服务器进行缓存
+    type UploadFileChunkStream = submit::UploadFileChunkStream;
+
+    /// 上传文件内容块到服务器进行缓存（双向流式）
     async fn upload_file_chunk(
         &self,
-        request: Request<UploadFileChunkReq>,
-    ) -> Result<Response<UploadFileChunkRsp>, Status> {
-        submit::handle_upload_file_chunk(request).await
+        request: Request<tonic::Streaming<UploadFileChunkReq>>,
+    ) -> Result<Response<Self::UploadFileChunkStream>, Status> {
+        submit::handle_upload_file_chunk_stream(request).await
     }
 
     /// 提交一个新的 changelist，使用之前上传好的 cache 文件块作为数据源，该操作应该是原子且一致的，在操作完成后无论如何

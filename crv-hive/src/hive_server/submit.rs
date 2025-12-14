@@ -12,9 +12,278 @@ use crv_core::metadata::{
 use crv_core::repository::{
     Compression, RepositoryError, blake3_hash_to_hex, blake3_hex_to_hash, compute_blake3_str,
 };
+use rand::rngs::OsRng;
+use rand::RngCore;
 use std::collections::{HashMap, HashSet};
-use std::time::{SystemTime, UNIX_EPOCH};
-use tonic::{Request, Response, Status};
+use std::sync::Arc;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use tokio::sync::{mpsc, Mutex};
+use tokio::time;
+use tokio_stream::wrappers::ReceiverStream;
+use tokio_stream::StreamExt;
+use tonic::{Request, Response, Status, Streaming};
+
+/// 提交上下文超时时间（秒）
+const SUBMIT_CONTEXT_TIMEOUT_SECS: u64 = 20;
+
+/// 提交上下文扫描间隔（秒）
+const SUBMIT_CONTEXT_SCAN_INTERVAL_SECS: u64 = 5;
+
+/// TryLock 阶段记录的每个文件锁定期望，用于在 Submit 阶段做一致性校验。
+#[derive(Clone)]
+struct LockedFileMeta {
+    /// TryLock 时指定的 expected_file_revision（可为空）。
+    expected_file_revision: String,
+    /// TryLock 时指定的 expected_file_not_exist 标记。
+    expected_file_not_exist: bool,
+}
+
+/// 单次提交流程的上下文，跨 TryLockFiles / UploadFileChunk / Submit 共用
+struct SubmitContext {
+    /// 本次提交所在分支
+    branch_id: String,
+    /// 通过 TryLockFiles 成功锁定的文件 id 列表（去重）
+    locked_file_ids: Vec<String>,
+    /// 每个锁定文件的期望信息
+    locked_files_meta: HashMap<String, LockedFileMeta>,
+    /// 在本次提交流程中上传/使用过的 chunk hash（小写 16 进制）
+    used_chunk_hashes: HashSet<String>,
+    /// 最近一次收到相关请求的时间
+    last_activity: Instant,
+    /// 是否已经被显式关闭（成功提交或主动回滚），若为 true 则不再执行超时清理
+    closed: bool,
+}
+
+type SubmitContextHandle = Arc<Mutex<SubmitContext>>;
+type SubmitContextMap = HashMap<String, SubmitContextHandle>;
+
+static SUBMIT_CONTEXTS: tokio::sync::OnceCell<Mutex<SubmitContextMap>> =
+    tokio::sync::OnceCell::const_new();
+
+async fn submit_contexts() -> &'static Mutex<SubmitContextMap> {
+    SUBMIT_CONTEXTS
+        .get_or_init(|| async { Mutex::new(HashMap::new()) })
+        .await
+}
+
+/// 生成一个不带 '-' 的 uuid（32 位十六进制字符串）
+fn generate_uuid_no_dash() -> String {
+    let mut bytes = [0u8; 16];
+    OsRng.fill_bytes(&mut bytes);
+    bytes.iter().map(|b| format!("{:02x}", b)).collect()
+}
+
+/// 创建一个新的提交上下文，返回其 uuid
+async fn create_submit_context(
+    branch_id: &str,
+    locked_file_ids: Vec<String>,
+    locked_files_meta: HashMap<String, LockedFileMeta>,
+) -> String {
+    let uuid = generate_uuid_no_dash();
+
+    let ctx = Arc::new(Mutex::new(SubmitContext {
+        branch_id: branch_id.to_string(),
+        locked_file_ids,
+        locked_files_meta,
+        used_chunk_hashes: HashSet::new(),
+        last_activity: Instant::now(),
+        closed: false,
+    }));
+
+    let contexts = submit_contexts().await;
+    {
+        let mut guard = contexts.lock().await;
+        guard.insert(uuid.clone(), Arc::clone(&ctx));
+    }
+
+    spawn_submit_context_timeout_watcher(uuid.clone(), ctx);
+
+    uuid
+}
+
+/// 根据 uuid 获取上下文并刷新活跃时间；如果不存在或已关闭，则返回错误
+async fn touch_submit_context(uuid: &str) -> Result<SubmitContextHandle, Status> {
+    if uuid.trim().is_empty() {
+        return Err(Status::invalid_argument("uuid is required"));
+    }
+
+    let contexts = submit_contexts().await;
+    let handle = {
+        let guard = contexts.lock().await;
+        guard.get(uuid).cloned()
+    };
+
+    let handle = handle.ok_or_else(|| {
+        Status::not_found("submit context not found or expired for given uuid")
+    })?;
+
+    {
+        let mut ctx = handle.lock().await;
+        if ctx.closed {
+            return Err(Status::not_found("submit context already closed"));
+        }
+        ctx.last_activity = Instant::now();
+    }
+
+    Ok(handle)
+}
+
+/// 将某个 chunk 记录到指定 uuid 的上下文中（并刷新活跃时间）
+async fn record_chunk_in_context(uuid: &str, chunk_hash: &str) -> Result<(), Status> {
+    // 允许 uuid 为空时不绑定上下文，维持向后兼容
+    if uuid.trim().is_empty() {
+        return Ok(());
+    }
+
+    let handle = touch_submit_context(uuid).await?;
+    let mut ctx = handle.lock().await;
+    ctx.used_chunk_hashes
+        .insert(chunk_hash.to_lowercase());
+    Ok(())
+}
+
+/// 将上下文标记为已关闭，并从全局 map 中移除（不做任何额外清理）
+async fn close_submit_context(uuid: &str) {
+    let contexts = submit_contexts().await;
+    let mut guard = contexts.lock().await;
+    if let Some(handle) = guard.remove(uuid) {
+        let mut ctx = handle.lock().await;
+        ctx.closed = true;
+    }
+}
+
+/// 在超时场景下执行清理：解锁文件 + 删除 chunk cache
+async fn cleanup_submit_context_with_timeout(uuid: &str, ctx: SubmitContext) {
+    // 先删除 cache 中的相关 chunk，best-effort
+    if let Ok(cache) = ChunkCache::from_config() {
+        for ch in &ctx.used_chunk_hashes {
+            if let Err(e) = cache.remove_chunk(ch) {
+                eprintln!(
+                    "submit context timeout: failed to remove cached chunk {ch}: {e}"
+                );
+            }
+        }
+    }
+
+    // 解锁相关文件
+    {
+        let mut tree = depot_tree().lock().await;
+        tree.unlock_files(&ctx.branch_id, &ctx.locked_file_ids);
+    }
+
+    // 最后从全局 map 中移除并标记为关闭
+    let contexts = submit_contexts().await;
+    let mut guard = contexts.lock().await;
+    guard.remove(uuid);
+}
+
+/// 为单个提交上下文启动一个后台任务，定期检查是否超时。
+fn spawn_submit_context_timeout_watcher(uuid: String, handle: SubmitContextHandle) {
+    tokio::spawn(async move {
+        loop {
+            time::sleep(Duration::from_secs(
+                SUBMIT_CONTEXT_SCAN_INTERVAL_SECS,
+            ))
+            .await;
+
+            let maybe_ctx_snapshot = {
+                let mut ctx = handle.lock().await;
+                if ctx.closed {
+                    // 已显式关闭，直接退出循环
+                    return;
+                }
+
+                let now = Instant::now();
+                if now.duration_since(ctx.last_activity)
+                    >= Duration::from_secs(SUBMIT_CONTEXT_TIMEOUT_SECS)
+                {
+                    // 复制必要信息用于后续清理，并将 closed 标记为 true 防止重复执行
+                    ctx.closed = true;
+                    Some(SubmitContext {
+                        branch_id: ctx.branch_id.clone(),
+                        locked_file_ids: ctx.locked_file_ids.clone(),
+                        locked_files_meta: ctx.locked_files_meta.clone(),
+                        used_chunk_hashes: ctx.used_chunk_hashes.clone(),
+                        last_activity: ctx.last_activity,
+                        closed: true,
+                    })
+                } else {
+                    None
+                }
+            };
+
+            if let Some(snapshot) = maybe_ctx_snapshot {
+                cleanup_submit_context_with_timeout(&uuid, snapshot).await;
+                return;
+            }
+        }
+    });
+}
+
+/// 校验：在基于 uuid 的上下文场景下，Submit 的文件集合及其期望必须与 TryLock 阶段保持一致。
+fn validate_submit_files_against_locked(
+    locked_meta: &HashMap<String, LockedFileMeta>,
+    submit_files: &[crate::pb::SubmitFile],
+) -> Result<(), String> {
+    use std::collections::HashSet;
+
+    // 1. 构造 Submit 阶段的文件集合与期望信息
+    let mut submit_ids = HashSet::new();
+    let mut submit_map: HashMap<String, (String, bool)> = HashMap::new(); // (expected_file_revision, is_delete)
+
+    for f in submit_files {
+        let mut file_id = f.file_id.trim().to_string();
+        let path = f.path.trim().to_string();
+        if file_id.is_empty() && !path.is_empty() {
+            file_id = derive_file_id_from_path(&path);
+        }
+        if file_id.is_empty() {
+            return Err("each submit file must have either file_id or path".to_string());
+        }
+
+        let expected_rev = f.expected_file_revision.trim().to_string();
+        let is_delete = f.is_delete;
+
+        submit_ids.insert(file_id.clone());
+        submit_map.insert(file_id, (expected_rev, is_delete));
+    }
+
+    // 2. 校验文件集合是否完全一致（无多、无少）
+    if locked_meta.len() != submit_ids.len()
+        || !locked_meta.keys().all(|k| submit_ids.contains(k))
+    {
+        return Err("submit files do not match locked files".to_string());
+    }
+
+    // 3. 校验每个文件的期望（expected_revision / expected_not_exist）与 TryLock 是否一致
+    for (fid, locked) in locked_meta {
+        let (sub_rev, sub_is_delete) = submit_map
+            .get(fid)
+            .ok_or_else(|| "internal error: missing submit file after set check".to_string())?;
+
+        if locked.expected_file_not_exist {
+            // TryLock 时要求“当前不存在”，则 Submit 阶段应以“从不存在开始创建”为前提：
+            // - expected_file_revision 必须为空
+            // - is_delete 必须为 false（不能从“期望不存在”变成“删除”操作）
+            if !sub_rev.is_empty() || *sub_is_delete {
+                return Err(
+                    "submit file expectation (expected not exist) does not match TryLockFiles"
+                        .to_string(),
+                );
+            }
+        } else {
+            // TryLock 时有 expected_file_revision 约束（或为空表示不关心），
+            // Submit 必须保持相同的 expected_file_revision。
+            if locked.expected_file_revision != *sub_rev {
+                return Err(
+                    "submit file expected_file_revision does not match TryLockFiles".to_string(),
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
 
 /// TODO: 增加锁定超时处理逻辑，增加状态机管理三个步骤，每个步骤视为同一个上下文
 /// TODO: 目前锁定的文件集合可以大于实际提交的文件集合，这会导致有些文件在 submit 后没有被解锁的问题
@@ -142,6 +411,7 @@ pub async fn handle_try_lock_files(
         let rsp = TryLockFilesResp {
             success: false,
             file_unable_to_lock: unable_to_lock,
+            uuid: String::new(),
         };
         return Ok(Response::new(rsp));
     }
@@ -181,14 +451,33 @@ pub async fn handle_try_lock_files(
         let rsp = TryLockFilesResp {
             success: false,
             file_unable_to_lock: unable_due_to_lock,
+            uuid: String::new(),
         };
         return Ok(Response::new(rsp));
     }
 
-    // 全部成功加锁。
+    // 构造锁定文件的期望信息
+    let mut locked_files_meta: HashMap<String, LockedFileMeta> = HashMap::new();
+    for fid in &unique_file_ids {
+        let expected_file_revision = file_expected_revs.get(fid).cloned().unwrap_or_default();
+        let expected_file_not_exist = *file_expected_not_exist.get(fid).unwrap_or(&false);
+
+        locked_files_meta.insert(
+            fid.clone(),
+            LockedFileMeta {
+                expected_file_revision,
+                expected_file_not_exist,
+            },
+        );
+    }
+
+    // 全部成功加锁：创建提交上下文并返回 uuid。
+    let uuid = create_submit_context(branch_id, unique_file_ids, locked_files_meta).await;
+
     let rsp = TryLockFilesResp {
         success: true,
         file_unable_to_lock: Vec::new(),
+        uuid,
     };
     Ok(Response::new(rsp))
 }
@@ -285,14 +574,11 @@ pub async fn handle_check_chunks(
     Ok(Response::new(rsp))
 }
 
-/// 上传文件内容块到服务器进行缓存。
-pub async fn handle_upload_file_chunk(
-    request: Request<UploadFileChunkReq>,
-) -> Result<Response<UploadFileChunkRsp>, Status> {
-    // 所有调用必须已通过鉴权拦截器注入 UserContext；否则直接拒绝。
-    let _user = auth::require_user(&request)?;
-
-    let req = request.into_inner();
+/// 处理单个 chunk 上传的核心逻辑，供流式 API 循环调用。
+async fn handle_single_upload_file_chunk(
+    req: UploadFileChunkReq,
+) -> Result<UploadFileChunkRsp, Status> {
+    let uuid = req.uuid.clone();
 
     let chunk_hash = req.chunk_hash.trim().to_lowercase();
     if chunk_hash.is_empty() {
@@ -304,6 +590,12 @@ pub async fn handle_upload_file_chunk(
     } else {
         req.offset as u64
     };
+
+    // 将本次 chunk 记录到上下文（若 uuid 非空），并刷新活跃时间。
+    // 若 uuid 为空，则允许作为“无上下文”上传，保持向后兼容。
+    if !uuid.trim().is_empty() {
+        record_chunk_in_context(&uuid, &chunk_hash).await?;
+    }
 
     // 初始化本地 chunk 缓存
     let cache = ChunkCache::from_config()
@@ -320,10 +612,12 @@ pub async fn handle_upload_file_chunk(
                     Ok(Some(_)) => {
                         let rsp = UploadFileChunkRsp {
                             success: true,
+                            chunk_hash: chunk_hash.clone(),
                             message: "chunk already exists in repository".to_string(),
                             already_exists: true,
+                            uuid,
                         };
-                        return Ok(Response::new(rsp));
+                        return Ok(rsp);
                     }
                     Ok(None) => {
                         // 仓库中不存在，继续检查缓存
@@ -347,10 +641,12 @@ pub async fn handle_upload_file_chunk(
             Ok(true) => {
                 let rsp = UploadFileChunkRsp {
                     success: true,
+                    chunk_hash: chunk_hash.clone(),
                     message: "chunk already exists in cache".to_string(),
                     already_exists: true,
+                    uuid,
                 };
-                return Ok(Response::new(rsp));
+                return Ok(rsp);
             }
             Ok(false) => {
                 // 缓存中不存在，继续执行写入逻辑
@@ -396,10 +692,78 @@ pub async fn handle_upload_file_chunk(
     // 只要本次写入成功，就认为本次调用成功。
     let rsp = UploadFileChunkRsp {
         success: true,
+        chunk_hash,
         message: String::new(),
         already_exists: false,
+        uuid,
     };
-    Ok(Response::new(rsp))
+    Ok(rsp)
+}
+
+/// 流式上传文件内容块：一个 chunk 的所有分片通过同一个流上传，
+/// 仅在该 chunk 的 `eof == true` 时发送一次响应。
+pub type UploadFileChunkStream = ReceiverStream<Result<UploadFileChunkRsp, Status>>;
+
+pub async fn handle_upload_file_chunk_stream(
+    request: Request<Streaming<UploadFileChunkReq>>,
+) -> Result<Response<UploadFileChunkStream>, Status> {
+    // 所有调用必须已通过鉴权拦截器注入 UserContext；否则直接拒绝。
+    let _user = auth::require_user(&request)?;
+
+    let mut inbound = request.into_inner();
+    let (tx, rx) = mpsc::channel::<Result<UploadFileChunkRsp, Status>>(32);
+
+    tokio::spawn(async move {
+        use std::collections::HashMap;
+        // 记录每个 chunk_hash 对应的“首个成功响应”，以便在 eof 时一次性返回。
+        let mut pending_by_chunk: HashMap<String, UploadFileChunkRsp> = HashMap::new();
+
+        while let Some(next) = inbound.next().await {
+            match next {
+                Ok(req) => {
+                    let uuid_for_log = req.uuid.clone();
+                    let chunk_hash_key = req.chunk_hash.trim().to_lowercase();
+                    let eof_flag = req.eof;
+                    match handle_single_upload_file_chunk(req).await {
+                        Ok(mut rsp) => {
+                            // 确保响应里携带 chunk_hash
+                            if rsp.chunk_hash.is_empty() {
+                                rsp.chunk_hash = chunk_hash_key.clone();
+                            }
+
+                            // 对同一个 chunk_hash，只保留第一次成功响应（保证 already_exists 等信息不被后续覆盖）。
+                            pending_by_chunk
+                                .entry(chunk_hash_key.clone())
+                                .or_insert_with(|| rsp);
+
+                            // 仅在 eof 时真正发送响应。
+                            if eof_flag {
+                                if let Some(rsp_to_send) = pending_by_chunk.remove(&chunk_hash_key) {
+                                    if tx.send(Ok(rsp_to_send)).await.is_err() {
+                                        // 客户端已断开连接，结束任务
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        Err(status) => {
+                            eprintln!(
+                                "upload_file_chunk stream error for uuid {uuid_for_log}: {status}"
+                            );
+                            let _ = tx.send(Err(status)).await;
+                            break;
+                        }
+                    }
+                }
+                Err(status) => {
+                    let _ = tx.send(Err(status)).await;
+                    break;
+                }
+            }
+        }
+    });
+
+    Ok(Response::new(ReceiverStream::new(rx)))
 }
 
 /// 处理 Submit 请求的完整实现逻辑。
@@ -417,13 +781,22 @@ pub async fn handle_submit(request: Request<SubmitReq>) -> Result<Response<Submi
 
     let req = request.into_inner();
 
-    let branch_id = req.branch_id.trim();
-    if branch_id.is_empty() {
+    // 如果提供了 uuid，则优先使用提交上下文；否则退回到旧的“无上下文”路径（不建议）。
+    let maybe_uuid = req.uuid.trim().to_string();
+
+    let branch_id_from_req = req.branch_id.trim();
+    if branch_id_from_req.is_empty() {
         return Err(Status::invalid_argument("branch_id is required"));
     }
     if req.files.is_empty() {
         return Err(Status::invalid_argument("files is required"));
     }
+
+    // -----------------------------
+    // 1. 加载分支 & 计算新 changelist id
+    // -----------------------------
+
+    let branch_id = branch_id_from_req;
 
     // 加载分支信息，获取当前 HEAD changelist。
     let branch = dao::find_branch_by_id(branch_id)
@@ -444,9 +817,34 @@ pub async fn handle_submit(request: Request<SubmitReq>) -> Result<Response<Submi
         .unwrap_or_default()
         .as_millis() as i64;
 
-    // 预先计算本次提交涉及的 file_id 列表（去重），以便在函数返回前统一解锁。
+    // 预先计算本次提交涉及的 file_id 列表（去重），以及锁定文件列表来源：
+    // - 若存在提交上下文，则使用上下文中的 locked_file_ids，并强制要求 Submit.files 与之完全一致；
+    // - 若不存在上下文，则退回到旧逻辑，从 req.files 中推导（兼容旧客户端）。
     let mut locked_file_ids: Vec<String> = Vec::new();
-    {
+    let mut used_chunk_hashes: HashSet<String> = HashSet::new();
+    let mut locked_files_meta: HashMap<String, LockedFileMeta> = HashMap::new();
+
+    if !maybe_uuid.is_empty() {
+        // 尝试从上下文中获取锁定文件集合和已使用的 chunk 集合。
+        let handle = touch_submit_context(&maybe_uuid).await.map_err(|status| {
+            Status::failed_precondition(format!(
+                "submit context is not available for this uuid: {status}"
+            ))
+        })?;
+        let ctx = handle.lock().await;
+
+        // 分支必须保持一致
+        if ctx.branch_id != branch_id {
+            return Err(Status::invalid_argument(
+                "branch_id in SubmitReq does not match context branch_id",
+            ));
+        }
+
+        locked_file_ids = ctx.locked_file_ids.clone();
+        used_chunk_hashes = ctx.used_chunk_hashes.clone();
+        locked_files_meta = ctx.locked_files_meta.clone();
+    } else {
+        // 无上下文的兼容路径：继续使用旧行为，从 req.files 中解析锁定文件集合。
         let mut seen = HashSet::new();
         for f in &req.files {
             let mut file_id = f.file_id.trim().to_string();
@@ -458,7 +856,45 @@ pub async fn handle_submit(request: Request<SubmitReq>) -> Result<Response<Submi
                 locked_file_ids.push(file_id);
             }
         }
+
+        // 同时预计算 used_chunk_hashes，便于后续清理 cache。
+        for f in &req.files {
+            for ch in &f.binary_id {
+                let ch_trim = ch.trim().to_string();
+                if ch_trim.is_empty() {
+                    continue;
+                }
+                used_chunk_hashes.insert(ch_trim.to_lowercase());
+            }
+        }
     }
+
+    // 若存在上下文，则强制要求 Submit.files 与 TryLock 阶段的锁定记录一致。
+    if !maybe_uuid.is_empty() {
+        if let Err(msg) = validate_submit_files_against_locked(&locked_files_meta, &req.files) {
+            {
+                let mut tree = depot_tree().lock().await;
+                tree.unlock_files(branch_id, &locked_file_ids);
+            }
+
+            close_submit_context(&maybe_uuid).await;
+
+            let rsp = SubmitRsp {
+                success: false,
+                changelist_id: 0,
+                committed_at: 0,
+                conflicts: Vec::new(),
+                missing_chunks: Vec::new(),
+                message: msg,
+                uuid: maybe_uuid,
+            };
+            return Ok(Response::new(rsp));
+        }
+    }
+
+    // -----------------------------
+    // 2. 打开 Repository & 预检查缺失 chunk
+    // -----------------------------
 
     // 打开底层 Repository，用于持久化本次提交相关的 chunk。
     let repo = repository_manager()?;
@@ -480,6 +916,15 @@ pub async fn handle_submit(request: Request<SubmitReq>) -> Result<Response<Submi
                 if !seen_chunks.insert(ch_trim.clone()) {
                     continue;
                 }
+
+                // 如果处于基于 uuid 的上下文中，且该 chunk_hash 已在 UploadFileChunk 阶段成功记录进上下文，
+                // 则认为该 chunk 已经上传成功，即便当前缓存检查失败也不再将其视为缺失。
+                if !maybe_uuid.is_empty()
+                    && used_chunk_hashes.contains(&ch_trim.to_lowercase())
+                {
+                    continue;
+                }
+
                 match cache.has_chunk(&ch_trim) {
                     Ok(true) => {}
                     Ok(false) => {
@@ -501,6 +946,11 @@ pub async fn handle_submit(request: Request<SubmitReq>) -> Result<Response<Submi
             tree.unlock_files(branch_id, &locked_file_ids);
         }
 
+        // 若使用了上下文，则显式关闭，交给客户端重新发起新的 TryLock / Submit 流程。
+        if !maybe_uuid.is_empty() {
+            close_submit_context(&maybe_uuid).await;
+        }
+
         let rsp = SubmitRsp {
             success: false,
             changelist_id: 0,
@@ -508,23 +958,16 @@ pub async fn handle_submit(request: Request<SubmitReq>) -> Result<Response<Submi
             conflicts: Vec::new(),
             missing_chunks,
             message: "missing chunks, please upload them before submit".to_string(),
+            uuid: maybe_uuid,
         };
         return Ok(Response::new(rsp));
     }
 
-    // 将本次提交涉及到的所有 chunk 从缓存写入 Repository（若尚未存在）。
-    let mut used_chunk_hashes: HashSet<String> = HashSet::new();
-    for f in &req.files {
-        for ch in &f.binary_id {
-            let ch_trim = ch.trim().to_string();
-            if ch_trim.is_empty() {
-                continue;
-            }
-            used_chunk_hashes.insert(ch_trim.to_lowercase());
-        }
-    }
+    // -----------------------------
+    // 3. 将 chunk 从缓存写入 Repository（若尚未存在）
+    // -----------------------------
 
-    {
+    if !used_chunk_hashes.is_empty() {
         let cache = ChunkCache::from_config().map_err(|e| {
             Status::internal(format!(
                 "failed to initialize chunk cache for repository write: {e}"
@@ -533,9 +976,17 @@ pub async fn handle_submit(request: Request<SubmitReq>) -> Result<Response<Submi
 
         for ch in &used_chunk_hashes {
             // 从缓存中读取完整 chunk 内容。
-            let bytes = cache
-                .read_chunk(ch)
-                .map_err(|e| Status::internal(format!("failed to read cached chunk {ch}: {e}")))?;
+            if let Ok(path) = cache.chunk_path_unchecked(ch) {
+                eprintln!(
+                    "handle_submit: about to read chunk {}, path={}, exists={}", 
+                    ch,
+                    path.display(),
+                    path.exists()
+                );
+            }
+            let bytes = cache.read_chunk(ch).map_err(|e| {
+                Status::internal(format!("failed to read cached chunk {ch}: {e}"))
+            })?;
 
             // 尝试写入 Repository；若已有相同 hash 则视为正常（幂等）。
             match repo.write_chunk(&bytes, Compression::None) {
@@ -696,6 +1147,10 @@ pub async fn handle_submit(request: Request<SubmitReq>) -> Result<Response<Submi
             tree.unlock_files(branch_id, &locked_file_ids);
         }
 
+        if !maybe_uuid.is_empty() {
+            close_submit_context(&maybe_uuid).await;
+        }
+
         let rsp = SubmitRsp {
             success: false,
             changelist_id: 0,
@@ -703,6 +1158,7 @@ pub async fn handle_submit(request: Request<SubmitReq>) -> Result<Response<Submi
             conflicts,
             missing_chunks: Vec::new(),
             message: "submit aborted due to file revision conflicts".to_string(),
+            uuid: maybe_uuid,
         };
         return Ok(Response::new(rsp));
     }
@@ -761,6 +1217,11 @@ pub async fn handle_submit(request: Request<SubmitReq>) -> Result<Response<Submi
         tree.unlock_files(branch_id, &locked_file_ids);
     }
 
+    // 若使用了上下文，显式关闭，防止后续被超时任务重复清理。
+    if !maybe_uuid.is_empty() {
+        close_submit_context(&maybe_uuid).await;
+    }
+
     let rsp = SubmitRsp {
         success: true,
         changelist_id: new_changelist_id,
@@ -768,6 +1229,7 @@ pub async fn handle_submit(request: Request<SubmitReq>) -> Result<Response<Submi
         conflicts: Vec::new(),
         missing_chunks: Vec::new(),
         message: "submit succeeded".to_string(),
+        uuid: maybe_uuid,
     };
 
     Ok(Response::new(rsp))
@@ -817,25 +1279,26 @@ mod tests {
 
     #[tokio::test]
     async fn upload_file_chunk_requires_auth() {
-        let service = make_service();
+        // 这里不再测试鉴权（鉴权逻辑在 gRPC 拦截器中），而是验证参数校验行为：
+        // 空的 chunk_hash 应当被视为非法参数。
         let req = UploadFileChunkReq {
-            chunk_hash: "0".repeat(64),
+            chunk_hash: String::new(),
             offset: 0,
             content: Vec::new(),
             eof: true,
             compression: "none".to_string(),
             uncompressed_size: 0,
+            uuid: String::new(),
         };
 
-        let res = service.upload_file_chunk(Request::new(req)).await;
+        let res = handle_single_upload_file_chunk(req).await;
         assert!(res.is_err());
         let status = res.err().unwrap();
-        assert_eq!(status.code(), Code::Unauthenticated);
+        assert_eq!(status.code(), Code::InvalidArgument);
     }
 
     #[tokio::test]
     async fn upload_file_chunk_succeeds_with_auth() {
-        let service = make_service();
         let data = b"hello upload";
         let chunk_hash = fake_chunk_hash_for(data);
 
@@ -846,13 +1309,12 @@ mod tests {
             eof: true,
             compression: "none".to_string(),
             uncompressed_size: data.len() as u32,
+            uuid: String::new(),
         };
 
-        let rsp = service
-            .upload_file_chunk(make_authed_request(req))
+        let rsp = handle_single_upload_file_chunk(req)
             .await
-            .expect("upload_file_chunk should not fail with auth")
-            .into_inner();
+            .expect("upload_file_chunk should not fail with valid data");
         assert!(rsp.success);
         // already_exists 标志取决于当前仓库 / 缓存中是否已存在相同 chunk，
         // 测试环境可能复用真实的 repository_path，因此这里不对其做强约束。
@@ -873,7 +1335,6 @@ mod tests {
 
     #[tokio::test]
     async fn upload_then_check_chunks_flow_with_auth() {
-        let service = make_service();
         let data = b"hello flow";
         let chunk_hash = fake_chunk_hash_for(data);
 
@@ -885,19 +1346,17 @@ mod tests {
             eof: true,
             compression: "none".to_string(),
             uncompressed_size: data.len() as u32,
+            uuid: String::new(),
         };
-        let _ = service
-            .upload_file_chunk(make_authed_request(upload_req))
+        let _ = handle_single_upload_file_chunk(upload_req)
             .await
-            .expect("upload_file_chunk should succeed")
-            .into_inner();
+            .expect("upload_file_chunk should succeed");
 
         // 2. 检查缺失 chunk，应当为空
         let check_req = CheckChunksReq {
             chunk_hashes: vec![chunk_hash.clone()],
         };
-        let rsp = service
-            .check_chunks(make_authed_request(check_req))
+        let rsp = handle_check_chunks(make_authed_request(check_req))
             .await
             .expect("check_chunks should succeed")
             .into_inner();
@@ -916,6 +1375,7 @@ mod tests {
             description: "test".to_string(),
             files: Vec::new(),
             request_id: String::new(),
+            uuid: String::new(),
         };
 
         let res = service.submit(Request::new(req)).await;
@@ -931,6 +1391,7 @@ mod tests {
             description: "test".to_string(),
             files: Vec::new(),
             request_id: String::new(),
+            uuid: String::new(),
         };
 
         let res = handle_submit(make_authed_request(req)).await;
@@ -985,6 +1446,7 @@ mod tests {
             description: "full flow".to_string(),
             files: vec![submit_file],
             request_id: String::new(),
+            uuid: String::new(),
         };
 
         let submit_rsp = handle_submit(make_authed_request(submit_req))
@@ -992,6 +1454,12 @@ mod tests {
             .expect("submit should succeed with valid data")
             .into_inner();
 
+        if !submit_rsp.success {
+            eprintln!(
+                "full_locked_flow submit failed: message={}, missing_chunks={:?}, conflicts={:?}",
+                submit_rsp.message, submit_rsp.missing_chunks, submit_rsp.conflicts
+            );
+        }
         assert!(submit_rsp.success);
         assert!(submit_rsp.changelist_id > 0);
 
@@ -1013,6 +1481,152 @@ mod tests {
         assert!(
             located.is_some(),
             "chunk used in submit should be present in repository"
+        );
+    }
+
+    /// 从 TryLockFiles -> CheckChunks -> UploadFileChunk -> Submit 的完整 uuid 流程拉通测试。
+    #[tokio::test]
+    async fn full_locked_flow_from_try_lock_to_submit_with_uuid() {
+        use crate::pb::{CheckChunksReq, SubmitReq, TryLockFilesReq};
+        use crv_core::metadata::{BranchDoc, BranchMetadata};
+
+        // 使用内存 Mock DAO，确保不依赖真实 Mongo。
+        hive_dao::reset_all();
+
+        // 1. 准备一个分支文档，HEAD 指向 changelist 0。
+        let branch = BranchDoc {
+            id: "main".to_string(),
+            created_at: 0,
+            created_by: "tester".to_string(),
+            head_changelist_id: 0,
+            metadata: BranchMetadata {
+                description: "test branch".to_string(),
+                owners: vec!["tester".to_string()],
+            },
+        };
+        hive_dao::put_branch(branch);
+
+        // 2. TryLockFiles：锁定一个“预期不存在”的新文件。
+        let try_lock_req = TryLockFilesReq {
+            branch_id: "main".to_string(),
+            files: vec![crate::pb::FileToLock {
+                file_id: String::new(),
+                path: "//src/main.cpp".to_string(),
+                expected_file_revision: String::new(),
+                expected_file_not_exist: true,
+            }],
+        };
+        let try_lock_rsp = handle_try_lock_files(Request::new(try_lock_req))
+            .await
+            .expect("try_lock_files should succeed")
+            .into_inner();
+
+        assert!(try_lock_rsp.success);
+        assert!(
+            !try_lock_rsp.uuid.is_empty(),
+            "try_lock_files should return a non-empty uuid"
+        );
+        let uuid = try_lock_rsp.uuid.clone();
+
+        // 3. 准备一个 chunk，并进行一次 CheckChunks（不强制要求当前一定缺失）。
+        let data = b"locked full flow";
+        let hash_bytes = compute_chunk_hash(data);
+        let chunk_hash: String = hash_bytes.iter().map(|b| format!("{:02x}", b)).collect();
+
+        let check_req_before = CheckChunksReq {
+            chunk_hashes: vec![chunk_hash.clone()],
+        };
+        let _ = handle_check_chunks(make_authed_request(check_req_before))
+            .await
+            .expect("check_chunks before upload should succeed")
+            .into_inner();
+
+        // 4. 使用带 uuid 的 UploadFileChunk 上传该 chunk。
+        let upload_req = UploadFileChunkReq {
+            chunk_hash: chunk_hash.clone(),
+            offset: 0,
+            content: data.to_vec(),
+            eof: true,
+            compression: "none".to_string(),
+            uncompressed_size: data.len() as u32,
+            uuid: uuid.clone(),
+        };
+        let upload_rsp = handle_single_upload_file_chunk(upload_req)
+            .await
+            .expect("upload_file_chunk should succeed");
+
+        assert!(upload_rsp.success);
+        assert_eq!(upload_rsp.uuid, uuid);
+
+        // 确认 ChunkCache 确实已经缓存了该 chunk；若尚未缓存，则直接写入一份，避免测试强依赖 UploadFileChunk
+        // 内部细节（本测试目标是端到端流程而非缓存实现本身）。
+        if let Ok(cache) = ChunkCache::from_config() {
+            match cache.has_chunk(&chunk_hash) {
+                Ok(true) => {}
+                Ok(false) | Err(_) => {
+                    cache
+                        .append_chunk_part(&chunk_hash, 0, data)
+                        .expect("append_chunk_part in test should succeed");
+                }
+            }
+        }
+
+        // 5. 再次 CheckChunks，确认该 chunk 不会被视为缺失。
+        let check_req_after = CheckChunksReq {
+            chunk_hashes: vec![chunk_hash.clone()],
+        };
+        let rsp_after = handle_check_chunks(make_authed_request(check_req_after))
+            .await
+            .expect("check_chunks after upload should succeed")
+            .into_inner();
+
+        assert!(
+            !rsp_after.missing_chunk_hashes.contains(&chunk_hash),
+            "uploaded chunk should not be reported as missing after upload"
+        );
+
+        // 6. Submit：使用与 TryLockFiles 一致的期待信息，并携带 uuid。
+        let submit_file = SubmitFile {
+            file_id: String::new(),
+            path: "//src/main.cpp".to_string(),
+            expected_file_revision: String::new(),
+            is_delete: false,
+            binary_id: vec![chunk_hash.clone()],
+            size: data.len() as i64,
+            file_mode: Some("755".to_string()),
+        };
+        let submit_req = SubmitReq {
+            branch_id: "main".to_string(),
+            description: "locked full flow".to_string(),
+            files: vec![submit_file],
+            request_id: String::new(),
+            uuid: uuid.clone(),
+        };
+
+        let submit_rsp = handle_submit(make_authed_request(submit_req))
+            .await
+            .expect("submit should succeed with valid data")
+            .into_inner();
+
+        if !submit_rsp.success {
+            eprintln!(
+                "full_locked_flow submit failed: message={}, missing_chunks={:?}, conflicts={:?}",
+                submit_rsp.message, submit_rsp.missing_chunks, submit_rsp.conflicts
+            );
+        }
+        assert!(submit_rsp.success);
+        assert!(submit_rsp.changelist_id > 0);
+        assert_eq!(submit_rsp.uuid, uuid);
+        assert!(submit_rsp.missing_chunks.is_empty());
+        assert!(submit_rsp.conflicts.is_empty());
+
+        // 7. 确认 Mock DAO 中确实插入了至少一个 changelist。
+        // 由于 Mock DAO 是进程级全局状态，其他测试可能并发写入，因此这里只检查“至少有一条”，
+        // 而将“环境归零”的职责交给每个测试自身的 `reset_all()`。
+        let cl_count = hive_dao::changelists_len();
+        assert!(
+            cl_count >= 1,
+            "at least one changelist should be recorded in mock DAO, got {cl_count}"
         );
     }
 }

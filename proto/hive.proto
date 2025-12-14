@@ -45,13 +45,16 @@ message UploadFileChunkReq {
     string compression = 5;
     // 解压后的原始大小（字节），用于校验
     uint32 uncompressed_size = 6;
+    string uuid = 7;
 }
 
 message UploadFileChunkRsp {
     bool success = 1;
-    string message = 2;
+    string chunk_hash = 2;
+    string message = 3;
     // 如果服务器端已经存在相同 chunk（基于 chunk_hash），则会返回 true
-    bool already_exists = 3;
+    bool already_exists = 4;
+    string uuid = 5;
 }
 
 // 客户端可先询问服务器当前缺少哪些 chunk，从而只上传需要的部分
@@ -86,6 +89,7 @@ message SubmitReq {
 
     // 幂等请求 ID，用于防止重复提交
     string request_id = 4;
+    string uuid = 5;
 }
 
 message FileToLock {
@@ -115,6 +119,7 @@ message TryLockFilesResp {
     // 如果有任何文件无法被锁定则返回 false
     bool success = 1;
     repeated FileUnableToLock file_unable_to_lock = 2;
+    string uuid = 3;
 }
 
 message SubmitConflict {
@@ -136,6 +141,7 @@ message SubmitRsp {
     repeated string missing_chunks = 5;
 
     string message = 6;
+    string uuid = 7;
 }
 // Submit End
 
@@ -147,6 +153,6 @@ service HiveService {
 
     rpc TryLockFiles(TryLockFilesReq) returns (TryLockFilesResp);
     rpc CheckChunks(CheckChunksReq) returns (CheckChunksRsp);
-    rpc UploadFileChunk(UploadFileChunkReq) returns (UploadFileChunkRsp);
+    rpc UploadFileChunk(stream UploadFileChunkReq) returns (stream UploadFileChunkRsp);
     rpc Submit(SubmitReq) returns (SubmitRsp);
 }
