@@ -285,13 +285,14 @@ fn validate_submit_files_against_locked(
     Ok(())
 }
 
-/// TODO: 增加锁定超时处理逻辑，增加状态机管理三个步骤，每个步骤视为同一个上下文
-/// TODO: 目前锁定的文件集合可以大于实际提交的文件集合，这会导致有些文件在 submit 后没有被解锁的问题
 /// 预检查一批文件是否可以被当前 changelist 锁定。
 pub async fn handle_try_lock_files(
     request: Request<TryLockFilesReq>,
 ) -> Result<Response<TryLockFilesResp>, Status> {
     use crate::hive_server::hive_dao as dao;
+
+    // 所有调用必须已通过鉴权拦截器注入 UserContext；否则直接拒绝。
+    let _user = auth::require_user(&request)?;
 
     let req = request.into_inner();
 
@@ -700,8 +701,10 @@ async fn handle_single_upload_file_chunk(
     Ok(rsp)
 }
 
-/// 流式上传文件内容块：一个 chunk 的所有分片通过同一个流上传，
-/// 仅在该 chunk 的 `eof == true` 时发送一次响应。
+/// 流式上传文件内容块：
+/// - 一个 changelist 中涉及的**所有 chunk 的所有分片**共用同一个 gRPC 流上传；
+/// - 若在 offset == 0 时发现 chunk 已经存在（仓库或缓存中），则**立刻**返回一次响应，客户端可以据此停止继续上传该 chunk；
+/// - 若是新 chunk，则仅在该 chunk 的 `eof == true` 时发送一次响应。
 pub type UploadFileChunkStream = ReceiverStream<Result<UploadFileChunkRsp, Status>>;
 
 pub async fn handle_upload_file_chunk_stream(
@@ -714,9 +717,11 @@ pub async fn handle_upload_file_chunk_stream(
     let (tx, rx) = mpsc::channel::<Result<UploadFileChunkRsp, Status>>(32);
 
     tokio::spawn(async move {
-        use std::collections::HashMap;
+        use std::collections::{HashMap, HashSet};
         // 记录每个 chunk_hash 对应的“首个成功响应”，以便在 eof 时一次性返回。
         let mut pending_by_chunk: HashMap<String, UploadFileChunkRsp> = HashMap::new();
+        // 标记已经完成响应的 chunk_hash（包括 already_exists 立即返回的情况），避免重复发送。
+        let mut completed_chunks: HashSet<String> = HashSet::new();
 
         while let Some(next) = inbound.next().await {
             match next {
@@ -724,6 +729,12 @@ pub async fn handle_upload_file_chunk_stream(
                     let uuid_for_log = req.uuid.clone();
                     let chunk_hash_key = req.chunk_hash.trim().to_lowercase();
                     let eof_flag = req.eof;
+
+                    // 若该 chunk 已经完成响应（例如 offset==0 就 already_exists 并返回过），
+                    // 则忽略后续同一 chunk 的所有分片，避免重复响应。
+                    if completed_chunks.contains(&chunk_hash_key) {
+                        continue;
+                    }
                     match handle_single_upload_file_chunk(req).await {
                         Ok(mut rsp) => {
                             // 确保响应里携带 chunk_hash
@@ -731,14 +742,26 @@ pub async fn handle_upload_file_chunk_stream(
                                 rsp.chunk_hash = chunk_hash_key.clone();
                             }
 
-                            // 对同一个 chunk_hash，只保留第一次成功响应（保证 already_exists 等信息不被后续覆盖）。
+                            // 若服务器在 offset==0 时就发现 chunk 已存在（already_exists=true），
+                            // 则立即返回该响应，让客户端可以尽早停止上传该 chunk，
+                            // 并标记该 chunk 已完成，后续同一 chunk 的分片将被忽略。
+                            if rsp.already_exists {
+                                completed_chunks.insert(chunk_hash_key.clone());
+                                if tx.send(Ok(rsp)).await.is_err() {
+                                    break;
+                                }
+                                continue;
+                            }
+
+                            // 对同一个 chunk_hash，只保留第一次成功响应（保证状态不被后续覆盖）。
                             pending_by_chunk
                                 .entry(chunk_hash_key.clone())
                                 .or_insert_with(|| rsp);
 
-                            // 仅在 eof 时真正发送响应。
+                            // 仅在 eof 时真正发送响应，并标记该 chunk 已完成。
                             if eof_flag {
                                 if let Some(rsp_to_send) = pending_by_chunk.remove(&chunk_hash_key) {
+                                    completed_chunks.insert(chunk_hash_key.clone());
                                     if tx.send(Ok(rsp_to_send)).await.is_err() {
                                         // 客户端已断开连接，结束任务
                                         break;
@@ -1516,7 +1539,8 @@ mod tests {
                 expected_file_not_exist: true,
             }],
         };
-        let try_lock_rsp = handle_try_lock_files(Request::new(try_lock_req))
+        // TryLockFiles 现在也需要鉴权，这里复用 make_authed_request 构造带 UserContext 的请求。
+        let try_lock_rsp = handle_try_lock_files(make_authed_request(try_lock_req))
             .await
             .expect("try_lock_files should succeed")
             .into_inner();
