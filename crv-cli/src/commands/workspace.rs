@@ -1,42 +1,64 @@
+use anyhow::Result;
 use clap::{Parser, Subcommand};
+use tonic::transport::Channel;
 
 #[derive(Parser)]
-pub struct WorkspaceArgs {
+pub struct WorkspaceCli {
     #[command(subcommand)]
-    pub command: WorkspaceCommands,
+    pub workspace_commands: WorkspaceCommands,
 }
 
 #[derive(Subcommand)]
 pub enum WorkspaceCommands {
-    /// 创建工作区
-    Create,
-    /// 删除工作区
-    Delete {
-        /// 工作区名称
-        name: String,
-    },
-    /// 列出工作区
-    List,
-    /// 描述工作区
-    Describe {
-        /// 工作区名称
-        name: String,
-    },
+    Create(CreateCli),
+    Delete(DeleteCli),
+    List(ListCli),
+    Describe(DescribeCli),
 }
 
-pub fn handle(args: WorkspaceArgs) {
-    match args.command {
-        WorkspaceCommands::Create => {
-            todo!()
+impl WorkspaceCli {
+    pub async fn handle(&self, channel: &Channel) -> Result<()> {
+        match &self.workspace_commands {
+            WorkspaceCommands::Create(cli) => cli.handle(channel).await,
+            WorkspaceCommands::Delete(cli) => cli.handle(channel).await,
+            WorkspaceCommands::List(cli) => cli.handle(channel).await,
+            WorkspaceCommands::Describe(cli) => cli.handle(channel).await,
         }
-        WorkspaceCommands::Delete { name } => {
-            todo!()
-        }
-        WorkspaceCommands::List => {
-            todo!()
-        }
-        WorkspaceCommands::Describe { name } => {
-            todo!()
-        }
+    }
+}
+
+#[derive(Parser)]
+pub struct CreateCli;
+
+impl CreateCli {
+    pub async fn handle(&self, channel: &Channel) -> Result<()> {
+        todo!()
+    }
+}
+
+#[derive(Parser)]
+pub struct DeleteCli;
+
+impl DeleteCli {
+    pub async fn handle(&self, channel: &Channel) -> Result<()> {
+        todo!()
+    }
+}
+
+#[derive(Parser)]
+pub struct ListCli;
+
+impl ListCli {
+    pub async fn handle(&self, channel: &Channel) -> Result<()> {
+        todo!()
+    }
+}
+
+#[derive(Parser)]
+pub struct DescribeCli;
+
+impl DescribeCli {
+    pub async fn handle(&self, channel: &Channel) -> Result<()> {
+        todo!()
     }
 }

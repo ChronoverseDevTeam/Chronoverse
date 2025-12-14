@@ -12,32 +12,32 @@ message BonjourRsp {
   string architecture = 5;
 }
 
+service SystemService {
+  rpc Bonjour(BonjourReq) returns (BonjourRsp);
+}
+
 // Workspace management
 message CreateWorkspaceReq {
+  string workspace_name = 1;
+  string workspace_root = 2;
+  string workspace_mapping = 3;
 }
 
 message CreateWorkspaceRsp {
-  bool success = 1;
-  string message = 2;
-  string workspace_path = 3;
+  string workspace_path = 1;
 }
 
 message DeleteWorkspaceReq {
   string workspace_name = 1;
 }
 
-message DeleteWorkspaceRsp {
-  bool success = 1;
-  string message = 2;
-}
+message DeleteWorkspaceRsp {}
 
 message ListWorkspacesReq {
 }
 
 message ListWorkspacesRsp {
-  bool success = 1;
-  string message = 2;
-  repeated string workspace_names = 3;
+  repeated string workspace_names = 1;
 }
 
 message DescribeWorkspaceReq {
@@ -45,92 +45,121 @@ message DescribeWorkspaceReq {
 }
 
 message DescribeWorkspaceRsp {
-  bool success = 1;
-  string message = 2;
-  string workspace_name = 3;
-  string workspace_path = 4;
-  repeated string file_paths = 5;
+  string workspace_name = 1;
+  string workspace_path = 2;
+  repeated string file_paths = 3;
+}
+
+service WorkspaceService {
+  rpc CreateWorkspace(CreateWorkspaceReq) returns (CreateWorkspaceRsp);
+  rpc DeleteWorkspace(DeleteWorkspaceReq) returns (DeleteWorkspaceRsp);
+  rpc ListWorkspaces(ListWorkspacesReq) returns (ListWorkspacesRsp);
+  rpc DescribeWorkspace(DescribeWorkspaceReq) returns (DescribeWorkspaceRsp);
 }
 
 // File operations
 message AddReq {
-  repeated string paths = 1;
+  string workspace_name = 1;
+  repeated string paths = 2;
 }
 
 message AddRsp {
-  bool success = 1;
-  string message = 2;
-  repeated string added_paths = 3;
+  repeated string added_paths = 1;
 }
 
 message SyncReq {
-  repeated string depot_paths = 1;
-  bool force = 2;
+  string workspace_name = 1;
+  repeated string paths = 2; // 可能是本地路径、工作区路径、或者 depot 路径
+  bool force = 3;
 }
 
-message SyncRsp {
-  bool success = 1;
-  string message = 2;
-  repeated string synced_paths = 3;
+// Sync 操作的总进度报告
+message SyncProgress {
+  oneof payload {
+    // 第一次发送：用于初始化进度条的总信息
+    SyncMetadata metadata = 1;
+    // 后续发送：用于实时更新的单个文件进度
+    SyncFileUpdate file_update = 2;
+  }
+}
+
+// 包含总量的元数据信息（只发送一次）
+message SyncMetadata {
+  // 总字节数
+  int64 total_bytes_to_sync = 1;
+  // 总文件数（可以基于文件数或字节数做进度条）
+  int32 total_files_to_sync = 2;
+}
+
+// 包含单个文件更新的信息（多次发送）
+message SyncFileUpdate {
+  string path = 1;
+  string action = 2; // "updated", "deleted", "conflict", ...
+  // 已完成的字节数
+  int64 bytes_completed_so_far = 3;
 }
 
 message LockReq {
-  repeated string paths = 1;
+  string workspace_name = 1;
+  repeated string paths = 2;
 }
 
 message LockRsp {
-  bool success = 1;
-  string message = 2;
-  repeated string locked_paths = 3;
+  repeated string locked_paths = 1;
 }
 
 message RevertReq {
-  repeated string paths = 1;
+  string workspace_name = 1;
+  repeated string paths = 2;
 }
 
 message RevertRsp {
-  bool success = 1;
-  string message = 2;
-  repeated string reverted_paths = 3;
+  repeated string reverted_paths = 1;
 }
 
 message SubmitReq {
-  repeated string paths = 1;
+  string workspace_name = 1;
+  repeated string paths = 2;
+  string description = 3;
 }
 
-message SubmitRsp {
-  bool success = 1;
-  string message = 2;
-  repeated string submitted_paths = 3;
+message SubmitProgress {
+  string path = 1;
+  // 已完成的字节数
+  int64 bytes_completed_so_far = 2;
 }
 
-// Changelist management
+service FileService {
+  rpc Add(AddReq) returns (AddRsp);
+  rpc Sync(SyncReq) returns (stream SyncProgress);
+  rpc Lock(LockReq) returns (LockRsp);
+  rpc Revert(RevertReq) returns (RevertRsp);
+  rpc Submit(SubmitReq) returns (stream SubmitProgress);
+}
+
+// Local Changelist management
 message CreateChangelistReq {
-  string description = 1;
+  string workspace_name = 1;
+  string description = 2;
 }
 
 message CreateChangelistRsp {
-  bool success = 1;
-  string message = 2;
-  string changelist_id = 3;
-}
-
-message DeleteChangelistReq {
   string changelist_id = 1;
 }
 
-message DeleteChangelistRsp {
-  bool success = 1;
-  string message = 2;
+message DeleteChangelistReq {
+  string workspace_name = 1;
+  string changelist_id = 2;
 }
 
+message DeleteChangelistRsp {}
+
 message ListChangelistsReq {
+  string workspace_name = 1;
 }
 
 message ListChangelistsRsp {
-  bool success = 1;
-  string message = 2;
-  repeated ChangelistInfo changelists = 3;
+  repeated ChangelistInfo changelists = 1;
 }
 
 message ChangelistInfo {
@@ -146,53 +175,29 @@ message DescribeChangelistReq {
 }
 
 message DescribeChangelistRsp {
-  bool success = 1;
-  string message = 2;
-  ChangelistInfo changelist = 3;
-  repeated string file_paths = 4;
+  string workspace_name = 1;
+  ChangelistInfo changelist = 2;
+  repeated string file_paths = 3;
 }
 
 message AppendChangelistReq {
-  string changelist_id = 1;
-  repeated string paths = 2;
+  string workspace_name = 1;
+  string changelist_id = 2;
+  repeated string paths = 3;
 }
 
-message AppendChangelistRsp {
-  bool success = 1;
-  string message = 2;
-}
+message AppendChangelistRsp {}
 
 message SubmitChangelistReq {
-  string changelist_id = 1;
+  string workspace_name = 1;
+  string changelist_id = 2;
 }
 
-message SubmitChangelistRsp {
-  bool success = 1;
-  string message = 2;
-}
-
-service EdgeDaemonService {
-  // Basic operations
-  rpc Bonjour(BonjourReq) returns (BonjourRsp);
-
-  // Workspace management
-  rpc CreateWorkspace(CreateWorkspaceReq) returns (CreateWorkspaceRsp);
-  rpc DeleteWorkspace(DeleteWorkspaceReq) returns (DeleteWorkspaceRsp);
-  rpc ListWorkspaces(ListWorkspacesReq) returns (ListWorkspacesRsp);
-  rpc DescribeWorkspace(DescribeWorkspaceReq) returns (DescribeWorkspaceRsp);
-
-  // File operations
-  rpc Add(AddReq) returns (AddRsp);
-  rpc Sync(SyncReq) returns (SyncRsp);
-  rpc Lock(LockReq) returns (LockRsp);
-  rpc Revert(RevertReq) returns (RevertRsp);
-  rpc Submit(SubmitReq) returns (SubmitRsp);
-
-  // Changelist management
+service ChangelistService {
   rpc CreateChangelist(CreateChangelistReq) returns (CreateChangelistRsp);
   rpc DeleteChangelist(DeleteChangelistReq) returns (DeleteChangelistRsp);
   rpc ListChangelists(ListChangelistsReq) returns (ListChangelistsRsp);
   rpc DescribeChangelist(DescribeChangelistReq) returns (DescribeChangelistRsp);
   rpc AppendChangelist(AppendChangelistReq) returns (AppendChangelistRsp);
-  rpc SubmitChangelist(SubmitChangelistReq) returns (SubmitChangelistRsp);
+  rpc SubmitChangelist(SubmitChangelistReq) returns (stream SubmitProgress);
 }

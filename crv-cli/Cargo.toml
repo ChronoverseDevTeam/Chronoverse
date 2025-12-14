@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 crv-core = { path = "../crv-core" }
+crv-edge = { path = "../crv-edge" }
 
 tokio = { workspace = true }
 serde = { workspace = true }
@@ -23,6 +24,17 @@ prost-types = "0.14.1"
 
 tonic = "0.14.2"
 tonic-prost = "0.14.2"
+
+tokio-stream = "0.1"
+
+anyhow = "1.0"
+
+# Cli 三剑客
+dialoguer = "0.12"
+indicatif = "0.18"
+console = "0.16"
+# 表格打印
+tabled = "0.20"
 
 [build-dependencies]
 tonic-prost-build = "0.14.2"
