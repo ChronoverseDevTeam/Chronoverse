@@ -29,7 +29,8 @@ pub struct BonjourCli;
 impl BonjourCli {
     pub async fn handle(&self, channel: &Channel) -> Result<()> {
         let mut system_client = SystemServiceClient::new(channel.clone());
-        system_client.bonjour(BonjourReq {}).await?;
+        let response = system_client.bonjour(BonjourReq {}).await?;
+        println!("{:?}", response.into_inner());
         Ok(())
     }
 }

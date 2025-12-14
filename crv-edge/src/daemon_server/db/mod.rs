@@ -48,7 +48,19 @@ impl DbManager {
     }
 
     pub fn load_runtime_config(&self) -> Result<Option<RuntimeConfig>, DbError> {
-        todo!()
+        let remote_addr = self.get_config("remote_addr")?;
+        let editor = self.get_config("editor")?;
+        let default_user = self.get_config("default_user")?;
+
+        if remote_addr.is_none() || editor.is_none() {
+            return Ok(None);
+        }
+
+        Ok(Some(RuntimeConfig {
+            remote_addr: remote_addr.unwrap(),
+            editor: editor.unwrap(),
+            default_user: default_user.unwrap(),
+        }))
     }
 
     /// 获取应用配置 (反序列化示例)

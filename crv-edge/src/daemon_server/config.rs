@@ -31,9 +31,9 @@ impl BootstrapConfig {
             proj_dirs.data_local_dir().to_string_lossy().to_string()
         } else {
             // 如果 ProjectDirs 无法确定路径，提供一个最后的回退方案
-            #[cfg(windows)]
-            return String::from("/tmp/chronoverse_data_fallback");
             #[cfg(not(windows))]
+            return String::from("/tmp/chronoverse_data_fallback");
+            #[cfg(windows)]
             return String::from("C:/chronoverse_data_fallback");
         }
     }
@@ -52,6 +52,8 @@ pub struct RuntimeConfig {
     pub remote_addr: String,
     /// 启动文本编辑器的指令
     pub editor: String,
+    /// 默认用户
+    pub default_user: String,
 }
 
 impl RuntimeConfig {
@@ -71,6 +73,7 @@ impl Default for RuntimeConfig {
         Self {
             remote_addr: "localhost:31823".to_string(),
             editor: "vim".to_string(),
+            default_user: "default".to_string(),
         }
     }
 }

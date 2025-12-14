@@ -18,8 +18,8 @@ impl CombinedInterceptor {
 
 impl Interceptor for CombinedInterceptor {
     fn call(&mut self, request: Request<()>) -> Result<Request<()>, Status> {
-        let request = auth::call(request)?;
         let request = config::call(self.state.clone(), request)?;
+        let request = auth::call(self.state.clone(), request)?;
         Ok(request)
     }
 }
