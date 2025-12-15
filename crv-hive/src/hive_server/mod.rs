@@ -2,6 +2,7 @@ use crate::auth::{AuthInterceptor, AuthService};
 use crate::pb::{
     BonjourReq, BonjourRsp, CheckChunksReq, CheckChunksRsp, LoginReq, LoginRsp, RegisterReq,
     RegisterRsp, SubmitReq, SubmitRsp, TryLockFilesReq, TryLockFilesResp, UploadFileChunkReq,
+    GetFileTreeReq, GetFileTreeRsp,
     hive_service_server::{HiveService, HiveServiceServer},
 };
 use argon2::password_hash::SaltString;
@@ -73,9 +74,9 @@ pub(crate) fn repository_manager() -> Result<&'static RepositoryManager, Status>
 #[cfg(not(test))]
 pub(crate) mod hive_dao {
     pub use crate::database::dao::{
-        find_branch_by_id, find_file_by_id, find_file_revision_by_branch_file_and_cl,
-        get_max_changelist_id, insert_changelist, insert_file, insert_file_revisions,
-        update_branch_head,
+        find_branch_by_id, find_changelist_by_id, find_file_by_id, find_file_revision_by_branch_file_and_cl,
+        find_file_revision_by_id, get_max_changelist_id, insert_changelist, insert_file,
+        insert_file_revisions, update_branch_head,
     };
 }
 
@@ -127,6 +128,11 @@ pub(crate) mod hive_dao {
         Ok(s.branches.get(branch_id).cloned())
     }
 
+    pub async fn find_changelist_by_id(changelist_id: i64) -> DaoResult<Option<ChangelistDoc>> {
+        let s = state().lock().expect("lock mock dao state");
+        Ok(s.changelists.get(&changelist_id).cloned())
+    }
+
     pub async fn get_max_changelist_id() -> DaoResult<i64> {
         let s = state().lock().expect("lock mock dao state");
         Ok(s.max_changelist_id)
@@ -146,6 +152,11 @@ pub(crate) mod hive_dao {
                     && rev.changelist_id == changelist_id
             })
             .cloned())
+    }
+
+    pub async fn find_file_revision_by_id(revision_id: &str) -> DaoResult<Option<FileRevisionDoc>> {
+        let s = state().lock().expect("lock mock dao state");
+        Ok(s.file_revisions.iter().find(|r| r.id == revision_id).cloned())
     }
 
     pub async fn find_file_by_id(file_id: &str) -> DaoResult<Option<FileDoc>> {
@@ -189,6 +200,20 @@ pub(crate) mod hive_dao {
 pub(crate) fn derive_file_id_from_path(path: &str) -> String {
     let hash_bytes = compute_blake3_str(path);
     blake3_hash_to_hex(&hash_bytes)
+}
+
+/// 测试用全局互斥锁：用于串行化依赖进程级全局状态（Mock DAO / DepotTree 等）的单元测试，
+/// 避免 `cargo test` 默认并行执行导致的状态互相污染与偶发失败。
+#[cfg(test)]
+static TEST_GLOBAL_LOCK: tokio::sync::OnceCell<Mutex<()>> = tokio::sync::OnceCell::const_new();
+
+#[cfg(test)]
+pub(crate) async fn test_global_lock() -> tokio::sync::MutexGuard<'static, ()> {
+    TEST_GLOBAL_LOCK
+        .get_or_init(|| async { Mutex::new(()) })
+        .await
+        .lock()
+        .await
 }
 
 #[tonic::async_trait]
@@ -339,6 +364,13 @@ impl HiveService for CrvHiveService {
     /// 都应该清理掉本次提交中相关的 chunk cache 文件。同时，对于数据库的提交也应该是原子且一致的，要么全部成功，要么全部不成功。
     async fn submit(&self, request: Request<SubmitReq>) -> Result<Response<SubmitRsp>, Status> {
         submit::handle_submit(request).await
+    }
+
+    async fn get_file_tree(
+        &self,
+        request: Request<GetFileTreeReq>,
+    ) -> Result<Response<GetFileTreeRsp>, Status> {
+        fetch::handle_get_file_tree(request).await
     }
 }
 

@@ -145,6 +145,38 @@ message SubmitRsp {
 }
 // Submit End
 
+message File {
+    string name = 1;
+    string file_id = 2;
+    string revision_id = 3;
+    string changelist_id = 4;
+    repeated string binary_id = 5;
+    int64 size = 6;
+    int64 revision_created_at = 7;
+}
+
+message Directory {
+    string name = 1;
+    repeated FileTreeNode children = 2;
+}
+
+message FileTreeNode {
+    oneof node {
+        File file = 1;
+        Directory directory = 2;
+    }
+}
+
+message GetFileTreeReq {
+    string branch_id = 1;
+    string depot_wildcard = 2;
+    int64 changelist_id = 3;
+}
+
+message GetFileTreeRsp {
+    repeated FileTreeNode file_tree_root = 1;
+}
+
 service HiveService {
     rpc bonjour(BonjourReq) returns (BonjourRsp);
 
@@ -155,4 +187,6 @@ service HiveService {
     rpc CheckChunks(CheckChunksReq) returns (CheckChunksRsp);
     rpc UploadFileChunk(stream UploadFileChunkReq) returns (stream UploadFileChunkRsp);
     rpc Submit(SubmitReq) returns (SubmitRsp);
+
+    rpc GetFileTree(GetFileTreeReq) returns (GetFileTreeRsp);
 }

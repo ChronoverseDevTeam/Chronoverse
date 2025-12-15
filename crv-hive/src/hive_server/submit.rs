@@ -1302,6 +1302,7 @@ mod tests {
 
     #[tokio::test]
     async fn upload_file_chunk_requires_auth() {
+        let _guard = crate::hive_server::test_global_lock().await;
         // 这里不再测试鉴权（鉴权逻辑在 gRPC 拦截器中），而是验证参数校验行为：
         // 空的 chunk_hash 应当被视为非法参数。
         let req = UploadFileChunkReq {
@@ -1322,6 +1323,7 @@ mod tests {
 
     #[tokio::test]
     async fn upload_file_chunk_succeeds_with_auth() {
+        let _guard = crate::hive_server::test_global_lock().await;
         let data = b"hello upload";
         let chunk_hash = fake_chunk_hash_for(data);
 
@@ -1345,6 +1347,7 @@ mod tests {
 
     #[tokio::test]
     async fn check_chunks_requires_auth() {
+        let _guard = crate::hive_server::test_global_lock().await;
         let service = make_service();
         let req = CheckChunksReq {
             chunk_hashes: vec!["0".repeat(64)],
@@ -1358,6 +1361,7 @@ mod tests {
 
     #[tokio::test]
     async fn upload_then_check_chunks_flow_with_auth() {
+        let _guard = crate::hive_server::test_global_lock().await;
         let data = b"hello flow";
         let chunk_hash = fake_chunk_hash_for(data);
 
@@ -1392,6 +1396,7 @@ mod tests {
 
     #[tokio::test]
     async fn submit_requires_auth() {
+        let _guard = crate::hive_server::test_global_lock().await;
         let service = make_service();
         let req = crate::pb::SubmitReq {
             branch_id: "main".to_string(),
@@ -1409,6 +1414,7 @@ mod tests {
 
     #[tokio::test]
     async fn submit_with_auth_and_missing_files_fails_fast() {
+        let _guard = crate::hive_server::test_global_lock().await;
         let req = SubmitReq {
             branch_id: "main".to_string(),
             description: "test".to_string(),
@@ -1426,6 +1432,7 @@ mod tests {
 
     #[tokio::test]
     async fn full_submit_flow_writes_changelist_and_persists_chunks() {
+        let _guard = crate::hive_server::test_global_lock().await;
         use crv_core::repository::compute_chunk_hash;
 
         // 使用内存 Mock DAO，确保不依赖真实 Mongo。
@@ -1510,6 +1517,7 @@ mod tests {
     /// 从 TryLockFiles -> CheckChunks -> UploadFileChunk -> Submit 的完整 uuid 流程拉通测试。
     #[tokio::test]
     async fn full_locked_flow_from_try_lock_to_submit_with_uuid() {
+        let _guard = crate::hive_server::test_global_lock().await;
         use crate::pb::{CheckChunksReq, SubmitReq, TryLockFilesReq};
         use crv_core::metadata::{BranchDoc, BranchMetadata};
 

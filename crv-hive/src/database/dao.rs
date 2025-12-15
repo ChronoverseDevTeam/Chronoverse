@@ -70,6 +70,14 @@ pub async fn find_branch_by_id(branch_id: &str) -> DaoResult<Option<BranchDoc>> 
     Ok(branch)
 }
 
+/// 根据 changelist id 查询 Changelist 文档。
+pub async fn find_changelist_by_id(changelist_id: i64) -> DaoResult<Option<ChangelistDoc>> {
+    let coll = changelists_collection()?;
+    let filter = doc! { "_id": changelist_id };
+    let cl = coll.find_one(filter).await?;
+    Ok(cl)
+}
+
 /// 查询指定分支、文件与 changelist 下的 FileRevision 文档。
 pub async fn find_file_revision_by_branch_file_and_cl(
     branch_id: &str,
@@ -82,6 +90,14 @@ pub async fn find_file_revision_by_branch_file_and_cl(
         "fileId": file_id,
         "changelistId": changelist_id,
     };
+    let rev = coll.find_one(filter).await?;
+    Ok(rev)
+}
+
+/// 根据 revision id 查询 FileRevision 文档。
+pub async fn find_file_revision_by_id(revision_id: &str) -> DaoResult<Option<FileRevisionDoc>> {
+    let coll = file_revisions_collection()?;
+    let filter = doc! { "_id": revision_id };
     let rev = coll.find_one(filter).await?;
     Ok(rev)
 }
