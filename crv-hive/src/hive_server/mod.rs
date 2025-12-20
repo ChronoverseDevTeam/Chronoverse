@@ -1,8 +1,8 @@
 use crate::auth::{AuthInterceptor, AuthService};
 use crate::pb::{
-    BonjourReq, BonjourRsp, CheckChunksReq, CheckChunksRsp, LoginReq, LoginRsp, RegisterReq,
+    BonjourReq, BonjourRsp, CheckChunksReq, CheckChunksRsp, DownloadFileChunkReq,
+    GetFileTreeReq, GetFileTreeRsp, LoginReq, LoginRsp, RegisterReq,
     RegisterRsp, SubmitReq, SubmitRsp, TryLockFilesReq, TryLockFilesResp, UploadFileChunkReq,
-    GetFileTreeReq, GetFileTreeRsp,
     hive_service_server::{HiveService, HiveServiceServer},
 };
 use argon2::password_hash::SaltString;
@@ -17,6 +17,7 @@ use tokio::sync::Mutex;
 use tonic::{Request, Response, Status, transport::Server};
 
 mod fetch;
+mod download;
 mod submit;
 
 pub struct CrvHiveService {
@@ -371,6 +372,15 @@ impl HiveService for CrvHiveService {
         request: Request<GetFileTreeReq>,
     ) -> Result<Response<GetFileTreeRsp>, Status> {
         fetch::handle_get_file_tree(request).await
+    }
+
+    type DownloadFileChunkStream = download::DownloadFileChunkStream;
+
+    async fn download_file_chunk(
+        &self,
+        request: Request<DownloadFileChunkReq>,
+    ) -> Result<Response<Self::DownloadFileChunkStream>, Status> {
+        download::handle_download_file_chunk(request).await
     }
 }
 

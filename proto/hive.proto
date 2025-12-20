@@ -177,6 +177,22 @@ message GetFileTreeRsp {
     repeated FileTreeNode file_tree_root = 1;
 }
 
+message DownloadFileChunkReq {
+    repeated string chunk_hashes = 1;
+    int64 packetSize = 2; // 每个 stream 包的大小，单位 byte
+}
+
+message DownloadFileChunkResp {
+    string chunk_hash = 1;
+    int64 offset = 2;
+    bytes content = 3;
+    bool eof = 4;
+    // 本块使用的压缩方式，可选，例如 "none" / "lz4"
+    string compression = 5;
+    // 解压后的原始大小（字节），用于校验
+    uint32 uncompressed_size = 6;
+}
+
 service HiveService {
     rpc bonjour(BonjourReq) returns (BonjourRsp);
 
@@ -189,4 +205,5 @@ service HiveService {
     rpc Submit(SubmitReq) returns (SubmitRsp);
 
     rpc GetFileTree(GetFileTreeReq) returns (GetFileTreeRsp);
+    rpc DownloadFileChunk(DownloadFileChunkReq) returns (stream DownloadFileChunkResp);
 }
