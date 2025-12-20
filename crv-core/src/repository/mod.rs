@@ -15,5 +15,6 @@ pub use error::{RepositoryError, Result};
 pub use index::{IndexEntry, IndexSnapshot, MutableIndex};
 pub use io_utils::{
     blake3_hash_to_hex, blake3_hex_to_hash, compute_blake3_bytes, compute_blake3_str, Blake3Stream,
+    FileLockGuard,
 };
 pub use layout::{Repository, RepositoryLayout};

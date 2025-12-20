@@ -1,6 +1,5 @@
 use std::cmp::Ordering;
-use std::fs::File;
-use std::fs::OpenOptions;
+use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
@@ -32,7 +31,6 @@ impl IndexEntry {
 
 pub struct MutableIndex {
     path: PathBuf,
-    file: File,
     entries: Vec<IndexEntry>,
     sealed: bool,
 }
@@ -41,18 +39,13 @@ impl MutableIndex {
     pub fn create_new(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
         ensure_parent_dir(path)?;
-        let mut file = OpenOptions::new()
-            .create_new(true)
-            .read(true)
-            .write(true)
-            .open(path)?;
-        write_header(&mut file, 0)?;
-        Ok(Self {
+        let idx = Self {
             path: path.to_path_buf(),
-            file,
             entries: Vec::new(),
             sealed: false,
-        })
+        };
+        idx.persist_unsealed()?;
+        Ok(idx)
     }
 
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
@@ -66,7 +59,6 @@ impl MutableIndex {
         }
         Ok(Self {
             path: path.to_path_buf(),
-            file,
             entries,
             sealed: false,
         })
@@ -97,35 +89,24 @@ impl MutableIndex {
                 self.entries.insert(pos, entry);
             }
         }
-        self.persist()
+        self.persist_unsealed()
     }
 
     pub fn seal(&mut self) -> Result<()> {
         self.ensure_open()?;
-        self.persist()?;
-        let len = self.file.metadata()?.len();
-        let crc = compute_crc32(&self.file, len)?;
-        self.file.seek(SeekFrom::End(0))?;
-        self.file.write_all(&crc.to_le_bytes())?;
-        self.file.flush()?;
-        self.file.sync_all()?;
+        self.persist_sealed()?;
         self.sealed = true;
         Ok(())
     }
 
-    fn persist(&mut self) -> Result<()> {
+    fn persist_unsealed(&self) -> Result<()> {
         self.ensure_open()?;
-        self.file.seek(SeekFrom::Start(0))?;
-        self.file.set_len(0)?;
-        let entry_count =
-            u64::try_from(self.entries.len()).map_err(|_| RepositoryError::EntryCountOverflow)?;
-        write_header(&mut self.file, entry_count)?;
-        for entry in &self.entries {
-            write_entry(&mut self.file, entry)?;
-        }
-        self.file.flush()?;
-        self.file.sync_data()?;
-        Ok(())
+        write_index_file(&self.path, &self.entries, false)
+    }
+
+    fn persist_sealed(&self) -> Result<()> {
+        self.ensure_open()?;
+        write_index_file(&self.path, &self.entries, true)
     }
 
     fn ensure_open(&self) -> Result<()> {
@@ -283,4 +264,34 @@ fn read_u64(file: &mut File) -> Result<u64> {
     let mut buf = [0u8; 8];
     file.read_exact(&mut buf)?;
     Ok(u64::from_le_bytes(buf))
+}
+
+fn write_index_file(path: &Path, entries: &[IndexEntry], sealed: bool) -> Result<()> {
+    ensure_parent_dir(path)?;
+    let tmp_path = path.with_extension("tmp");
+    if tmp_path.exists() {
+        fs::remove_file(&tmp_path)?;
+    }
+    let mut file = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .read(true)
+        .open(&tmp_path)?;
+    let entry_count =
+        u64::try_from(entries.len()).map_err(|_| RepositoryError::EntryCountOverflow)?;
+    write_header(&mut file, entry_count)?;
+    for entry in entries {
+        write_entry(&mut file, entry)?;
+    }
+    file.flush()?;
+    let data_len = file.metadata()?.len();
+    if sealed {
+        let crc = compute_crc32(&file, data_len)?;
+        file.seek(SeekFrom::End(0))?;
+        file.write_all(&crc.to_le_bytes())?;
+        file.flush()?;
+    }
+    file.sync_all()?;
+    fs::rename(&tmp_path, path)?;
+    Ok(())
 }
