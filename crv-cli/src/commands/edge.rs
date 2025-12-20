@@ -1,5 +1,8 @@
+use std::collections::BTreeMap;
+
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use console::{Emoji, style};
 use crv_edge::{
     daemon_server::config::BootstrapConfig,
     pb::{BonjourReq, system_service_client::SystemServiceClient},
@@ -47,11 +50,52 @@ pub struct BootstrapConfigCli;
 impl BootstrapConfigCli {
     pub async fn handle(&self) -> Result<()> {
         let bootstrap_config = BootstrapConfig::load().expect("Can't load bootstrap config.");
-        println!("daemon_port:{}", bootstrap_config.daemon_port);
-        println!(
-            "embedded_database_root:{}",
-            bootstrap_config.embedded_database_root
+
+        let mut settings = BTreeMap::new();
+        settings.insert("daemon_port", format!("{}", bootstrap_config.daemon_port));
+        settings.insert(
+            "embedded_database_root",
+            bootstrap_config.embedded_database_root.to_string(),
         );
+
+        println!(
+            "\n{}\n",
+            style(" ⚙  Configuration Details ").bold().reverse().cyan()
+        );
+        // 1. 展示路径部分
+        println!("{}", style("CONFIG LOCATION").bold().dim());
+        println!(
+            "{}\n",
+            style(
+                confy::get_configuration_file_path(
+                    BootstrapConfig::CONFY_APP_NAME,
+                    BootstrapConfig::CONFY_CONFIG_NAME
+                )
+                .unwrap()
+                .to_string_lossy()
+            )
+            .underlined()
+            .bright()
+            .black()
+        );
+
+        // 2. 展示设置项部分
+        println!("{}", style("SETTINGS").bold().dim());
+
+        // 计算 Key 的最大长度以实现对齐
+        let max_key_len = settings.keys().map(|k| k.len()).max().unwrap_or(0);
+
+        for (key, value) in settings {
+            println!(
+                " {} {:width$} {} {}",
+                Emoji("●", "*"),       // 前缀小圆点
+                style(key).cyan(),     // Key 颜色
+                style("→").dim(),      // 箭头符号
+                style(value).yellow(), // Value 颜色
+                width = max_key_len    // 动态填充宽度
+            );
+        }
+
         Ok(())
     }
 }

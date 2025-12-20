@@ -24,6 +24,9 @@ impl Default for BootstrapConfig {
 }
 
 impl BootstrapConfig {
+    pub const CONFY_APP_NAME: &'static str = "crv-edge";
+    pub const CONFY_CONFIG_NAME: &'static str = "bootstrap";
+
     /// 计算默认数据目录
     fn get_default_data_dir() -> String {
         // 使用 ProjectDirs 获取跨平台的路径
@@ -39,7 +42,7 @@ impl BootstrapConfig {
     }
 
     pub fn load() -> AppResult<Self> {
-        let config = confy::load::<Self>("crv-edge", "bootstrap")
+        let config = confy::load::<Self>(Self::CONFY_APP_NAME, Self::CONFY_CONFIG_NAME)
             .map_err(|e| AppError::Config(format!("{e}")))?;
         Ok(config)
     }

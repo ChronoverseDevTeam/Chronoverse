@@ -826,6 +826,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "clap",
+ "confy",
  "console",
  "crv-core",
  "crv-edge",

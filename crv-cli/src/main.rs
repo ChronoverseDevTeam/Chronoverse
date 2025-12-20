@@ -16,13 +16,7 @@ async fn main() -> Result<()> {
 
     // 连接到 Daemon
     let daemon_url = format!("http://[::1]:{}", bootstrap_config.daemon_port);
-    let channel = Endpoint::from_shared(daemon_url.clone())?
-        .connect()
-        .await
-        .context(format!(
-            "Failed to connect to edge. Is it running on {}?",
-            daemon_url
-        ))?;
+    let channel = Endpoint::from_shared(daemon_url.clone())?.connect_lazy();
 
     cli.handle(&channel).await?;
 
