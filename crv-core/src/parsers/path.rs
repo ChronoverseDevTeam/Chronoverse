@@ -149,7 +149,7 @@ fn local_dir_parser<'src>() -> impl Parser<'src, &'src str, LocalDir, extra::Err
     ))
     .then(
         path_segment_parser()
-            .then_ignore(path_separator.or_not())
+            .then_ignore(path_separator)
             .repeated()
             .collect::<Vec<&str>>()
             .labelled("path segments"),
