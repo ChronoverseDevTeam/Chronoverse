@@ -5,8 +5,6 @@ mod error;
 mod index;
 mod io_utils;
 mod layout;
-mod manager;
-mod pack;
 
 pub use bundle::{PackBundle, PackIdentity};
 pub use chunk::{
@@ -18,6 +16,4 @@ pub use index::{IndexEntry, IndexSnapshot, MutableIndex};
 pub use io_utils::{
     blake3_hash_to_hex, blake3_hex_to_hash, compute_blake3_bytes, compute_blake3_str, Blake3Stream,
 };
-pub use layout::RepositoryLayout;
-pub use manager::RepositoryManager;
-pub use pack::{PackReader, PackStats, PackWriter};
+pub use layout::{Repository, RepositoryLayout};

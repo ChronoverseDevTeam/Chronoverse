@@ -8,7 +8,7 @@ use crate::pb::{
 use argon2::password_hash::SaltString;
 use argon2::{Argon2, PasswordHasher};
 use crv_core::repository::{
-    RepositoryManager, blake3_hash_to_hex, compute_blake3_str,
+    Repository, blake3_hash_to_hex, compute_blake3_str,
 };
 use crv_core::tree::depot_tree::DepotTree;
 use rand::rngs::OsRng;
@@ -52,14 +52,14 @@ pub(crate) fn depot_tree() -> &'static Mutex<DepotTree> {
 /// 全局 RepositoryManager 实例，用于访问底层 chunk 仓库。
 ///
 /// 使用 OnceLock 包裹 Result，以便在初始化失败时将错误信息缓存下来并转换为 gRPC Status 返回。
-static REPOSITORY_MANAGER: OnceLock<Result<RepositoryManager, String>> = OnceLock::new();
+static REPOSITORY_MANAGER: OnceLock<Result<Repository, String>> = OnceLock::new();
 
-pub(crate) fn repository_manager() -> Result<&'static RepositoryManager, Status> {
+pub(crate) fn repository_manager() -> Result<&'static Repository, Status> {
     let cfg = get_or_init_config();
     let repo_root = cfg.repository_path.clone();
 
     let res = REPOSITORY_MANAGER.get_or_init(|| {
-        RepositoryManager::new(&repo_root)
+        Repository::new(&repo_root)
             .map_err(|e| format!("failed to open repository at {repo_root}: {e}"))
     });
 

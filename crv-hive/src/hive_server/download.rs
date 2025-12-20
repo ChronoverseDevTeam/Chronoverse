@@ -1,7 +1,7 @@
 use crate::auth;
 use crate::hive_server::repository_manager;
 use crate::pb::{DownloadFileChunkReq, DownloadFileChunkResp};
-use crv_core::repository::{RepositoryError, RepositoryManager, blake3_hex_to_hash};
+use crv_core::repository::{Repository, RepositoryError, blake3_hex_to_hash};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
@@ -71,7 +71,7 @@ fn chunk_bytes_to_responses(
 }
 
 fn download_from_repo(
-    repo: &RepositoryManager,
+    repo: &Repository,
     chunk_hashes: &[String],
     packet_size: usize,
 ) -> Result<Vec<DownloadFileChunkResp>, Status> {
@@ -140,7 +140,7 @@ pub async fn handle_download_file_chunk(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crv_core::repository::{Compression, RepositoryManager, blake3_hash_to_hex};
+    use crv_core::repository::{Compression, blake3_hash_to_hex};
     use tempfile::tempdir;
 
     #[test]
@@ -229,7 +229,7 @@ mod tests {
     #[test]
     fn download_from_repo_reads_real_repository_and_splits_packets() {
         let tmp = tempdir().unwrap();
-        let repo = RepositoryManager::new(tmp.path()).expect("create repo");
+        let repo = Repository::new(tmp.path()).expect("create repo");
 
         let record1 = repo
             .write_chunk(b"hello", Compression::None)
@@ -275,7 +275,7 @@ mod tests {
     #[test]
     fn download_from_repo_returns_not_found_for_missing_chunk() {
         let tmp = tempdir().unwrap();
-        let repo = RepositoryManager::new(tmp.path()).expect("create repo");
+        let repo = Repository::new(tmp.path()).expect("create repo");
 
         // 随便给一个合法的 64 位 hex作为不存在的 chunk
         let missing = "0000000000000000000000000000000000000000000000000000000000000000".to_string();
@@ -286,7 +286,7 @@ mod tests {
     #[test]
     fn download_from_repo_returns_invalid_argument_for_bad_hash() {
         let tmp = tempdir().unwrap();
-        let repo = RepositoryManager::new(tmp.path()).expect("create repo");
+        let repo = Repository::new(tmp.path()).expect("create repo");
 
         let bad = "not-a-hash".to_string();
         let err = download_from_repo(&repo, &[bad], 16).unwrap_err();
