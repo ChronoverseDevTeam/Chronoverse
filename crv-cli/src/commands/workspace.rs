@@ -1,10 +1,13 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use console::style;
-use crv_edge::pb::{GetRuntimeConfigReq, system_service_client::SystemServiceClient};
+use crv_edge::pb::{
+    CreateWorkspaceReq, GetRuntimeConfigReq, system_service_client::SystemServiceClient,
+    workspace_service_client::WorkspaceServiceClient,
+};
 use dialoguer::{Input, theme::ColorfulTheme};
 use std::io::Write;
-use tonic::transport::Channel;
+use tonic::{Request, transport::Channel};
 
 #[derive(Parser)]
 pub struct WorkspaceCli {
@@ -86,13 +89,13 @@ impl CreateCli {
         println!("  Root: {}", style(&workspace_root).cyan());
         println!("  Mapping: {} lines", style(mapping.lines().count()).cyan());
 
-        // TODO: Call gRPC to create workspace
-        // let create_req = CreateWorkspaceReq {
-        //     name: workspace_name,
-        //     root: workspace_root,
-        //     mapping: mapping,
-        // };
-        // system_client.create_workspace(create_req).await?;
+        let create_req = CreateWorkspaceReq {
+            workspace_name: workspace_name,
+            workspace_root: workspace_root,
+            workspace_mapping: mapping,
+        };
+        let workspace_client = WorkspaceServiceClient::new(channel.clone());
+        workspace_client.create_workspace(create_req).await?;
 
         println!(
             "\n{}",
