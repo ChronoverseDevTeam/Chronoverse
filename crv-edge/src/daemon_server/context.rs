@@ -3,6 +3,8 @@
 use tonic::Request;
 use tonic::Status;
 
+use crate::daemon_server::config::RuntimeConfig;
+
 use super::error::AppResult;
 
 /// 会话上下文，包括用户名和令牌。
@@ -18,6 +20,18 @@ impl SessionContext {
             .extensions()
             .get::<Self>() // AuthInterceptor 放进去的是 Self
             .ok_or(Status::unauthenticated("Missing user context"))?
+            .clone();
+
+        Ok(context.clone())
+    }
+}
+
+impl RuntimeConfig {
+    pub fn from_req<T>(req: &Request<T>) -> AppResult<Self> {
+        let context = req
+            .extensions()
+            .get::<Self>() // AuthInterceptor 放进去的是 Self
+            .ok_or(Status::unauthenticated("Missing runtime config"))?
             .clone();
 
         Ok(context.clone())

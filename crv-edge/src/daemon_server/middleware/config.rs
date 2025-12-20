@@ -1,15 +1,16 @@
-use crate::daemon_server::config::RuntimeConfigOverride;
+use crate::daemon_server::config::{RuntimeConfig, RuntimeConfigOverride, RuntimeConfigSource};
 use crate::daemon_server::state::AppState;
 use tonic::{Request, Status};
 
 pub fn call(state: AppState, mut request: Request<()>) -> Result<Request<()>, Status> {
-    // 1. 【读持久化配置】 从 RocksDB 读取基础配置
+    // 1. 【读持久化配置】 从 RocksDB 读取配置
     // 如果 DB IO 很慢，会阻塞 executor 线程，但在本地 Daemon + RocksDB 场景下通常是微秒级，可接受。
-    let mut final_config = state
+    let mut final_config = RuntimeConfig::default();
+    let runtime_config_override = state
         .db
         .load_runtime_config()
-        .map_err(|e| Status::internal(format!("Failed to load config: {}", e)))?
-        .unwrap_or_default(); // 如果 DB 没存，就用默认值
+        .map_err(|e| Status::internal(format!("Get error {} when load config from db.", e)))?;
+    final_config.merge(runtime_config_override, RuntimeConfigSource::Set);
 
     // 2. 【读临时覆盖】 检查 Metadata (Headers)
     // 假设 CLI 发送请求时，将覆盖参数序列化为 JSON 放在 "x-crv-config-override" 头里
@@ -18,7 +19,7 @@ pub fn call(state: AppState, mut request: Request<()>) -> Result<Request<()>, St
             // 解析 JSON
             if let Ok(overrides) = serde_json::from_str::<RuntimeConfigOverride>(val_str) {
                 // 3. 【合并】
-                final_config.merge(overrides);
+                final_config.merge(overrides, RuntimeConfigSource::Override);
             } else {
                 // 也可以选择在这里报错，或者仅记录警告忽略格式错误的 override
                 // return Err(Status::invalid_argument("Invalid config override format"));

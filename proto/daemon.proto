@@ -12,8 +12,23 @@ message BonjourRsp {
   string architecture = 5;
 }
 
+message GetRuntimeConfigReq {
+}
+
+message GetRuntimeConfigRsp {
+  RuntimeConfigItem remote_addr = 1;
+  RuntimeConfigItem editor = 2;
+  RuntimeConfigItem user = 3;
+}
+
+message RuntimeConfigItem {
+  string value = 1;
+  string source = 2;
+}
+
 service SystemService {
   rpc Bonjour(BonjourReq) returns (BonjourRsp);
+  rpc GetRuntimeConfig(GetRuntimeConfigReq) returns (GetRuntimeConfigRsp);
 }
 
 // Workspace management

@@ -1,7 +1,7 @@
 mod commands;
 mod logic;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::Parser;
 use commands::Cli;
 use crv_edge::daemon_server::config::BootstrapConfig;

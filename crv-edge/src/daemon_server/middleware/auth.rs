@@ -1,29 +1,18 @@
 use crate::daemon_server::{config::RuntimeConfig, context::SessionContext, state::AppState};
 use tonic::{Request, Status};
 
-pub fn call(state: AppState, mut request: Request<()>) -> Result<Request<()>, Status> {
-    // 1. 获取用户名
-    let username = request.metadata().get("x-crv-username").cloned();
+pub fn call(_state: AppState, mut request: Request<()>) -> Result<Request<()>, Status> {
+    // 1. 从 runtime config 中读出 user
+    let config = request
+        .extensions()
+        .get::<RuntimeConfig>()
+        .expect("Can't get read runtime config.");
+    let username = config.user.clone();
 
-    let username = match username {
-        Some(username) => username
-            .to_str()
-            .map_err(|e| Status::internal(e.to_string()))?
-            .to_string(),
-        None => {
-            // 从配置中读取默认用户
-            let config = request
-                .extensions()
-                .get::<RuntimeConfig>()
-                .expect("Can't get read runtime config.");
-            config.default_user.clone()
-        }
-    };
-
-    let token_str = format!("token-{}", username); // todo: 根据用户名从 db 中获取当前用户的 token
+    let token_str = format!("token-{}", username.value); // todo: 根据用户名从 db 中获取当前用户的 token
 
     let context = SessionContext {
-        username,
+        username: username.value,
         token: token_str,
     };
 

@@ -117,6 +117,15 @@ impl SystemService for SystemServiceImpl {
             .await
             .map_err(|e| e.into())
     }
+
+    async fn get_runtime_config(
+        &self,
+        request: Request<GetRuntimeConfigReq>,
+    ) -> Result<Response<GetRuntimeConfigRsp>, Status> {
+        handlers::edge::get_runtime_config::handle(self.state.clone(), request)
+            .await
+            .map_err(|e| e.into())
+    }
 }
 
 pub struct WorkspaceServiceImpl {

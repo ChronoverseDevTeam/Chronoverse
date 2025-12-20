@@ -1,21 +1,16 @@
-use crate::daemon_server::config::RuntimeConfig;
-use crate::daemon_server::db::*;
+use crate::daemon_server::{config::RuntimeConfigOverride, db::*};
 
 impl DbManager {
-    pub fn load_runtime_config(&self) -> Result<Option<RuntimeConfig>, DbError> {
-        let remote_addr = self.get_config("remote_addr")?;
+    pub fn load_runtime_config(&self) -> Result<RuntimeConfigOverride, DbError> {
+        let remote_addr = self.get_config("remote-addr")?;
         let editor = self.get_config("editor")?;
-        let default_user = self.get_config("default_user")?;
+        let user = self.get_config("user")?;
 
-        if remote_addr.is_none() || editor.is_none() {
-            return Ok(None);
-        }
-
-        Ok(Some(RuntimeConfig {
-            remote_addr: remote_addr.unwrap(),
-            editor: editor.unwrap(),
-            default_user: default_user.unwrap(),
-        }))
+        Ok(RuntimeConfigOverride {
+            remote_addr,
+            editor,
+            user,
+        })
     }
 
     /// 获取应用配置 (反序列化示例)

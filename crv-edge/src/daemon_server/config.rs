@@ -3,7 +3,10 @@
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 
-use crate::daemon_server::error::{AppError, AppResult};
+use crate::{
+    daemon_server::error::{AppError, AppResult},
+    pb,
+};
 
 /// daemon 启动时所需的配置项。
 #[derive(Serialize, Deserialize)]
@@ -52,21 +55,47 @@ impl BootstrapConfig {
 #[derive(Clone)]
 pub struct RuntimeConfig {
     /// hive 地址
-    pub remote_addr: String,
+    pub remote_addr: RuntimeConfigItem,
     /// 启动文本编辑器的指令
-    pub editor: String,
-    /// 默认用户
-    pub default_user: String,
+    pub editor: RuntimeConfigItem,
+    /// 当前用户
+    pub user: RuntimeConfigItem,
+}
+
+#[derive(Clone)]
+pub struct RuntimeConfigItem {
+    pub value: String,
+    pub source: RuntimeConfigSource,
+}
+
+#[derive(Clone, Copy)]
+pub enum RuntimeConfigSource {
+    Default,
+    Set,
+    Override,
+}
+
+impl Into<String> for RuntimeConfigSource {
+    fn into(self) -> String {
+        match self {
+            RuntimeConfigSource::Default => "default".to_string(),
+            RuntimeConfigSource::Set => "set".to_string(),
+            RuntimeConfigSource::Override => "override".to_string(),
+        }
+    }
 }
 
 impl RuntimeConfig {
     /// 合并逻辑：将 override 应用到 self 上
-    pub fn merge(&mut self, other: RuntimeConfigOverride) {
-        if let Some(v) = other.remote_addr {
-            self.remote_addr = v;
+    pub fn merge(&mut self, other: RuntimeConfigOverride, source: RuntimeConfigSource) {
+        if let Some(value) = other.remote_addr {
+            self.remote_addr = RuntimeConfigItem { value, source };
         }
-        if let Some(v) = other.editor {
-            self.editor = v;
+        if let Some(value) = other.editor {
+            self.editor = RuntimeConfigItem { value, source };
+        }
+        if let Some(value) = other.user {
+            self.user = RuntimeConfigItem { value, source };
         }
     }
 }
@@ -74,9 +103,27 @@ impl RuntimeConfig {
 impl Default for RuntimeConfig {
     fn default() -> Self {
         Self {
-            remote_addr: "localhost:31823".to_string(),
-            editor: "vim".to_string(),
-            default_user: "default".to_string(),
+            remote_addr: RuntimeConfigItem {
+                value: "localhost:31823".to_string(),
+                source: RuntimeConfigSource::Default,
+            },
+            editor: RuntimeConfigItem {
+                value: "vim".to_string(),
+                source: RuntimeConfigSource::Default,
+            },
+            user: RuntimeConfigItem {
+                value: "default".to_string(),
+                source: RuntimeConfigSource::Default,
+            },
+        }
+    }
+}
+
+impl Into<pb::RuntimeConfigItem> for RuntimeConfigItem {
+    fn into(self) -> pb::RuntimeConfigItem {
+        pb::RuntimeConfigItem {
+            value: self.value,
+            source: self.source.into(),
         }
     }
 }
@@ -86,4 +133,5 @@ impl Default for RuntimeConfig {
 pub struct RuntimeConfigOverride {
     pub remote_addr: Option<String>,
     pub editor: Option<String>,
+    pub user: Option<String>,
 }

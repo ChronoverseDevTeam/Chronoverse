@@ -32,6 +32,9 @@ pub struct CreateCli;
 
 impl CreateCli {
     pub async fn handle(&self, channel: &Channel) -> Result<()> {
+        // step 1. enter workspace name
+        // step 2. enter workspace root
+        // step 3. enter workspace mapping
         todo!()
     }
 }
