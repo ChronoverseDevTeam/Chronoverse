@@ -99,11 +99,6 @@ impl CreateCli {
         let mut workspace_client = WorkspaceServiceClient::new(channel.clone());
         workspace_client.create_workspace(create_req).await?;
 
-        println!(
-            "\n{}",
-            style("✓ Workspace creation prepared (gRPC call not implemented yet)").green()
-        );
-
         Ok(())
     }
 }
