@@ -32,11 +32,13 @@ tokio-stream = "0.1"
 anyhow = "1.0"
 
 # Cli 三剑客
-dialoguer = "0.12"
+dialoguer = { version = "0.12", features = ["completion"] }
 indicatif = "0.18"
 console = "0.16"
 # 表格打印
 tabled = "0.20"
+# 启动编辑器
+edit = "0.1"
 
 [build-dependencies]
 tonic-prost-build = "0.14.2"
