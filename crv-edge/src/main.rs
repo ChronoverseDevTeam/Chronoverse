@@ -20,6 +20,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(windows)]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    use crv_edge::daemon_server::config::BootstrapConfig;
     use crv_edge::pb::BonjourReq;
     use crv_edge::pb::system_service_client::SystemServiceClient;
     use image::GenericImageView;
@@ -31,6 +32,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     use tokio::sync::oneshot;
     use tray_icon::menu::{Menu, MenuEvent, MenuItem};
     use tray_icon::{Icon, TrayIconBuilder};
+
+    let bootstrap_config = BootstrapConfig::load()?;
 
     // 启动 Tokio 运行时与 gRPC 服务
     let runtime = TokioRuntimeBuilder::new_multi_thread()
@@ -100,7 +103,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     runtime.spawn(async move {
         // 稍等片刻让 server 绑定端口
         tokio::time::sleep(Duration::from_millis(300)).await;
-        let endpoint = format!("http://{}:{}", "127.0.0.1", 34562);
+        let endpoint = format!("http://[::1]:{}", bootstrap_config.daemon_port);
         let result = async {
             let mut client = SystemServiceClient::connect(endpoint).await.ok()?;
             let _ = client
