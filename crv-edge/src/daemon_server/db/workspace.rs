@@ -161,4 +161,26 @@ impl DbManager {
 
         return Ok(None);
     }
+
+    pub fn get_all_workspaces(&self) -> Result<Vec<String>, DbError> {
+        let cf = self
+            .inner
+            .cf_handle(Self::CF_WORKSPACE)
+            .expect(&format!("cf {} must exist", Self::CF_WORKSPACE));
+        let iter = self.inner.iterator_cf(cf, IteratorMode::Start);
+
+        let mut workspace_names = Vec::new();
+
+        for item in iter {
+            match item {
+                Ok((key, _value)) => {
+                    let workspace_name = String::from_utf8_lossy(&key).to_string();
+                    workspace_names.push(workspace_name);
+                }
+                Err(e) => return Err(DbError::RocksDb(e)),
+            }
+        }
+
+        Ok(workspace_names)
+    }
 }

@@ -2,12 +2,12 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use console::style;
 use crv_edge::pb::{
-    CreateWorkspaceReq, GetRuntimeConfigReq, system_service_client::SystemServiceClient,
-    workspace_service_client::WorkspaceServiceClient,
+    CreateWorkspaceReq, GetRuntimeConfigReq, ListWorkspacesReq,
+    system_service_client::SystemServiceClient, workspace_service_client::WorkspaceServiceClient,
 };
 use dialoguer::{Input, theme::ColorfulTheme};
-use std::io::Write;
-use tonic::{Request, transport::Channel};
+use tabled::{Table, Tabled, settings::Style};
+use tonic::transport::Channel;
 
 #[derive(Parser)]
 pub struct WorkspaceCli {
@@ -94,7 +94,7 @@ impl CreateCli {
             workspace_root: workspace_root,
             workspace_mapping: mapping,
         };
-        let workspace_client = WorkspaceServiceClient::new(channel.clone());
+        let mut workspace_client = WorkspaceServiceClient::new(channel.clone());
         workspace_client.create_workspace(create_req).await?;
 
         println!(
@@ -168,9 +168,48 @@ impl DeleteCli {
 #[derive(Parser)]
 pub struct ListCli;
 
+#[derive(Tabled)]
+struct WorkspaceRow {
+    #[tabled(rename = "Workspace Name")]
+    name: String,
+    #[tabled(rename = "Status")]
+    status: String,
+}
+
 impl ListCli {
     pub async fn handle(&self, channel: &Channel) -> Result<()> {
-        todo!()
+        let mut workspace_client = WorkspaceServiceClient::new(channel.clone());
+
+        // 调用 gRPC 获取 workspace 列表
+        let response = workspace_client
+            .list_workspaces(ListWorkspacesReq {})
+            .await?;
+
+        let workspaces = response.into_inner();
+
+        if workspaces.workspace_names.is_empty() {
+            println!("{}", style("No workspaces found.").yellow());
+            return Ok(());
+        }
+
+        // 构建表格数据
+        let rows: Vec<WorkspaceRow> = workspaces
+            .workspace_names
+            .into_iter()
+            .map(|name| WorkspaceRow {
+                name,
+                status: "Active".to_string(), // 暂时硬编码为 Active
+            })
+            .collect();
+
+        // 创建并打印表格
+        let mut table = Table::new(&rows);
+        table.with(Style::rounded());
+
+        println!("\n{}", table);
+        println!("\n{} workspace(s) found", style(rows.len()).cyan());
+
+        Ok(())
     }
 }
 
