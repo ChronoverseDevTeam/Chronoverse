@@ -21,7 +21,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(windows)]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     use crv_edge::pb::BonjourReq;
-    use crv_edge::pb::edge_daemon_service_client::EdgeDaemonServiceClient;
+    use crv_edge::pb::system_service_client::SystemServiceClient;
     use image::GenericImageView;
     use image::ImageReader;
     use std::time::Duration;
@@ -102,7 +102,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         tokio::time::sleep(Duration::from_millis(300)).await;
         let endpoint = format!("http://{}:{}", "127.0.0.1", 34562);
         let result = async {
-            let mut client = EdgeDaemonServiceClient::connect(endpoint).await.ok()?;
+            let mut client = SystemServiceClient::connect(endpoint).await.ok()?;
             let _ = client
                 .bonjour(tonic::Request::new(BonjourReq {}))
                 .await
