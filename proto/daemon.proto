@@ -1,8 +1,7 @@
 syntax = "proto3";
 package daemon_proto;
 
-message BonjourReq {
-}
+message BonjourReq {}
 
 message BonjourRsp {
   string daemonVersion = 1;
@@ -12,8 +11,7 @@ message BonjourRsp {
   string architecture = 5;
 }
 
-message GetRuntimeConfigReq {
-}
+message GetRuntimeConfigReq {}
 
 message GetRuntimeConfigRsp {
   RuntimeConfigItem remote_addr = 1;
@@ -38,9 +36,7 @@ message CreateWorkspaceReq {
   string workspace_mapping = 3;
 }
 
-message CreateWorkspaceRsp {
-  string workspace_path = 1;
-}
+message CreateWorkspaceRsp {}
 
 message DeleteWorkspaceReq {
   string workspace_name = 1;
@@ -48,8 +44,7 @@ message DeleteWorkspaceReq {
 
 message DeleteWorkspaceRsp {}
 
-message ListWorkspacesReq {
-}
+message ListWorkspacesReq {}
 
 message ListWorkspacesRsp {
   repeated string workspace_names = 1;

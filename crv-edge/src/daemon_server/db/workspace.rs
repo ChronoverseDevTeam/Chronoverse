@@ -1,12 +1,11 @@
 use crate::daemon_server::db::*;
 use bincode::{Decode, Encode};
-use crv_core::{path::basic::LocalDir, workspace::entity::WorkspaceMapping};
+use crv_core::{path::basic::LocalDir, workspace::entity::WorkspaceConfig};
 
 #[derive(Encode, Decode)]
 pub struct WorkspaceMeta {
     status: Status,
-    root_dir: LocalDir,
-    mapping_views: WorkspaceMapping,
+    config: WorkspaceConfig,
 }
 
 impl DbManager {
@@ -18,16 +17,14 @@ impl DbManager {
     ///
     /// 这个方法创建出来的数据处于 Pending 状态，需要转化为 Confirmed 才能投入使用
     pub fn create_workspace_pending(
-        &mut self,
+        &self,
         workspace_name: String,
-        root_dir: LocalDir,
-        mapping_views: WorkspaceMapping,
+        config: WorkspaceConfig,
     ) -> Result<(), DbError> {
         let new_value = bincode::encode_to_vec(
             WorkspaceMeta {
                 status: Status::Pending,
-                root_dir: root_dir.clone(),
-                mapping_views,
+                config: config.clone(),
             },
             bincode::config::standard(),
         )?;
@@ -55,8 +52,8 @@ impl DbManager {
                             )));
                         }
                         // 新 workspace 不能和本地已有的 workspace 根目录冲突
-                        if root_dir.0.starts_with(&meta.root_dir.0)
-                            || meta.root_dir.0.starts_with(&root_dir.0)
+                        if config.root_dir.0.starts_with(&meta.config.root_dir.0)
+                            || meta.config.root_dir.0.starts_with(&config.root_dir.0)
                         {
                             conflict_workspace.push(exist_workspace_name);
                         }
@@ -97,7 +94,7 @@ impl DbManager {
         Ok(())
     }
 
-    pub fn confirm_workspace(&mut self, workspace_name: String) -> Result<(), DbError> {
+    pub fn confirm_workspace(&self, workspace_name: String) -> Result<(), DbError> {
         let workspace_meta = self.get_workspace_meta(&workspace_name)?;
         if workspace_meta.is_none() {
             return Err(DbError::NotFound(format!(
@@ -120,7 +117,7 @@ impl DbManager {
     }
 
     pub fn get_workspace_meta(
-        &mut self,
+        &self,
         workspace_name: &String,
     ) -> Result<Option<WorkspaceMeta>, DbError> {
         let cf = self
@@ -138,7 +135,7 @@ impl DbManager {
     }
 
     pub fn get_workspace_name_by_working_dir(
-        &mut self,
+        &self,
         dir: &LocalDir,
     ) -> Result<Option<String>, DbError> {
         let cf = self
@@ -153,7 +150,7 @@ impl DbManager {
                     let workspace_name = String::from_utf8_lossy(&key).to_string();
                     let meta: WorkspaceMeta =
                         bincode::decode_from_slice(&value, bincode::config::standard())?.0;
-                    let root_dir = &meta.root_dir;
+                    let root_dir = &meta.config.root_dir;
                     if dir.0.starts_with(&root_dir.0) {
                         return Ok(Some(workspace_name));
                     }
