@@ -1,9 +1,6 @@
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File};
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::Path;
-use std::path::PathBuf;
-use std::thread;
-use std::time::{Duration};
 
 use blake3::Hasher as Blake3Hasher;
 use crc32fast::Hasher as Crc32;
@@ -105,76 +102,6 @@ impl Blake3Stream {
     /// 调用后内部状态仍可继续 `update`，相当于对当前状态做一次快照。
     pub fn finalize(&self) -> [u8; 32] {
         *self.inner.finalize().as_bytes()
-    }
-}
-
-/// 简单文件锁：通过 create_new 的锁文件实现跨进程互斥，支持过期重试。
-/// 注意：崩溃时可能留下锁文件，依靠过期时间进行清理。
-#[derive(Debug)]
-pub struct FileLockGuard {
-    path: PathBuf,
-    _file: File,
-}
-
-impl FileLockGuard {
-    pub fn acquire(
-        path: impl AsRef<Path>,
-        retry: usize,
-        backoff: Duration,
-        stale_after: Duration,
-    ) -> io::Result<Self> {
-        let path = path.as_ref();
-        ensure_parent_dir(path)?;
-        for attempt in 0..=retry {
-            match try_create_lock_file(path) {
-                Ok(file) => {
-                    return Ok(Self {
-                        path: path.to_path_buf(),
-                        _file: file,
-                    })
-                }
-                Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
-                    // 检查过期
-                    if is_stale_lock(path, stale_after)? {
-                        let _ = fs::remove_file(path);
-                        continue;
-                    }
-                    if attempt == retry {
-                        return Err(err);
-                    }
-                    thread::sleep(backoff);
-                }
-                Err(err) => return Err(err),
-            }
-        }
-        unreachable!("retry loop must return or error earlier");
-    }
-}
-
-impl Drop for FileLockGuard {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.path);
-    }
-}
-
-fn try_create_lock_file(path: &Path) -> io::Result<File> {
-    OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
-}
-
-fn is_stale_lock(path: &Path, stale_after: Duration) -> io::Result<bool> {
-    let metadata = match fs::metadata(path) {
-        Ok(meta) => meta,
-        Err(err) => return Err(err),
-    };
-    match metadata.modified() {
-        Ok(time) => Ok(time
-            .elapsed()
-            .map(|elapsed| elapsed > stale_after)
-            .unwrap_or(false)),
-        Err(_) => Ok(false),
     }
 }
 

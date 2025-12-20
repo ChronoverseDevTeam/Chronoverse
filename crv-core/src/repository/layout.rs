@@ -1,22 +1,22 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::RwLock;
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
+use std::io::ErrorKind;
+use std::thread;
 
 use super::bundle::{PackBundle, PackReader};
 use super::chunk::{ChunkHash, ChunkRecord, Compression, compute_chunk_hash};
 use super::constants::{PACK_DATA_SUFFIX, PACK_FILE_PREFIX, PACK_INDEX_SUFFIX, SHARD_DIR_PREFIX};
 use super::error::{RepositoryError, Result};
 use super::index::{IndexEntry, IndexSnapshot};
-use super::io_utils::{ensure_parent_dir, FileLockGuard};
+use super::io_utils::ensure_parent_dir;
 
 const DEFAULT_PACK_SOFT_LIMIT_BYTES: u64 = 512 * 1024 * 1024;
 const DEFAULT_HARD_PACK_SIZE_LIMIT_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const DEFAULT_HARD_PACK_CHUNK_LIMIT: u64 = 100_000;
-const SHARD_LOCK_RETRY: usize = 32;
-const SHARD_LOCK_BACKOFF_MS: u64 = 20;
-const SHARD_LOCK_STALE_SECS: u64 = 300;
+const INDEX_CACHE_CAPACITY: usize = 128;
 
 pub struct RepositoryLayout {
     root: PathBuf,
@@ -57,25 +57,12 @@ impl RepositoryLayout {
         Ok((dat_path, idx_path))
     }
 
-    pub fn shard_lock_path(&self, shard: u8) -> PathBuf {
-        self.root.join(Self::shard_dir_name(shard)).join(".lock")
-    }
-
-    pub fn acquire_shard_lock(&self, shard: u8) -> Result<FileLockGuard> {
-        let path = self.shard_lock_path(shard);
-        FileLockGuard::acquire(
-            &path,
-            SHARD_LOCK_RETRY,
-            Duration::from_millis(SHARD_LOCK_BACKOFF_MS),
-            Duration::from_secs(SHARD_LOCK_STALE_SECS),
-        )
-        .map_err(RepositoryError::from)
-    }
 }
 
 pub struct Repository {
     layout: RepositoryLayout,
     shards: Vec<RwLock<ShardState>>,
+    index_cache: Mutex<IndexCache>,
     pack_soft_limit: u64,
     hard_size_limit: u64,
     hard_chunk_limit: u64,
@@ -111,6 +98,7 @@ impl Repository {
         Ok(Self {
             layout,
             shards,
+            index_cache: Mutex::new(IndexCache::new(INDEX_CACHE_CAPACITY)),
             pack_soft_limit: pack_soft_limit.max(1),
             hard_size_limit: hard_size_limit.max(1),
             hard_chunk_limit: hard_chunk_limit.max(1),
@@ -124,7 +112,6 @@ impl Repository {
     pub fn write_chunk(&self, data: &[u8], compression: Compression) -> Result<ChunkRecord> {
         let hash = compute_chunk_hash(data);
         let shard = hash[0];
-        let _lock = self.layout.acquire_shard_lock(shard)?;
         let lock = &self.shards[shard as usize];
         let mut guard = lock.write().expect("shard lock poisoned");
         guard.refresh_known_packs(&self.layout, shard)?;
@@ -133,7 +120,10 @@ impl Repository {
             return Err(RepositoryError::DuplicateHash { hash });
         }
         let sealed_pack_ids = guard.sealed_pack_ids();
-        if locate_in_pack_ids(&self.layout, shard, &sealed_pack_ids, &hash)?.is_some() {
+        if self
+            .locate_in_pack_ids(shard, &sealed_pack_ids, &hash)?
+            .is_some()
+        {
             return Err(RepositoryError::DuplicateHash { hash });
         }
         let bundle = guard.ensure_active_bundle(&self.layout, shard)?;
@@ -153,7 +143,6 @@ impl Repository {
     }
 
     pub fn seal_shard(&self, shard: u8) -> Result<()> {
-        let _lock = self.layout.acquire_shard_lock(shard)?;
         let lock = &self.shards[shard as usize];
         let mut guard = lock.write().expect("shard lock poisoned");
         guard.refresh_known_packs(&self.layout, shard)?;
@@ -169,7 +158,6 @@ impl Repository {
     }
 
     pub fn seal_bundle(&self, shard: u8, pack_id: u32) -> Result<bool> {
-        let _lock = self.layout.acquire_shard_lock(shard)?;
         let lock = &self.shards[shard as usize];
         let mut guard = lock.write().expect("shard lock poisoned");
         guard.refresh_known_packs(&self.layout, shard)?;
@@ -189,7 +177,45 @@ impl Repository {
             (None::<()>, guard.all_pack_ids())
         };
         let _ = maybe_active_hit;
-        locate_in_pack_ids(&self.layout, shard, &pack_ids, hash)
+        self.locate_in_pack_ids(shard, &pack_ids, hash)
+    }
+
+    fn locate_in_pack_ids(
+        &self,
+        shard: u8,
+        pack_ids: &[u32],
+        hash: &ChunkHash,
+    ) -> Result<Option<(IndexEntry, PathBuf)>> {
+        for &pack_id in pack_ids.iter().rev() {
+            if let Some((entry, dat_path)) = self.cached_index_lookup(shard, pack_id, hash)? {
+                return Ok(Some((entry, dat_path)));
+            }
+        }
+        Ok(None)
+    }
+
+    fn cached_index_lookup(
+        &self,
+        shard: u8,
+        pack_id: u32,
+        hash: &ChunkHash,
+    ) -> Result<Option<(IndexEntry, PathBuf)>> {
+        let snapshot_opt = {
+            let mut cache = self
+                .index_cache
+                .lock()
+                .expect("index cache lock poisoned");
+            cache.get_or_load(&self.layout, shard, pack_id)?
+        };
+        if let Some(snapshot) = snapshot_opt {
+            if let Some(entry) = snapshot.find(hash) {
+                let (dat_path, _) = self.layout.pack_paths(shard, pack_id)?;
+                if dat_path.exists() {
+                    return Ok(Some((entry.clone(), dat_path)));
+                }
+            }
+        }
+        Ok(None)
     }
 }
 
@@ -242,17 +268,41 @@ impl ShardState {
         shard: u8,
     ) -> Result<&mut PackBundle> {
         self.refresh_known_packs(layout, shard)?;
-        if self.active.is_none() {
+        if self.active.is_some() {
+            return Ok(self.active.as_mut().expect("active bundle must exist"));
+        }
+
+        let mut attempts = 0;
+        loop {
             let pack_id = self.next_pack_id;
             let next = pack_id
                 .checked_add(1)
                 .ok_or(RepositoryError::PackIdOverflow)?;
-            let bundle = PackBundle::create(layout, shard, pack_id)?;
-            self.known_packs.insert(pack_id);
-            self.active = Some(bundle);
-            self.next_pack_id = next;
+            match PackBundle::create(layout, shard, pack_id) {
+                Ok(bundle) => {
+                    self.known_packs.insert(pack_id);
+                    self.active = Some(bundle);
+                    self.next_pack_id = next;
+                    return Ok(self.active.as_mut().expect("active bundle must exist"));
+                }
+                Err(RepositoryError::Io(err))
+                    if matches!(
+                        err.kind(),
+                        ErrorKind::AlreadyExists | ErrorKind::PermissionDenied
+                    ) =>
+                {
+                    // pack id 与其他进程/线程冲突，刷新后重试
+                    attempts += 1;
+                    thread::sleep(Duration::from_millis(10));
+                    self.refresh_known_packs(layout, shard)?;
+                    if attempts > 256 {
+                        return Err(RepositoryError::Io(err));
+                    }
+                    continue;
+                }
+                Err(err) => return Err(err),
+            }
         }
-        Ok(self.active.as_mut().expect("active bundle must exist"))
     }
 
     fn seal_active(&mut self) -> Result<bool> {
@@ -316,24 +366,77 @@ fn discover_existing_packs(layout: &RepositoryLayout, shard: u8) -> Result<(BTre
     Ok((packs, next_pack_id.max(1)))
 }
 
-fn locate_in_pack_ids(
-    layout: &RepositoryLayout,
-    shard: u8,
-    pack_ids: &[u32],
-    hash: &ChunkHash,
-) -> Result<Option<(IndexEntry, PathBuf)>> {
-    for &pack_id in pack_ids.iter().rev() {
-        let (dat_path, idx_path) = layout.pack_paths(shard, pack_id)?;
-        if !idx_path.exists() || !dat_path.exists() {
-            continue;
-        }
-        let snapshot = IndexSnapshot::open(&idx_path)?;
-        if let Some(entry) = snapshot.find(hash) {
-            return Ok(Some((entry.clone(), dat_path)));
+struct IndexCacheEntry {
+    snapshot: Arc<IndexSnapshot>,
+    modified: std::time::SystemTime,
+    len: u64,
+}
+
+struct IndexCache {
+    map: HashMap<(u8, u32), IndexCacheEntry>,
+    order: VecDeque<(u8, u32)>,
+    capacity: usize,
+}
+
+impl IndexCache {
+    fn new(capacity: usize) -> Self {
+        Self {
+            map: HashMap::new(),
+            order: VecDeque::new(),
+            capacity: capacity.max(1),
         }
     }
-    Ok(None)
+
+    fn touch(&mut self, key: (u8, u32)) {
+        if let Some(pos) = self.order.iter().position(|k| *k == key) {
+            self.order.remove(pos);
+        }
+        self.order.push_back(key);
+    }
+
+    fn insert(&mut self, key: (u8, u32), entry: IndexCacheEntry) {
+        self.map.insert(key, entry);
+        self.touch(key);
+        if self.order.len() > self.capacity {
+            if let Some(old) = self.order.pop_front() {
+                self.map.remove(&old);
+            }
+        }
+    }
+
+    fn get_or_load(
+        &mut self,
+        layout: &RepositoryLayout,
+        shard: u8,
+        pack_id: u32,
+    ) -> Result<Option<Arc<IndexSnapshot>>> {
+        let key = (shard, pack_id);
+        let (dat_path, idx_path) = layout.pack_paths(shard, pack_id)?;
+        if !idx_path.exists() || !dat_path.exists() {
+            return Ok(None);
+        }
+        let meta = idx_path.metadata()?;
+        let len = meta.len();
+        let modified = meta.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+
+        if let Some(entry) = self.map.get(&key) {
+            if entry.len == len && entry.modified == modified {
+                let snap = entry.snapshot.clone();
+                self.touch(key);
+                return Ok(Some(snap));
+            }
+        }
+        let snapshot = Arc::new(IndexSnapshot::open(&idx_path)?);
+        let entry = IndexCacheEntry {
+            snapshot: snapshot.clone(),
+            modified,
+            len,
+        };
+        self.insert(key, entry);
+        Ok(Some(snapshot))
+    }
 }
+
 
 fn parse_pack_id(path: PathBuf, suffix: &str) -> Option<u32> {
     let name = path.file_name()?.to_str()?;
@@ -604,19 +707,29 @@ mod tests {
         let (_, chunks) = generate_chunks_for_same_shard(20, 80);
 
         let (tx, rx) = mpsc::channel();
-        let writer = |repo: Arc<Repository>, data: Vec<Vec<u8>>, tx: mpsc::Sender<ChunkRecord>| {
+        let writer = |name: &'static str,
+                      repo: Arc<Repository>,
+                      data: Vec<Vec<u8>>,
+                      tx: mpsc::Sender<ChunkRecord>| {
             thread::spawn(move || -> Result<()> {
-                for chunk in data {
-                    let rec = repo.write_chunk(&chunk, Compression::None)?;
-                    tx.send(rec).unwrap();
+                for (idx, chunk) in data.into_iter().enumerate() {
+                    match repo.write_chunk(&chunk, Compression::None) {
+                        Ok(rec) => {
+                            tx.send(rec).unwrap();
+                        }
+                        Err(err) => {
+                            eprintln!("writer {name} failed at idx {idx}: {err:?}");
+                            return Err(err);
+                        }
+                    }
                 }
                 Ok(())
             })
         };
 
         let mid = chunks.len() / 2;
-        let handle_a = writer(repo_a.clone(), chunks[..mid].to_vec(), tx.clone());
-        let handle_b = writer(repo_b.clone(), chunks[mid..].to_vec(), tx.clone());
+        let handle_a = writer("A", repo_a.clone(), chunks[..mid].to_vec(), tx.clone());
+        let handle_b = writer("B", repo_b.clone(), chunks[mid..].to_vec(), tx.clone());
         drop(tx);
 
         let mut records = Vec::new();
