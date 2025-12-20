@@ -144,7 +144,9 @@ impl WorkspaceService for WorkspaceServiceImpl {
         &self,
         request: Request<CreateWorkspaceReq>,
     ) -> Result<Response<CreateWorkspaceRsp>, Status> {
-        todo!()
+        handlers::workspace::create::handle(self.state.clone(), request)
+            .await
+            .map_err(|e| e.into())
     }
     async fn delete_workspace(
         &self,
@@ -156,7 +158,9 @@ impl WorkspaceService for WorkspaceServiceImpl {
         &self,
         request: Request<ListWorkspacesReq>,
     ) -> Result<Response<ListWorkspacesRsp>, Status> {
-        todo!()
+        handlers::workspace::list::handle(self.state.clone(), request)
+            .await
+            .map_err(|e| e.into())
     }
     async fn describe_workspace(
         &self,

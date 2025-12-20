@@ -1,5 +1,7 @@
+use std::path::{self, Path, PathBuf};
+
 use crate::daemon_server::context::SessionContext;
-use crate::daemon_server::error::AppResult;
+use crate::daemon_server::error::{AppError, AppResult};
 use crate::daemon_server::state::AppState;
 use crate::pb::{CreateWorkspaceReq, CreateWorkspaceRsp};
 use crv_core::workspace::entity::WorkspaceConfig;
@@ -12,13 +14,32 @@ pub async fn handle(
     let ctx = SessionContext::from_req(&req)?;
     let req = req.into_inner();
 
+    // step 0. 检查 root dir 是否存在，且为目录
+    let root_dir = PathBuf::from(&req.workspace_root);
+    if !root_dir.is_dir() {
+        return Err(AppError::from(Status::invalid_argument(format!(
+            "Root dir {} does not exists or is file.",
+            &req.workspace_root
+        ))));
+    }
+    if !root_dir.is_absolute() {
+        return Err(AppError::from(Status::invalid_argument(format!(
+            "Root dir {} is not absolute path.",
+            &req.workspace_root
+        ))));
+    }
+    let mut root_dir = root_dir.to_string_lossy().to_string();
+    // 对目录进行归一化，保证能够被 LocalDir 的 parser 解析
+    if !root_dir.ends_with("/") && !root_dir.ends_with("\\") {
+        root_dir = format!("{}{}", root_dir, path::MAIN_SEPARATOR)
+    }
+
     // Step 1: 创建 WorkspaceConfig 结构，验证用户输入的 mapping 是否合法
-    let workspace_config = WorkspaceConfig::from_specification(
-        &req.workspace_name,
-        &req.workspace_root,
-        &req.workspace_mapping,
-    )
-    .map_err(|e| Status::invalid_argument(format!("Invalid workspace configuration: {}", e)))?;
+    let workspace_config =
+        WorkspaceConfig::from_specification(&req.workspace_name, &root_dir, &req.workspace_mapping)
+            .map_err(|e| {
+                Status::invalid_argument(format!("Invalid workspace configuration: {}", e))
+            })?;
 
     // Step 2: 调用 create_workspace_pending 创建 Pending 状态的 workspace
     state

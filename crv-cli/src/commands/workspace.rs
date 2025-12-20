@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use console::style;
@@ -90,8 +92,8 @@ impl CreateCli {
         println!("  Mapping: {} lines", style(mapping.lines().count()).cyan());
 
         let create_req = CreateWorkspaceReq {
-            workspace_name: workspace_name,
-            workspace_root: workspace_root,
+            workspace_name,
+            workspace_root,
             workspace_mapping: mapping,
         };
         let mut workspace_client = WorkspaceServiceClient::new(channel.clone());
