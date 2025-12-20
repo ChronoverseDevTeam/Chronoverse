@@ -4,6 +4,7 @@ use crate::{
         DepotPath, DepotPathWildcard, LocalDir, LocalPath, LocalPathWildcard, RangeDepotWildcard,
     },
 };
+use bincode::{Decode, Encode};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -36,25 +37,25 @@ pub struct WorkspaceEntity {
 }
 
 /// Workspace 映射关系
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub enum WorkspaceMapping {
     Include(IncludeMapping),
     Exclude(ExcludeMapping),
 }
 
 /// Workspace 包含映射
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub enum IncludeMapping {
     File(FileMapping),
     Folder(FolderMapping),
 }
 
 /// Workspace 排除映射
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub struct ExcludeMapping(pub DepotPathWildcard);
 
 /// 单文件映射
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub struct FileMapping {
     /// Depot 文件
     pub depot_file: DepotPath,
@@ -63,7 +64,7 @@ pub struct FileMapping {
 }
 
 /// 文件夹映射
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub struct FolderMapping {
     /// Depot 路径范围
     pub depot_folder: RangeDepotWildcard,
@@ -72,7 +73,7 @@ pub struct FolderMapping {
 }
 
 /// Workspace 配置 TODO: 需要接到 WorkspaceEntity 中
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub struct WorkspaceConfig {
     /// 根目录
     pub root_dir: LocalDir,

@@ -9,6 +9,7 @@ tokio = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
 regex = { workspace = true }
+bincode = { workspace = true }
 chumsky = "0.11"
 dashmap = "6.1"
 flate2 = "1.0"

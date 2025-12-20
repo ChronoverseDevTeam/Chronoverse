@@ -1,30 +1,53 @@
-use rocksdb::{ColumnFamilyDescriptor, DB, Options};
+pub mod active_file;
+pub mod changelist;
+pub mod config;
+pub mod file;
+pub mod workspace;
+
+use bincode::{Decode, Encode};
+use rocksdb::{ColumnFamilyDescriptor, IteratorMode, OptimisticTransactionDB, Options};
 use std::path::Path;
 use std::sync::Arc;
 use thiserror::Error;
-
-use crate::daemon_server::config::RuntimeConfig;
 
 #[derive(Error, Debug)]
 pub enum DbError {
     #[error("RocksDB internal error: {0}")]
     RocksDb(#[from] rocksdb::Error),
-    #[error("Serialization error: {0}")]
-    Serialization(String),
+    #[error("Encode error: {0}")]
+    EncodeError(#[from] bincode::error::EncodeError),
+    #[error("Decode error: {0}")]
+    DecodeError(#[from] bincode::error::DecodeError),
+    #[error("{0}")]
+    WorkspaceConflict(String),
+    #[error("{0}")]
+    NotFound(String),
+    #[error("{0}")]
+    Invalid(String),
+}
+
+/// 用于标记一个 key 是否真的已经写入完成了，用于需要分阶段的写入过程，如工作区创建
+#[derive(Encode, Decode)]
+pub enum Status {
+    Pending,
+    Confirmed,
 }
 
 /// 数据库管理器，负责持有 DB 句柄
 pub struct DbManager {
     // 使用 Arc 让 DB 可以在多线程（gRPC handlers）间安全共享
     // rust-rocksdb 的 DB 本身是 Thread-safe 的
-    inner: Arc<DB>,
+    inner: Arc<OptimisticTransactionDB>,
 }
 
 impl DbManager {
     // 定义列族名称常量
-    const CF_DEFAULT: &'static str = "default";
     const CF_APP_CONFIG: &'static str = "app_config";
-    const CF_METADATA: &'static str = "metadata";
+    const CF_META_REVISION: &'static str = "meta_revision";
+    const CF_WORKSPACE: &'static str = "workspace";
+    const CF_FILE: &'static str = "file";
+    const CF_CHANGELIST: &'static str = "changelist";
+    const CF_ACTIVE_FILE: &'static str = "active_file";
 
     pub fn new<P: AsRef<Path>>(root: P) -> Result<Self, DbError> {
         let mut opts = Options::default();
@@ -36,58 +59,17 @@ impl DbManager {
 
         // 定义所需的列族
         let cfs = vec![
-            ColumnFamilyDescriptor::new(Self::CF_DEFAULT, Options::default()),
             ColumnFamilyDescriptor::new(Self::CF_APP_CONFIG, Options::default()),
-            ColumnFamilyDescriptor::new(Self::CF_METADATA, Options::default()),
+            ColumnFamilyDescriptor::new(Self::CF_WORKSPACE, Options::default()),
+            ColumnFamilyDescriptor::new(Self::CF_META_REVISION, Options::default()),
+            ColumnFamilyDescriptor::new(Self::CF_FILE, Options::default()),
+            ColumnFamilyDescriptor::new(Self::CF_CHANGELIST, Options::default()),
+            ColumnFamilyDescriptor::new(Self::CF_ACTIVE_FILE, Options::default()),
         ];
 
-        let db = DB::open_cf_descriptors(&opts, path, cfs)?;
+        let db = OptimisticTransactionDB::open_cf_descriptors(&opts, path, cfs)?;
         Ok(Self {
             inner: Arc::new(db),
         })
-    }
-
-    pub fn load_runtime_config(&self) -> Result<Option<RuntimeConfig>, DbError> {
-        let remote_addr = self.get_config("remote_addr")?;
-        let editor = self.get_config("editor")?;
-        let default_user = self.get_config("default_user")?;
-
-        if remote_addr.is_none() || editor.is_none() {
-            return Ok(None);
-        }
-
-        Ok(Some(RuntimeConfig {
-            remote_addr: remote_addr.unwrap(),
-            editor: editor.unwrap(),
-            default_user: default_user.unwrap(),
-        }))
-    }
-
-    /// 获取应用配置 (反序列化示例)
-    fn get_config(&self, key: &str) -> Result<Option<String>, DbError> {
-        let cf = self
-            .inner
-            .cf_handle(Self::CF_APP_CONFIG)
-            .expect("CF_APP_CONFIG must exist");
-
-        match self.inner.get_cf(cf, key)? {
-            Some(bytes) => {
-                // 假设配置存的是 UTF-8 字符串，如果用 Protobuf，这里用 prost 解码
-                let val =
-                    String::from_utf8(bytes).map_err(|e| DbError::Serialization(e.to_string()))?;
-                Ok(Some(val))
-            }
-            None => Ok(None),
-        }
-    }
-
-    /// 写入应用配置
-    fn set_config(&self, key: &str, value: &str) -> Result<(), DbError> {
-        let cf = self
-            .inner
-            .cf_handle(Self::CF_APP_CONFIG)
-            .expect("CF_APP_CONFIG must exist");
-        self.inner.put_cf(cf, key, value.as_bytes())?;
-        Ok(())
     }
 }

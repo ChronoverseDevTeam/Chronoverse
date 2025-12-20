@@ -1,4 +1,5 @@
 use crate::parsers;
+use bincode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -36,7 +37,7 @@ pub enum RevisionDescriptor {
 }
 
 /// 文件名通配符类型
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Encode, Decode)]
 pub enum FilenameWildcard {
     /// 确切的文件名
     Exact(String),
@@ -65,7 +66,7 @@ impl FilenameWildcard {
 }
 
 /// Workspace Path (具体的文件)
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Encode, Decode)]
 pub struct WorkspacePath {
     pub workspace_name: String,
     pub dirs: Vec<String>,
@@ -73,6 +74,10 @@ pub struct WorkspacePath {
 }
 
 impl WorkspacePath {
+    pub fn parse(path: &str) -> PathResult<Self> {
+        parsers::path::workspace_path(path)
+    }
+
     pub fn into_local_path(&self, root_dir: &LocalDir) -> LocalPath {
         let mut dirs = root_dir.0.clone();
         dirs.extend_from_slice(&self.dirs);
@@ -120,7 +125,7 @@ impl WorkspaceDir {
 }
 
 /// Depot Path (具体的文件)
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Encode, Decode)]
 pub struct DepotPath {
     pub dirs: Vec<String>,
     pub file: String,
@@ -144,7 +149,7 @@ impl DepotPath {
 }
 
 /// 通配 Depot Path
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub enum DepotPathWildcard {
     /// 范围索引路径: //dir/...~png、//dir/~jpg.meta、//dir/...
     Range(RangeDepotWildcard),
@@ -185,7 +190,7 @@ impl DepotPathWildcard {
 }
 
 /// 范围索引 Depot Path
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Encode, Decode)]
 pub struct RangeDepotWildcard {
     /// 目录部分
     pub dirs: Vec<String>,
@@ -213,14 +218,14 @@ impl RangeDepotWildcard {
 }
 
 /// 正则 Depot Path
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub struct RegexDepotWildcard {
     /// 原始正则表达式字符串
     pub pattern: String,
 }
 
 /// 本地目录路径（规范化后的绝对路径，精确到目录）
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Encode, Decode)]
 pub struct LocalDir(pub Vec<String>);
 
 impl LocalDir {
@@ -249,7 +254,7 @@ impl LocalDir {
 }
 
 /// 本地路径（规范化后的绝对路径，精确到文件）
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Encode, Decode)]
 pub struct LocalPath {
     pub dirs: LocalDir,
     pub file: String,
