@@ -7,6 +7,8 @@ use crate::pb::{
 };
 use argon2::password_hash::SaltString;
 use argon2::{Argon2, PasswordHasher};
+use http::header::{HeaderName, ACCEPT, AUTHORIZATION, CONTENT_TYPE};
+use http::Method;
 use crv_core::repository::{
     Repository, blake3_hash_to_hex, compute_blake3_str,
 };
@@ -15,6 +17,8 @@ use rand::rngs::OsRng;
 use std::sync::{Arc, OnceLock};
 use tokio::sync::Mutex;
 use tonic::{Request, Response, Status, transport::Server};
+use tonic_web::GrpcWebLayer;
+use tower_http::cors::{Any, CorsLayer};
 
 mod fetch;
 mod download;
@@ -201,6 +205,27 @@ pub(crate) mod hive_dao {
 pub(crate) fn derive_file_id_from_path(path: &str) -> String {
     let hash_bytes = compute_blake3_str(path);
     blake3_hash_to_hex(&hash_bytes)
+}
+
+fn build_cors_layer() -> CorsLayer {
+    CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods([Method::POST, Method::GET, Method::OPTIONS])
+        .allow_headers([
+            ACCEPT,
+            AUTHORIZATION,
+            CONTENT_TYPE,
+            HeaderName::from_static("grpc-timeout"),
+            HeaderName::from_static("x-grpc-web"),
+            HeaderName::from_static("x-user-agent"),
+            HeaderName::from_static("grpc-encoding"),
+            HeaderName::from_static("grpc-accept-encoding"),
+        ])
+        .expose_headers([
+            HeaderName::from_static("grpc-status"),
+            HeaderName::from_static("grpc-message"),
+            HeaderName::from_static("grpc-status-details-bin"),
+        ])
 }
 
 /// 测试用全局互斥锁：用于串行化依赖进程级全局状态（Mock DAO / DepotTree 等）的单元测试，
@@ -396,8 +421,12 @@ where
     let auth = AuthService::from_config();
     let service = CrvHiveService::new(Arc::clone(&auth));
     let interceptor = AuthInterceptor::new(Arc::clone(&auth));
+    let cors = build_cors_layer();
 
     Server::builder()
+        .accept_http1(true)
+        .layer(cors)
+        .layer(GrpcWebLayer::new())
         .add_service(HiveServiceServer::with_interceptor(service, interceptor))
         .serve_with_shutdown(addr, shutdown)
         .await?;
@@ -410,8 +439,12 @@ pub async fn start_server(addr: std::net::SocketAddr) -> Result<(), Box<dyn std:
     let auth = AuthService::from_config();
     let service = CrvHiveService::new(Arc::clone(&auth));
     let interceptor = AuthInterceptor::new(auth);
+    let cors = build_cors_layer();
 
     Server::builder()
+        .accept_http1(true)
+        .layer(cors)
+        .layer(GrpcWebLayer::new())
         .add_service(HiveServiceServer::with_interceptor(service, interceptor))
         .serve(addr)
         .await?;

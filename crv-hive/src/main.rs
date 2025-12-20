@@ -19,7 +19,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .parse()
         .expect(&format!("unable to parse addr `{}`", addr_str));
 
-    println!("Hive gRPC sevice now is available at {}", addr);
+    println!("Hive gRPC / gRPC-Web service is available at {}", addr);
 
     // Ctrl+C to shutdown gracefully
     let shutdown = async {

@@ -24,6 +24,9 @@ prost-types = "0.14.1"
 
 tonic = "0.14.2"
 tonic-prost = "0.14.2"
+tonic-web = "0.14.2"
+http = "1.4.0"
+tower-http = { version = "0.6.8", features = ["cors"] }
 
 mongodb = "3.3.0"
 futures = { version = "0.3", default-features = false, features = ["std"] }
@@ -32,7 +35,6 @@ jsonwebtoken = "9"
 argon2 = "0.5"
 rand = "0.8"
 
-minio = "0.3.0"
 async-trait = "0.1"
 bytes = "1.9"
 thiserror = "2.0.17"
