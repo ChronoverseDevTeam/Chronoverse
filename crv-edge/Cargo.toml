@@ -42,6 +42,7 @@ rocksdb = "0.24.0"
 
 uuid = { "version" = "1.19", features = ["v4"] }
 walkdir = "2"
+hex = "0.4"
 
 [dev-dependencies]
 tokio-stream = "0.1"

@@ -846,6 +846,7 @@ dependencies = [
  "directories",
  "flate2",
  "futures",
+ "hex",
  "image",
  "lru",
  "prost",

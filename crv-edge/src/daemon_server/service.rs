@@ -3,11 +3,14 @@ use std::pin::Pin;
 
 use super::handlers;
 use super::state::AppState;
-use crate::pb::changelist_service_server::ChangelistService;
 use crate::pb::file_service_server::FileService;
 use crate::pb::system_service_server::SystemService;
 use crate::pb::workspace_service_server::WorkspaceService;
 use crate::pb::*;
+use crate::{
+    daemon_server::handlers::file::submit::SubmitProgressStream,
+    pb::changelist_service_server::ChangelistService,
+};
 use tonic::{Request, Response, Status};
 
 pub struct ChangelistServiceImpl {
@@ -75,8 +78,7 @@ impl FileServiceImpl {
 }
 
 type SyncStream = Pin<Box<dyn tokio_stream::Stream<Item = Result<SyncProgress, Status>> + Send>>;
-type SubmitStream =
-    Pin<Box<dyn tokio_stream::Stream<Item = Result<SubmitProgress, Status>> + Send>>;
+type SubmitStream = SubmitProgressStream;
 
 #[tonic::async_trait]
 impl FileService for FileServiceImpl {
@@ -96,7 +98,9 @@ impl FileService for FileServiceImpl {
         todo!()
     }
     async fn submit(&self, request: Request<SubmitReq>) -> Result<Response<SubmitStream>, Status> {
-        todo!()
+        handlers::file::submit::handle(self.state.clone(), request)
+            .await
+            .map_err(|e| e.into())
     }
 }
 
