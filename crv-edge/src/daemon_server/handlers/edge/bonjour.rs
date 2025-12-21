@@ -14,5 +14,7 @@ pub async fn handle(
         os: std::env::consts::OS.to_string(),
         architecture: std::env::consts::ARCH.to_string(),
     };
+
+    println!("Edge bonjour RSP: {:?}", response);
     Ok(Response::new(response))
 }

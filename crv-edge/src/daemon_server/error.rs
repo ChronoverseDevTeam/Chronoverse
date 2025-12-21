@@ -15,6 +15,9 @@ pub enum AppError {
     #[error("Raw error: {0}")]
     Raw(Status),
 
+    #[error("Hive client error: {0}")]
+    HiveClient(String),
+
     #[error("Internal error: {0}")]
     Internal(String),
 
@@ -37,6 +40,7 @@ impl From<AppError> for Status {
             AppError::Internal(msg) => Status::internal(msg),
             AppError::Unknown => Status::internal("Unknown error"),
             AppError::Raw(status) => status,
+            AppError::HiveClient(msg) => Status::internal(format!("Hive Client Error: {}", msg)),
         }
     }
 }

@@ -26,6 +26,7 @@ message RuntimeConfigItem {
 
 service SystemService {
   rpc Bonjour(BonjourReq) returns (BonjourRsp);
+  rpc BonjourHive(BonjourReq) returns (BonjourRsp);
   rpc GetRuntimeConfig(GetRuntimeConfigReq) returns (GetRuntimeConfigRsp);
 }
 

@@ -118,6 +118,12 @@ impl SystemService for SystemServiceImpl {
             .map_err(|e| e.into())
     }
 
+    async fn bonjour_hive(&self, request: Request<BonjourReq>) -> Result<Response<BonjourRsp>, Status> {
+        handlers::edge::bonjour_hive::handle(self.state.clone(), request)
+            .await
+            .map_err(|e| e.into())
+    }
+
     async fn get_runtime_config(
         &self,
         request: Request<GetRuntimeConfigReq>,

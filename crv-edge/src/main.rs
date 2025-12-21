@@ -1,5 +1,3 @@
-#![cfg_attr(windows, windows_subsystem = "windows")]
-
 #[cfg(not(windows))]
 use tokio::signal;
 
@@ -108,6 +106,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut client = SystemServiceClient::connect(endpoint).await.ok()?;
             let _ = client
                 .bonjour(tonic::Request::new(BonjourReq {}))
+                .await
+                .ok()?;
+            let _ = client
+                .bonjour_hive(tonic::Request::new(BonjourReq {}))
                 .await
                 .ok()?;
             Some(())
