@@ -1,8 +1,10 @@
+//! Active file 也就是可以被提交的 file，亦即 checkout 的 file
+
 use crate::daemon_server::db::*;
 use bincode::{Decode, Encode};
 use crv_core::path::basic::{WorkspaceDir, WorkspacePath};
 
-#[derive(Encode, Decode)]
+#[derive(Encode, Decode, PartialEq, Eq)]
 pub enum Action {
     Add,
     Delete,
@@ -11,7 +13,7 @@ pub enum Action {
 
 impl DbManager {
     pub fn set_active_file_action(
-        &mut self,
+        &self,
         path: WorkspacePath,
         action: Action,
     ) -> Result<(), DbError> {
@@ -24,10 +26,7 @@ impl DbManager {
         Ok(())
     }
 
-    pub fn get_active_file_action(
-        &mut self,
-        path: &WorkspacePath,
-    ) -> Result<Option<Action>, DbError> {
+    pub fn get_active_file_action(&self, path: &WorkspacePath) -> Result<Option<Action>, DbError> {
         let cf = self
             .inner
             .cf_handle(Self::CF_ACTIVE_FILE)
@@ -43,7 +42,7 @@ impl DbManager {
     }
 
     pub fn get_active_file_under_dir(
-        &mut self,
+        &self,
         dir: &WorkspaceDir,
     ) -> Result<Vec<(WorkspacePath, Action)>, DbError> {
         let cf = self

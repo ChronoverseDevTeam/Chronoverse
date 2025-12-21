@@ -4,12 +4,11 @@ use crv_core::path::basic::{WorkspaceDir, WorkspacePath};
 
 #[derive(Encode, Decode)]
 pub struct FileMeta {
-    current_revision: String,
-    lastest_revision: String,
+    pub latest_revision: String,
 }
 
 impl DbManager {
-    pub fn set_file_meta(&mut self, path: WorkspacePath, meta: FileMeta) -> Result<(), DbError> {
+    pub fn set_file_meta(&self, path: WorkspacePath, meta: FileMeta) -> Result<(), DbError> {
         let cf = self
             .inner
             .cf_handle(Self::CF_FILE)
@@ -19,7 +18,7 @@ impl DbManager {
         Ok(())
     }
 
-    pub fn delete_file(&mut self, path: &WorkspacePath) -> Result<(), DbError> {
+    pub fn delete_file(&self, path: &WorkspacePath) -> Result<(), DbError> {
         let cf = self
             .inner
             .cf_handle(Self::CF_FILE)
@@ -28,7 +27,7 @@ impl DbManager {
         Ok(())
     }
 
-    pub fn get_file_meta(&mut self, path: &WorkspacePath) -> Result<Option<FileMeta>, DbError> {
+    pub fn get_file_meta(&self, path: &WorkspacePath) -> Result<Option<FileMeta>, DbError> {
         let cf = self
             .inner
             .cf_handle(Self::CF_FILE)
@@ -44,7 +43,7 @@ impl DbManager {
     }
 
     pub fn get_file_meta_under_dir(
-        &mut self,
+        &self,
         dir: &WorkspaceDir,
     ) -> Result<Vec<(WorkspacePath, FileMeta)>, DbError> {
         let cf = self

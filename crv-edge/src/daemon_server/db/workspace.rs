@@ -5,7 +5,7 @@ use crv_core::{path::basic::LocalDir, workspace::entity::WorkspaceConfig};
 #[derive(Encode, Decode)]
 pub struct WorkspaceMeta {
     status: Status,
-    config: WorkspaceConfig,
+    pub config: WorkspaceConfig,
 }
 
 impl DbManager {
@@ -116,7 +116,7 @@ impl DbManager {
         Ok(())
     }
 
-    pub fn get_workspace_meta(
+    fn get_workspace_meta(
         &self,
         workspace_name: &String,
     ) -> Result<Option<WorkspaceMeta>, DbError> {
@@ -134,7 +134,29 @@ impl DbManager {
         }
     }
 
-    pub fn get_workspace_name_by_working_dir(
+    pub fn get_confirmed_workspace_meta(
+        &self,
+        workspace_name: &String,
+    ) -> Result<Option<WorkspaceMeta>, DbError> {
+        let cf = self
+            .inner
+            .cf_handle(Self::CF_WORKSPACE)
+            .expect(&format!("cf {} must exist", Self::CF_WORKSPACE));
+        match self.inner.get_cf(cf, workspace_name)? {
+            Some(bytes) => {
+                let meta: WorkspaceMeta =
+                    bincode::decode_from_slice(&bytes, bincode::config::standard())?.0;
+                if meta.status == Status::Confirmed {
+                    Ok(Some(meta))
+                } else {
+                    Ok(None)
+                }
+            }
+            None => Ok(None),
+        }
+    }
+
+    pub fn get_confirmed_workspace_name_by_working_dir(
         &self,
         dir: &LocalDir,
     ) -> Result<Option<String>, DbError> {
@@ -151,7 +173,7 @@ impl DbManager {
                     let meta: WorkspaceMeta =
                         bincode::decode_from_slice(&value, bincode::config::standard())?.0;
                     let root_dir = &meta.config.root_dir;
-                    if dir.0.starts_with(&root_dir.0) {
+                    if dir.0.starts_with(&root_dir.0) && meta.status == Status::Confirmed {
                         return Ok(Some(workspace_name));
                     }
                 }

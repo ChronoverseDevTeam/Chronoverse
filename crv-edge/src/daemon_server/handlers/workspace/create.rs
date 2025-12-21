@@ -1,4 +1,4 @@
-use std::path::{self, Path, PathBuf};
+use std::path::{self, PathBuf};
 
 use crate::daemon_server::context::SessionContext;
 use crate::daemon_server::error::{AppError, AppResult};
@@ -11,7 +11,7 @@ pub async fn handle(
     state: AppState,
     req: Request<CreateWorkspaceReq>,
 ) -> AppResult<Response<CreateWorkspaceRsp>> {
-    let ctx = SessionContext::from_req(&req)?;
+    let _ctx = SessionContext::from_req(&req)?;
     let req = req.into_inner();
 
     // step 0. 检查 root dir 是否存在，且为目录

@@ -15,6 +15,9 @@ pub enum AppError {
     #[error("Raw error: {0}")]
     Raw(Status),
 
+    #[error("Internal error: {0}")]
+    Internal(String),
+
     #[error("Internal server error")]
     Unknown,
 }
@@ -31,6 +34,7 @@ impl From<AppError> for Status {
         match err {
             AppError::Db(e) => Status::internal(format!("DB Error: {}", e)),
             AppError::Config(msg) => Status::invalid_argument(msg),
+            AppError::Internal(msg) => Status::internal(msg),
             AppError::Unknown => Status::internal("Unknown error"),
             AppError::Raw(status) => status,
         }

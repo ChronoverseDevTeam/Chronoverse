@@ -181,6 +181,18 @@ impl PathEngine {
         }
         None
     }
+
+    /// 将一个本地路径转化为 workspace 路径，如果本地路径不在工作区内，返回 None
+    pub fn local_path_to_workspace_path(&self, local_path: &LocalPath) -> Option<WorkspacePath> {
+        todo!()
+    }
+    /// 将一个 workspace 路径转化为本地路径，如果 workspace 路径不在工作区内，返回 None
+    pub fn workspace_path_to_local_path(
+        &self,
+        workspace_path: &WorkspacePath,
+    ) -> Option<LocalPath> {
+        todo!()
+    }
 }
 
 #[cfg(test)]

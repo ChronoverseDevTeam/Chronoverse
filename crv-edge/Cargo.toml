@@ -14,8 +14,10 @@ serde_json = { workspace = true}
 thiserror = { workspace = true }
 confy = { workspace = true }
 bincode = { workspace = true }
+lru = { workspace = true }
 
 tokio-stream = "0.1" # 配合 tonic 进行流处理必须的库
+futures = "0.3"
 
 # Fingerprint dependencies
 blake3 = "1"
@@ -39,6 +41,7 @@ flate2 = "1.0"
 rocksdb = "0.24.0"
 
 uuid = { "version" = "1.19", features = ["v4"] }
+walkdir = "2"
 
 [dev-dependencies]
 tokio-stream = "0.1"

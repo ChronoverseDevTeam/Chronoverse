@@ -27,7 +27,7 @@ pub enum DbError {
 }
 
 /// 用于标记一个 key 是否真的已经写入完成了，用于需要分阶段的写入过程，如工作区创建
-#[derive(Encode, Decode)]
+#[derive(Encode, Decode, PartialEq, Eq)]
 pub enum Status {
     Pending,
     Confirmed,

@@ -10,10 +10,10 @@ serde = { workspace = true }
 thiserror = { workspace = true }
 regex = { workspace = true }
 bincode = { workspace = true }
+lru = { workspace = true }
 chumsky = "0.11"
 dashmap = "6.1"
 flate2 = "1.0"
-lru = "0.16"
 serde_json = "1.0"
 tempfile = "3.8"
 twox-hash = "1.6"

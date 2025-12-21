@@ -108,6 +108,10 @@ pub struct WorkspaceDir {
 }
 
 impl WorkspaceDir {
+    pub fn parse(path: &str) -> PathResult<Self> {
+        parsers::path::workspace_dir(path)
+    }
+
     pub fn into_local_dir(&self, root_dir: &LocalDir) -> LocalDir {
         let mut dirs = root_dir.0.clone();
         dirs.extend_from_slice(&self.dirs);
@@ -243,6 +247,40 @@ impl LocalDir {
         format!("/{}", dir_string)
     }
 
+    /// 转化为当前平台本地风格的路径字符串（规范化的绝对路径）
+    pub fn to_local_path_string(&self) -> String {
+        #[cfg(windows)]
+        {
+            // Windows 逻辑：
+            // 假设 dirs[0] 是盘符 (如 "C:")
+            let (drive, sub_dirs) = self.0.split_first().unwrap();
+            // 如果路径是 C: 和 file.txt -> C:\file.txt
+            // 如果路径是 C:, Users 和 file.txt -> C:\Users\file.txt
+            let mut full_path = drive.clone();
+
+            // 确保盘符后有分隔符
+            full_path.push('\\');
+
+            for dir in sub_dirs {
+                full_path.push_str(dir);
+                full_path.push('\\');
+            }
+            full_path
+        }
+
+        #[cfg(not(windows))]
+        {
+            // Unix 逻辑：
+            // 始终以 / 开头，连接所有目录
+            if self.0.is_empty() {
+                format!("/")
+            } else {
+                let dir_part = self.0.join("/");
+                format!("/{}/", dir_part)
+            }
+        }
+    }
+
     /// 判断一个 local dir 是否在该 dir 下，如果在则返回 local dir 独有的目录部分，否则返回 None
     pub fn match_and_get_diff<'a>(&self, other: &'a LocalDir) -> Option<&'a [String]> {
         let common_prefix_end = common_prefix_end_index(&self.0, &other.0);
@@ -279,6 +317,41 @@ impl LocalPath {
             .map(|dir| format!("{}/", dir))
             .collect::<String>();
         format!("/{}{}", dir_string, self.file)
+    }
+
+    /// 转化为当前平台本地风格的路径字符串
+    pub fn to_local_path_string(&self) -> String {
+        #[cfg(windows)]
+        {
+            // Windows 逻辑：
+            // 假设 dirs[0] 是盘符 (如 "C:")
+            let (drive, sub_dirs) = self.dirs.0.split_first().unwrap();
+            // 如果路径是 C: 和 file.txt -> C:\file.txt
+            // 如果路径是 C:, Users 和 file.txt -> C:\Users\file.txt
+            let mut full_path = drive.clone();
+
+            // 确保盘符后有分隔符
+            full_path.push('\\');
+
+            for dir in sub_dirs {
+                full_path.push_str(dir);
+                full_path.push('\\');
+            }
+            full_path.push_str(&self.file);
+            full_path
+        }
+
+        #[cfg(not(windows))]
+        {
+            // Unix 逻辑：
+            // 始终以 / 开头，连接所有目录和文件
+            if self.dirs.0.is_empty() {
+                format!("/{}", self.file)
+            } else {
+                let dir_part = self.dirs.0.join("/");
+                format!("/{}/{}", dir_part, self.file)
+            }
+        }
     }
 }
 
