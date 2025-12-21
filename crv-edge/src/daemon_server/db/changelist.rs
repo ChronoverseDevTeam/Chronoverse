@@ -21,7 +21,7 @@ impl DbManager {
     /// and become an orphan changelist.
     /// So in the future there should be a method to clear orphan changelists.
     pub fn create_changelist(
-        &mut self,
+        &self,
         description: String,
         workspace_name: String,
     ) -> Result<String, DbError> {
@@ -74,7 +74,7 @@ impl DbManager {
         Ok(format!("{}", next_changelist_counter))
     }
 
-    pub fn delete_changelist(&mut self, changelist_id: &String) -> Result<(), DbError> {
+    pub fn delete_changelist(&self, changelist_id: &String) -> Result<(), DbError> {
         let changelist_cf = self
             .inner
             .cf_handle(Self::CF_CHANGELIST)
@@ -87,7 +87,7 @@ impl DbManager {
     ///
     /// If any workspace path is not under the workspace of the changelist, return DbError::Invalid.
     pub fn append_changelist_workspace_paths(
-        &mut self,
+        &self,
         changelist_id: &String,
         workspace_paths: Vec<WorkspacePath>,
     ) -> Result<(), DbError> {
@@ -137,7 +137,7 @@ impl DbManager {
     /// This method will iter through all local changelists,
     /// which may be slow when there are a lot of local changelists.
     pub fn get_changelist_id_by_workspace(
-        &mut self,
+        &self,
         workspace_name: &String,
     ) -> Result<Vec<String>, DbError> {
         let cf = self
@@ -161,7 +161,7 @@ impl DbManager {
     }
 
     pub fn get_changelist_meta(
-        &mut self,
+        &self,
         changelist_id: &String,
     ) -> Result<Option<ChangelistMeta>, DbError> {
         let cf = self
