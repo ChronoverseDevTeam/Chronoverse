@@ -2,9 +2,6 @@ use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock};
-use std::time::Duration;
-use std::io::ErrorKind;
-use std::thread;
 
 use super::bundle::{PackBundle, PackReader};
 use super::chunk::{ChunkHash, ChunkRecord, Compression, compute_chunk_hash};
@@ -113,8 +110,9 @@ impl Repository {
         let hash = compute_chunk_hash(data);
         let shard = hash[0];
         let lock = &self.shards[shard as usize];
-        let mut guard = lock.write().expect("shard lock poisoned");
-        guard.refresh_known_packs(&self.layout, shard)?;
+        let mut guard = lock
+            .write()
+            .map_err(|_| RepositoryError::Corrupted("shard lock poisoned"))?;
         guard.enforce_hard_limits(self.hard_size_limit, self.hard_chunk_limit)?;
         if guard.active_contains(&hash) {
             return Err(RepositoryError::DuplicateHash { hash });
@@ -144,8 +142,9 @@ impl Repository {
 
     pub fn seal_shard(&self, shard: u8) -> Result<()> {
         let lock = &self.shards[shard as usize];
-        let mut guard = lock.write().expect("shard lock poisoned");
-        guard.refresh_known_packs(&self.layout, shard)?;
+        let mut guard = lock
+            .write()
+            .map_err(|_| RepositoryError::Corrupted("shard lock poisoned"))?;
         let _ = guard.seal_active()?;
         Ok(())
     }
@@ -159,24 +158,26 @@ impl Repository {
 
     pub fn seal_bundle(&self, shard: u8, pack_id: u32) -> Result<bool> {
         let lock = &self.shards[shard as usize];
-        let mut guard = lock.write().expect("shard lock poisoned");
-        guard.refresh_known_packs(&self.layout, shard)?;
+        let mut guard = lock
+            .write()
+            .map_err(|_| RepositoryError::Corrupted("shard lock poisoned"))?;
         guard.seal_specific(pack_id)
     }
 
     pub fn locate_chunk(&self, hash: &ChunkHash) -> Result<Option<(IndexEntry, PathBuf)>> {
         let shard = hash[0];
         let lock = &self.shards[shard as usize];
-        // 读前刷新目录，确保能看到其他进程写入的未封存/封存 pack
-        let (maybe_active_hit, pack_ids) = {
-            let mut guard = lock.write().expect("shard lock poisoned");
-            guard.refresh_known_packs(&self.layout, shard)?;
+        // 注意，目前 Repo 的设计是只允许一个实例多线程访问的，别搞多进程的情况！！！
+        // 无需刷新目录，直接查询活跃 pack，然后索引缓存
+        let pack_ids = {
+            let guard = lock
+                .read()
+                .map_err(|_| RepositoryError::Corrupted("shard lock poisoned"))?;
             if let Some(result) = guard.find_in_active(hash) {
                 return Ok(Some(result));
             }
-            (None::<()>, guard.all_pack_ids())
+            guard.all_pack_ids()
         };
-        let _ = maybe_active_hit;
         self.locate_in_pack_ids(shard, &pack_ids, hash)
     }
 
@@ -204,7 +205,7 @@ impl Repository {
             let mut cache = self
                 .index_cache
                 .lock()
-                .expect("index cache lock poisoned");
+                .map_err(|_| RepositoryError::Corrupted("index cache lock poisoned"))?;
             cache.get_or_load(&self.layout, shard, pack_id)?
         };
         if let Some(snapshot) = snapshot_opt {
@@ -267,42 +268,19 @@ impl ShardState {
         layout: &RepositoryLayout,
         shard: u8,
     ) -> Result<&mut PackBundle> {
-        self.refresh_known_packs(layout, shard)?;
         if self.active.is_some() {
             return Ok(self.active.as_mut().expect("active bundle must exist"));
         }
 
-        let mut attempts = 0;
-        loop {
-            let pack_id = self.next_pack_id;
-            let next = pack_id
-                .checked_add(1)
-                .ok_or(RepositoryError::PackIdOverflow)?;
-            match PackBundle::create(layout, shard, pack_id) {
-                Ok(bundle) => {
-                    self.known_packs.insert(pack_id);
-                    self.active = Some(bundle);
-                    self.next_pack_id = next;
-                    return Ok(self.active.as_mut().expect("active bundle must exist"));
-                }
-                Err(RepositoryError::Io(err))
-                    if matches!(
-                        err.kind(),
-                        ErrorKind::AlreadyExists | ErrorKind::PermissionDenied
-                    ) =>
-                {
-                    // pack id 与其他进程/线程冲突，刷新后重试
-                    attempts += 1;
-                    thread::sleep(Duration::from_millis(10));
-                    self.refresh_known_packs(layout, shard)?;
-                    if attempts > 256 {
-                        return Err(RepositoryError::Io(err));
-                    }
-                    continue;
-                }
-                Err(err) => return Err(err),
-            }
-        }
+        let pack_id = self.next_pack_id;
+        let next = pack_id
+            .checked_add(1)
+            .ok_or(RepositoryError::PackIdOverflow)?;
+        let bundle = PackBundle::create(layout, shard, pack_id)?;
+        self.known_packs.insert(pack_id);
+        self.active = Some(bundle);
+        self.next_pack_id = next;
+        Ok(self.active.as_mut().expect("active bundle must exist"))
     }
 
     fn seal_active(&mut self) -> Result<bool> {
@@ -337,20 +315,6 @@ impl ShardState {
         Ok(())
     }
 
-    fn refresh_known_packs(&mut self, layout: &RepositoryLayout, shard: u8) -> Result<()> {
-        let dir = layout.ensure_shard_dir(shard)?;
-        let mut packs = BTreeSet::new();
-        for entry in fs::read_dir(dir)? {
-            let entry = entry?;
-            if let Some(id) = parse_pack_id(entry.path(), PACK_DATA_SUFFIX) {
-                packs.insert(id);
-            }
-        }
-        let max_id = packs.iter().copied().max().unwrap_or(0);
-        self.known_packs = packs;
-        self.next_pack_id = max_id.saturating_add(1).max(self.next_pack_id);
-        Ok(())
-    }
 }
 
 fn discover_existing_packs(layout: &RepositoryLayout, shard: u8) -> Result<(BTreeSet<u32>, u32)> {
@@ -451,8 +415,7 @@ fn parse_pack_id(path: PathBuf, suffix: &str) -> Option<u32> {
 mod tests {
     use super::*;
     use crate::repository::{Compression, compute_chunk_hash};
-    use std::sync::{Arc, mpsc};
-    use std::sync::Mutex;
+    use std::sync::{Arc, mpsc, Mutex};
     use std::thread;
     use std::time::Duration;
 
@@ -571,21 +534,6 @@ mod tests {
     }
 
     #[test]
-    fn cross_repo_reads_unsealed_pack_from_disk() -> Result<()> {
-        // 模拟“进程A写入未封存 pack，进程B读取”
-        let temp_dir = tempfile::tempdir().unwrap();
-        let repo_a = Repository::with_pack_soft_limit(temp_dir.path(), u64::MAX)?;
-        let record = repo_a.write_chunk(b"unsealed data", Compression::None)?;
-        // 不调用 seal，保持活跃 pack 未封存
-
-        // 进程B视角：创建新的 Repository 实例，直接读取
-        let repo_b = Repository::with_pack_soft_limit(temp_dir.path(), u64::MAX)?;
-        let bytes = repo_b.read_chunk(&record.hash)?;
-        assert_eq!(bytes, b"unsealed data");
-        Ok(())
-    }
-
-    #[test]
     fn orphan_dat_without_index_is_ignored_and_new_writes_succeed() -> Result<()> {
         // 模拟“进程在写 pack 后崩溃，.dat 留下数据但 .idx 未写入”
         use crate::repository::RepositoryError;
@@ -651,16 +599,23 @@ mod tests {
     }
 
     #[test]
-    fn concurrent_read_while_write_cross_repo() -> Result<()> {
+    fn concurrent_read_while_write_single_repo() -> Result<()> {
         let temp_dir = tempfile::tempdir().unwrap();
-        let repo_writer = Arc::new(Repository::with_pack_soft_limit(temp_dir.path(), u64::MAX)?);
+        let repo = Arc::new(Repository::with_pack_soft_limit(temp_dir.path(), u64::MAX)?);
         let (shard, chunks) = generate_chunks_for_same_shard(8, 64);
         let (tx, rx) = mpsc::channel();
 
-        // 读线程使用新的 Repository 实例，模拟另一进程
-        let temp_path = temp_dir.path().to_path_buf();
-        let reader_handle = thread::spawn(move || -> Result<()> {
-            let repo_reader = Repository::with_pack_soft_limit(&temp_path, u64::MAX)?;
+        let repo_writer = repo.clone();
+        let writer = thread::spawn(move || -> Result<()> {
+            for data in chunks.iter() {
+                let record = repo_writer.write_chunk(data, Compression::None)?;
+                tx.send((record.hash, data.clone())).unwrap();
+            }
+            Ok(())
+        });
+
+        let repo_reader = repo.clone();
+        let reader = thread::spawn(move || -> Result<()> {
             for (hash, data) in rx {
                 let mut attempts = 0;
                 loop {
@@ -680,96 +635,39 @@ mod tests {
             Ok(())
         });
 
-        // 写线程在主线程：逐个写入并发送 hash+数据
-        for data in chunks.iter() {
-            let record = repo_writer.write_chunk(data, Compression::None)?;
-            tx.send((record.hash, data.clone())).unwrap();
-        }
-        drop(tx);
+        writer.join().expect("writer panicked")?;
+        reader.join().expect("reader panicked")?;
 
-        reader_handle.join().expect("reader panicked")?;
-
-        // 确认封存后仍可读
-        repo_writer.seal_shard(shard)?;
-        let repo_reader_final = Repository::with_pack_soft_limit(temp_dir.path(), u64::MAX)?;
-        for data in chunks {
-            let hash = compute_chunk_hash(&data);
-            assert_eq!(repo_reader_final.read_chunk(&hash)?, data);
+        // 写完后封存，确认可读
+        repo.seal_shard(shard)?;
+        for data in [
+            b"post seal check 1".as_ref().to_vec(),
+            b"post seal check 2".as_ref().to_vec(),
+        ] {
+            let record = repo.write_chunk(&data, Compression::None)?;
+            assert_eq!(repo.read_chunk(&record.hash)?, data);
         }
         Ok(())
     }
 
     #[test]
-    fn cross_repo_competing_writers_same_shard() -> Result<()> {
+    fn concurrent_readers_on_unsealed_single_repo() -> Result<()> {
         let temp_dir = tempfile::tempdir().unwrap();
-        let repo_a = Arc::new(Repository::with_pack_soft_limit(temp_dir.path(), u64::MAX)?);
-        let repo_b = Arc::new(Repository::with_pack_soft_limit(temp_dir.path(), u64::MAX)?);
-        let (_, chunks) = generate_chunks_for_same_shard(20, 80);
-
-        let (tx, rx) = mpsc::channel();
-        let writer = |name: &'static str,
-                      repo: Arc<Repository>,
-                      data: Vec<Vec<u8>>,
-                      tx: mpsc::Sender<ChunkRecord>| {
-            thread::spawn(move || -> Result<()> {
-                for (idx, chunk) in data.into_iter().enumerate() {
-                    match repo.write_chunk(&chunk, Compression::None) {
-                        Ok(rec) => {
-                            tx.send(rec).unwrap();
-                        }
-                        Err(err) => {
-                            eprintln!("writer {name} failed at idx {idx}: {err:?}");
-                            return Err(err);
-                        }
-                    }
-                }
-                Ok(())
-            })
-        };
-
-        let mid = chunks.len() / 2;
-        let handle_a = writer("A", repo_a.clone(), chunks[..mid].to_vec(), tx.clone());
-        let handle_b = writer("B", repo_b.clone(), chunks[mid..].to_vec(), tx.clone());
-        drop(tx);
-
-        let mut records = Vec::new();
-        for rec in rx {
-            records.push(rec);
-        }
-        handle_a.join().expect("writer A panicked")?;
-        handle_b.join().expect("writer B panicked")?;
-
-        // 校验：无重复哈希且可读
-        let mut seen = std::collections::BTreeSet::new();
-        let repo_check = Repository::with_pack_soft_limit(temp_dir.path(), u64::MAX)?;
-        for rec in records {
-            assert!(seen.insert(rec.hash));
-            let bytes = repo_check.read_chunk(&rec.hash)?;
-            assert_eq!(bytes.len() as u32, rec.logical_len);
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn cross_repo_concurrent_readers_on_unsealed_pack() -> Result<()> {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let repo_writer = Repository::with_pack_soft_limit(temp_dir.path(), u64::MAX)?;
+        let repo = Arc::new(Repository::with_pack_soft_limit(temp_dir.path(), u64::MAX)?);
         let (_, chunks) = generate_chunks_for_same_shard(6, 64);
         let mut hashes = Vec::new();
         for c in &chunks {
-            hashes.push(repo_writer.write_chunk(c, Compression::None)?.hash);
+            hashes.push(repo.write_chunk(c, Compression::None)?.hash);
         }
 
-        // 多个独立实例并发读取未封存数据
         let hashes_arc = Arc::new(hashes);
         let results = Arc::new(Mutex::new(Vec::new()));
         let mut handles = Vec::new();
         for _ in 0..4 {
+            let repo_reader = repo.clone();
             let hashes_cloned = hashes_arc.clone();
-            let path = temp_dir.path().to_path_buf();
             let results_cloned = results.clone();
             handles.push(thread::spawn(move || -> Result<()> {
-                let repo_reader = Repository::with_pack_soft_limit(&path, u64::MAX)?;
                 for h in hashes_cloned.iter() {
                     let bytes = repo_reader.read_chunk(h)?;
                     results_cloned.lock().unwrap().push(bytes);
@@ -780,7 +678,6 @@ mod tests {
         for h in handles {
             h.join().expect("reader panicked")?;
         }
-        // 校验读到的条目数正确
         let collected = results.lock().unwrap();
         assert_eq!(collected.len(), hashes_arc.len() * 4);
         Ok(())
