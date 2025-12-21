@@ -1,0 +1,44 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" fill="none">
+
+  <defs>
+    <linearGradient id="mainBlue" x1="0.15" y1="0.15" x2="0.85" y2="0.85">
+      <stop offset="0%" stop-color="#8FB9FF"></stop>
+      <stop offset="100%" stop-color="#4A73FF"></stop>
+    </linearGradient>
+
+    <linearGradient id="orbitBlue" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#CFE2FF"></stop>
+      <stop offset="100%" stop-color="#8FB9FF"></stop>
+    </linearGradient>
+  </defs>
+
+  <!-- 外圆 -->
+  <circle cx="256" cy="256" r="176" stroke="url(#mainBlue)" stroke-width="18"></circle>
+
+  <!-- 星环（保持不动） -->
+  <ellipse cx="256" cy="256" rx="220" ry="80" transform="rotate(-18 256 256)" stroke="url(#orbitBlue)" stroke-width="10" stroke-linecap="round"></ellipse>
+
+  <!-- 星环小点 -->
+  <circle cx="382" cy="212" r="11" fill="#8FB9FF"></circle>
+
+  <!-- 加宽后的沙漏（唯一修改点） -->
+  <path d="
+      M202 150
+      Q202 200 246 226
+      Q256 232 266 226
+      Q310 200 310 150
+
+      M310 362
+      Q310 312 266 286
+      Q256 280 246 286
+      Q202 312 202 362
+    " stroke="url(#mainBlue)" stroke-width="20" stroke-linecap="round" stroke-linejoin="round"></path>
+
+  <!-- 沙漏上下边界（同步加宽） -->
+  <line x1="214" y1="150" x2="298" y2="150" stroke="url(#mainBlue)" stroke-width="20" stroke-linecap="round"></line>
+  <line x1="214" y1="362" x2="298" y2="362" stroke="url(#mainBlue)" stroke-width="20" stroke-linecap="round"></line>
+
+  <!-- 中心喉部点 -->
+  <circle cx="256" cy="256" r="6" fill="#4A73FF"></circle>
+
+</svg>
