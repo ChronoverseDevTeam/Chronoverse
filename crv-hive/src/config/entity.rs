@@ -3,11 +3,11 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ConfigEntity {
-    pub mongo_url: String,
-    pub mongo_database: String,
-    pub mongo_app: Option<String>,
-    pub mongo_username: Option<String>,
-    pub mongo_password: Option<String>,
+    pub postgres_hostname: String,
+    pub postgres_database: String,
+    pub postgres_username: String,
+    pub postgres_password: String,
+    pub postgres_port: u16, 
 
     pub hive_address: Option<String>,
     pub repository_path: String,
@@ -18,11 +18,11 @@ impl Default for ConfigEntity {
     fn default() -> Self {
         Self {
             // 添加 directConnection=true&w=1 用于单节点 MongoDB（非副本集）
-            mongo_url: "mongodb://127.0.0.1:27017/?directConnection=true&w=1".to_string(),
-            mongo_database: "chronoverse".to_string(),
-            mongo_app: Some("Chronoverse".to_string()),
-            mongo_username: None,
-            mongo_password: None,
+            postgres_hostname: "127.0.0.1".to_string(),
+            postgres_database: "chronoverse".to_string(),
+            postgres_username: "postgres".to_string(),
+            postgres_password: "postgres".to_string(),
+            postgres_port: 5432,
 
             hive_address: Some("0.0.0.0:34560".to_string()),
             repository_path: default_repository_path(),

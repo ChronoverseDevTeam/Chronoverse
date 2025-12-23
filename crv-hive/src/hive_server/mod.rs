@@ -79,8 +79,9 @@ pub(crate) fn repository_manager() -> Result<&'static Repository, Status> {
 #[cfg(not(test))]
 pub(crate) mod hive_dao {
     pub use crate::database::dao::{
+        allocate_changelist_id,
         find_branch_by_id, find_changelist_by_id, find_file_by_id, find_file_revision_by_branch_file_and_cl,
-        find_file_revision_by_id, get_max_changelist_id, insert_changelist, insert_file,
+        find_file_revision_by_id, insert_changelist, insert_file,
         insert_file_revisions, update_branch_head,
     };
 }
@@ -138,8 +139,9 @@ pub(crate) mod hive_dao {
         Ok(s.changelists.get(&changelist_id).cloned())
     }
 
-    pub async fn get_max_changelist_id() -> DaoResult<i64> {
-        let s = state().lock().expect("lock mock dao state");
+    pub async fn allocate_changelist_id() -> DaoResult<i64> {
+        let mut s = state().lock().expect("lock mock dao state");
+        s.max_changelist_id += 1;
         Ok(s.max_changelist_id)
     }
 

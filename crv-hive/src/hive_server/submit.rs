@@ -828,11 +828,10 @@ pub async fn handle_submit(request: Request<SubmitReq>) -> Result<Response<Submi
         .ok_or_else(|| Status::not_found("branch not found"))?;
     let parent_changelist_id = branch.head_changelist_id;
 
-    // 计算新的 changelist ID（简单自增）。
-    let max_id = dao::get_max_changelist_id()
+    // 分配新的 changelist ID（使用 Postgres 序列，避免并发竞态）。
+    let new_changelist_id = dao::allocate_changelist_id()
         .await
-        .map_err(|e| Status::internal(format!("database error while reading changelist: {e}")))?;
-    let new_changelist_id = max_id + 1;
+        .map_err(|e| Status::internal(format!("database error while allocating changelist id: {e}")))?;
 
     // 当前时间戳（毫秒）
     let now_millis = SystemTime::now()
