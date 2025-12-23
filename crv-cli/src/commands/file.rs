@@ -2,18 +2,43 @@ use anyhow::Result;
 use clap::Parser;
 use console::style;
 use crv_edge::pb::{
-    file_service_client::FileServiceClient, SubmitReq, SyncReq,
+    file_service_client::FileServiceClient, AddReq, DeleteReq, SubmitReq, SyncReq,
 };
 use dialoguer::{Input, theme::ColorfulTheme};
 use tonic::transport::Channel;
 use tokio_stream::StreamExt;
 
 #[derive(Parser)]
-pub struct AddCli;
+pub struct AddCli {
+    /// Workspace name
+    #[arg(short, long)]
+    pub workspace: String,
+    
+    /// Paths to add (can be local paths, workspace paths, or depot paths)
+    #[arg(required = true)]
+    pub paths: Vec<String>,
+}
 
 impl AddCli {
     pub async fn handle(&self, channel: &Channel) -> Result<()> {
-        todo!()
+        let mut client = FileServiceClient::new(channel.clone());
+        
+        println!("{}", style("Adding files...").cyan());
+        
+        let request = AddReq {
+            workspace_name: self.workspace.clone(),
+            paths: self.paths.clone(),
+        };
+        
+        let response = client.add(request).await?.into_inner();
+        
+        let count = response.added_paths.len();
+        for path in response.added_paths {
+            println!("  {} {}", style("✓").green(), path);
+        }
+        
+        println!("{}", style(format!("Added {} file(s) successfully!", count)).green());
+        Ok(())
     }
 }
 
@@ -140,6 +165,40 @@ impl SyncCli {
         }
         
         println!("{}", style("Sync completed successfully!").green());
+        Ok(())
+    }
+}
+
+#[derive(Parser)]
+pub struct DeleteCli {
+    /// Workspace name
+    #[arg(short, long)]
+    pub workspace: String,
+    
+    /// Paths to delete (can be local paths, workspace paths, or depot paths)
+    #[arg(required = true)]
+    pub paths: Vec<String>,
+}
+
+impl DeleteCli {
+    pub async fn handle(&self, channel: &Channel) -> Result<()> {
+        let mut client = FileServiceClient::new(channel.clone());
+        
+        println!("{}", style("Marking files for deletion...").cyan());
+        
+        let request = DeleteReq {
+            workspace_name: self.workspace.clone(),
+            paths: self.paths.clone(),
+        };
+        
+        let response = client.delete(request).await?.into_inner();
+        
+        let count = response.deleted_paths.len();
+        for path in response.deleted_paths {
+            println!("  {} {}", style("✓").green(), path);
+        }
+        
+        println!("{}", style(format!("Marked {} file(s) for deletion successfully!", count)).green());
         Ok(())
     }
 }

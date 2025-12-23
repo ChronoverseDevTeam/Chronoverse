@@ -78,6 +78,15 @@ message AddRsp {
   repeated string added_paths = 1;
 }
 
+message DeleteReq {
+  string workspace_name = 1;
+  repeated string paths = 2;
+}
+
+message DeleteRsp {
+  repeated string deleted_paths = 1;
+}
+
 message SyncReq {
   string workspace_name = 1;
   repeated string paths = 2; // 可能是本地路径、工作区路径、或者 depot 路径
@@ -142,6 +151,7 @@ message SubmitProgress {
 
 service FileService {
   rpc Add(AddReq) returns (AddRsp);
+  rpc Delete(DeleteReq) returns (DeleteRsp);
   rpc Sync(SyncReq) returns (stream SyncProgress);
   rpc Lock(LockReq) returns (LockRsp);
   rpc Revert(RevertReq) returns (RevertRsp);

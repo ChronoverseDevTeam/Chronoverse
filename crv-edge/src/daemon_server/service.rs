@@ -86,7 +86,14 @@ impl FileService for FileServiceImpl {
     type SubmitStream = SubmitStream;
 
     async fn add(&self, request: Request<AddReq>) -> Result<Response<AddRsp>, Status> {
-        todo!()
+        handlers::file::add::handle(self.state.clone(), request)
+            .await
+            .map_err(|e| e.into())
+    }
+    async fn delete(&self, request: Request<DeleteReq>) -> Result<Response<DeleteRsp>, Status> {
+        handlers::file::delete::handle(self.state.clone(), request)
+            .await
+            .map_err(|e| e.into())
     }
     async fn sync(&self, request: Request<SyncReq>) -> Result<Response<SyncStream>, Status> {
         handlers::file::sync::handle(self.state.clone(), request).await
