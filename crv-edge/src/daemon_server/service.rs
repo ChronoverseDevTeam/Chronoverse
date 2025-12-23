@@ -89,7 +89,8 @@ impl FileService for FileServiceImpl {
         todo!()
     }
     async fn sync(&self, request: Request<SyncReq>) -> Result<Response<SyncStream>, Status> {
-        todo!()
+        handlers::file::sync::handle(self.state.clone(), request).await
+            .map_err(|e| e.into())
     }
     async fn lock(&self, request: Request<LockReq>) -> Result<Response<LockRsp>, Status> {
         todo!()

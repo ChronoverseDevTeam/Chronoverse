@@ -161,4 +161,19 @@ impl HiveClient {
         }
         Ok(false)
     }
+
+    /// Sync 操作：获取文件树（get_file_tree 的别名，语义更清晰）
+    pub async fn sync(
+        &mut self,
+        branch_id: String,
+        depot_wildcard: String,
+        changelist_id: i64,
+    ) -> Result<GetFileTreeRsp, tonic::Status> {
+        let rsp: tonic::Response<GetFileTreeRsp> = self.inner.get_file_tree(GetFileTreeReq {
+            branch_id,
+            depot_wildcard,
+            changelist_id,
+        }).await?;
+        Ok(rsp.into_inner())
+    }
 }

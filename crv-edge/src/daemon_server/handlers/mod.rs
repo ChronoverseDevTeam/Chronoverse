@@ -2,4 +2,5 @@
 pub mod changelist;
 pub mod edge;
 pub mod file;
+pub mod utils;
 pub mod workspace;
