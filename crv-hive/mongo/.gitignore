@@ -1,6 +1,0 @@
-bin/
-data/
-data-native/
-dist/
-logs/
-mongod.pid
