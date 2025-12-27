@@ -139,12 +139,13 @@ message SubmitRsp {
 
 message File {
     string name = 1;
-    string file_id = 2;
-    string revision_id = 3;
-    string changelist_id = 4;
-    repeated string binary_id = 5;
-    int64 size = 6;
-    int64 revision_created_at = 7;
+    string branch = 2;
+    string file_id = 3;
+    string revision_id = 4;
+    string changelist_id = 5;
+    repeated string binary_id = 6;
+    int64 size = 7;
+    int64 revision_created_at = 8;
 }
 
 message Directory {
