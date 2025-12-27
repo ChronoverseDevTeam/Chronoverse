@@ -57,10 +57,7 @@ impl HiveClient {
             state: state.clone(),
         };
         let inner = HiveServiceClient::with_interceptor(channel, interceptor);
-        Ok(Self {
-            inner,
-            state,
-        })
+        Ok(Self { inner, state })
     }
 
     /// 使用已有的 Channel 创建 HiveClient（用于连接池）
@@ -70,10 +67,7 @@ impl HiveClient {
             state: state.clone(),
         };
         let inner = HiveServiceClient::with_interceptor(channel, interceptor);
-        Self {
-            inner,
-            state,
-        }
+        Self { inner, state }
     }
 
     pub fn set_token<S: Into<String>>(&self, token: S) {
@@ -90,7 +84,7 @@ impl HiveClient {
             });
         }
     }
-    
+
     pub fn clear_token(&self) {
         self.state.lock().unwrap().access_token = None;
     }
@@ -160,20 +154,5 @@ impl HiveClient {
             }
         }
         Ok(false)
-    }
-
-    /// Sync 操作：获取文件树（get_file_tree 的别名，语义更清晰）
-    pub async fn sync(
-        &mut self,
-        branch_id: String,
-        depot_wildcard: String,
-        changelist_id: i64,
-    ) -> Result<GetFileTreeRsp, tonic::Status> {
-        let rsp: tonic::Response<GetFileTreeRsp> = self.inner.get_file_tree(GetFileTreeReq {
-            branch_id,
-            depot_wildcard,
-            changelist_id,
-        }).await?;
-        Ok(rsp.into_inner())
     }
 }

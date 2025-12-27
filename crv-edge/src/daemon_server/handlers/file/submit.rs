@@ -35,8 +35,8 @@ struct FileToSubmit {
     current_revision: Option<String>,
 }
 
-const CHUNK_SIZE: usize = 64 * 1024; // 64KB，保持高去重率
-const BATCH_SIZE: usize = 4 * 1024 * 1024; // 4MB，内存中的处理窗口，也是去重检查的批次大小
+const FRAME_SIZE: usize = 64 * 1024; // 64KB，单个报文中的数据大小
+const CHUNK_SIZE: usize = 4 * 1024 * 1024; // 4MB，内存中的处理窗口，也是一个 chunk 的大小
 
 pub async fn handle(
     state: AppState,
@@ -275,7 +275,7 @@ pub async fn handle(
                 .map_err(|e| AppError::Internal(format!("Open error: {e}")))?;
 
             let zero_chunk_hash = hex::encode(compute_chunk_hash(&[]));
-            let mut batch_buffer = vec![0u8; BATCH_SIZE];
+            let mut batch_buffer = vec![0u8; CHUNK_SIZE];
             let mut offset = 0i64;
             let mut hive_client = HiveServiceClient::new(chan);
             let mut chunk_hashes = vec![zero_chunk_hash.clone()]; // 收集当前文件的所有块 hash
@@ -291,7 +291,7 @@ pub async fn handle(
                 let is_eof = n == 0;
                 let data = &batch_buffer[..n];
 
-                let chunks: Vec<&[u8]> = data.chunks(CHUNK_SIZE).collect();
+                let chunks: Vec<&[u8]> = data.chunks(FRAME_SIZE).collect();
                 let mut batch_hashes = Vec::with_capacity(chunks.len());
 
                 for chunk in &chunks {
