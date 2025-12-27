@@ -133,19 +133,22 @@ message SubmitRsp {
     repeated string missing_chunks = 5;
 
     string message = 6;
-    string uuid = 7;
 }
 // Submit End
 
+message FileRevision {
+    string revision_id = 1;
+    string changelist_id = 2;
+    repeated string binary_id = 3;
+    int64 size = 4;
+    int64 revision_created_at = 5;
+}
+
 message File {
     string name = 1;
-    string branch = 2;
     string file_id = 3;
-    string revision_id = 4;
-    string changelist_id = 5;
-    repeated string binary_id = 6;
-    int64 size = 7;
-    int64 revision_created_at = 8;
+    // 目标分支到文件版本的映射，"" 表示不带分支的文件树
+    map<string, FileRevision> revisions = 4;
 }
 
 message Directory {
@@ -161,9 +164,13 @@ message FileTreeNode {
 }
 
 message GetFileTreeReq {
-    string branch_id = 1;
-    string depot_wildcard = 2;
-    int64 changelist_id = 3;
+    // 要包含的分支，如果要包含所有分支，请使用 ["*"]
+    repeated string include_branches = 1;
+    // 要排除的分支，如果要排除所有分支，请使用 ["*"]
+    repeated string exclude_branches = 2;
+    bool include_non_branch_tree = 3;
+    string depot_wildcard = 4;
+    int64 changelist_id = 5;
 }
 
 message GetFileTreeRsp {
