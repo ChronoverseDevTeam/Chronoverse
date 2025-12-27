@@ -137,11 +137,12 @@ message SubmitRsp {
 // Submit End
 
 message FileRevision {
-    string revision_id = 1;
-    string changelist_id = 2;
-    repeated string binary_id = 3;
-    int64 size = 4;
-    int64 revision_created_at = 5;
+    string branch_id = 1;
+    string revision_id = 2;
+    string changelist_id = 3;
+    repeated string binary_id = 4;
+    int64 size = 5;
+    int64 revision_created_at = 6;
 }
 
 message File {
