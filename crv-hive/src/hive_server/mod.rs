@@ -1,8 +1,8 @@
 use crate::auth::{AuthInterceptor, AuthService};
 use crate::pb::{
     BonjourReq, BonjourRsp, CheckChunksReq, CheckChunksRsp, DownloadFileChunkReq,
-    GetFileTreeReq, GetFileTreeRsp, LoginReq, LoginRsp, RegisterReq,
-    RegisterRsp, SubmitReq, SubmitRsp, TryLockFilesReq, TryLockFilesResp, UploadFileChunkReq,
+    GetFileTreeReq, GetFileTreeRsp, LaunchSubmitReq, LaunchSubmitRsp, LoginReq, LoginRsp, RegisterReq,
+    RegisterRsp, SubmitReq, SubmitRsp, UploadFileChunkReq,
     hive_service_server::{HiveService, HiveServiceServer},
 };
 use argon2::password_hash::SaltString;
@@ -354,52 +354,6 @@ impl HiveService for CrvHiveService {
         }))
     }
 
-    /// 预检查一批文件是否可以被当前 changelist 锁定。
-    async fn try_lock_files(
-        &self,
-        request: Request<TryLockFilesReq>,
-    ) -> Result<Response<TryLockFilesResp>, Status> {
-        submit::handle_try_lock_files(request).await
-    }
-
-    /// 检查服务器端当前缺少哪些 chunk_hash。
-    ///
-    /// 规则：
-    /// - 若某个 chunk 已经存在于主仓库（Repository）中，则视为“已满足”，不加入返回结果；
-    /// - 否则检查本地上传缓存（ChunkCache）：
-    ///   - 若缓存文件存在且哈希校验通过，则视为“已满足”，不加入返回结果；
-    ///   - 若缓存文件存在但哈希校验失败，则删除该缓存文件并将该 chunk 视为“缺失”；
-    /// - 其他情况（仓库和缓存中都不存在、或解析/访问出错）统一视为“缺失”，加入返回结果。
-    async fn check_chunks(
-        &self,
-        request: Request<CheckChunksReq>,
-    ) -> Result<Response<CheckChunksRsp>, Status> {
-        submit::handle_check_chunks(request).await
-    }
-
-    /// 上传文件内容块到服务器进行缓存
-    type UploadFileChunkStream = submit::UploadFileChunkStream;
-
-    /// 上传文件内容块到服务器进行缓存（双向流式）
-    async fn upload_file_chunk(
-        &self,
-        request: Request<tonic::Streaming<UploadFileChunkReq>>,
-    ) -> Result<Response<Self::UploadFileChunkStream>, Status> {
-        submit::handle_upload_file_chunk_stream(request).await
-    }
-
-    /// 提交一个新的 changelist，使用之前上传好的 cache 文件块作为数据源，该操作应该是原子且一致的，在操作完成后无论如何
-    /// 都应该清理掉本次提交中相关的 chunk cache 文件。同时，对于数据库的提交也应该是原子且一致的，要么全部成功，要么全部不成功。
-    async fn submit(&self, request: Request<SubmitReq>) -> Result<Response<SubmitRsp>, Status> {
-        submit::handle_submit(request).await
-    }
-
-    async fn get_file_tree(
-        &self,
-        request: Request<GetFileTreeReq>,
-    ) -> Result<Response<GetFileTreeRsp>, Status> {
-        fetch::handle_get_file_tree(request).await
-    }
 
     type DownloadFileChunkStream = download::DownloadFileChunkStream;
 
@@ -408,6 +362,48 @@ impl HiveService for CrvHiveService {
         request: Request<DownloadFileChunkReq>,
     ) -> Result<Response<Self::DownloadFileChunkStream>, Status> {
         download::handle_download_file_chunk(request).await
+    }
+
+    async fn launch_submit(
+        &self,
+        _request: Request<LaunchSubmitReq>,
+    ) -> Result<Response<LaunchSubmitRsp>, Status> {
+        // TODO: 实现 LaunchSubmit 逻辑
+        todo!("implement launch_submit")
+    }
+
+    async fn check_chunks(
+        &self,
+        _request: Request<CheckChunksReq>,
+    ) -> Result<Response<CheckChunksRsp>, Status> {
+        // TODO: 实现 CheckChunks 逻辑
+        todo!("implement check_chunks")
+    }
+
+    type UploadFileChunkStream = submit::UploadFileChunkStream;
+
+    async fn upload_file_chunk(
+        &self,
+        _request: Request<tonic::Streaming<UploadFileChunkReq>>,
+    ) -> Result<Response<Self::UploadFileChunkStream>, Status> {
+        // TODO: 实现 UploadFileChunk 逻辑
+        todo!("implement upload_file_chunk")
+    }
+
+    async fn submit(
+        &self,
+        _request: Request<SubmitReq>,
+    ) -> Result<Response<SubmitRsp>, Status> {
+        // TODO: 实现 Submit 逻辑
+        todo!("implement submit")
+    }
+
+    async fn get_file_tree(
+        &self,
+        _request: Request<GetFileTreeReq>,
+    ) -> Result<Response<GetFileTreeRsp>, Status> {
+        // TODO: 实现 GetFileTree 逻辑
+        todo!("implement get_file_tree")
     }
 }
 
