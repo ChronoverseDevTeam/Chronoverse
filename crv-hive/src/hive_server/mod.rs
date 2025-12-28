@@ -23,7 +23,6 @@ use tower_http::cors::{Any, CorsLayer};
 mod fetch;
 mod download;
 mod submit;
-mod launch_submit;
 
 pub struct CrvHiveService {
     auth: Arc<AuthService>,
@@ -357,6 +356,7 @@ impl HiveService for CrvHiveService {
 
 
     type DownloadFileChunkStream = download::DownloadFileChunkStream;
+    type UploadFileChunkStream = submit::UploadFileChunkStream;
 
     async fn download_file_chunk(
         &self,
@@ -367,9 +367,9 @@ impl HiveService for CrvHiveService {
 
     async fn launch_submit(
         &self,
-        request: Request<LaunchSubmitReq>,
+        _request: Request<LaunchSubmitReq>,
     ) -> Result<Response<LaunchSubmitRsp>, Status> {
-        launch_submit::handle_launch_submit(request).await
+        todo!("implement launch_submit")
     }
 
     async fn check_chunks(
@@ -379,8 +379,6 @@ impl HiveService for CrvHiveService {
         // TODO: 实现 CheckChunks 逻辑
         todo!("implement check_chunks")
     }
-
-    type UploadFileChunkStream = submit::UploadFileChunkStream;
 
     async fn upload_file_chunk(
         &self,

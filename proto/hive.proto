@@ -81,8 +81,7 @@ message SubmitReq {
 }
 
 message FileToLock {
-    string file_id = 1;
-    string path = 2;
+    string path = 1;
     // 期望在锁定时文件的版本，只有在该文件在对应分支上被第一次创建时才能够为空，其他情况下为空应该视为错误
     string expected_file_revision = 3;
     // 若为 true，表示期望文件当前不存在
