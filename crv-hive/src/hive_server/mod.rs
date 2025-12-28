@@ -23,6 +23,7 @@ use tower_http::cors::{Any, CorsLayer};
 mod fetch;
 mod download;
 mod submit;
+mod launch_submit;
 
 pub struct CrvHiveService {
     auth: Arc<AuthService>,
@@ -366,10 +367,9 @@ impl HiveService for CrvHiveService {
 
     async fn launch_submit(
         &self,
-        _request: Request<LaunchSubmitReq>,
+        request: Request<LaunchSubmitReq>,
     ) -> Result<Response<LaunchSubmitRsp>, Status> {
-        // TODO: 实现 LaunchSubmit 逻辑
-        todo!("implement launch_submit")
+        launch_submit::handle_launch_submit(request).await
     }
 
     async fn check_chunks(

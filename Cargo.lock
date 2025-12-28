@@ -1025,6 +1025,7 @@ dependencies = [
  "tonic-web",
  "tower-http",
  "urlencoding",
+ "uuid",
 ]
 
 [[package]]
