@@ -367,9 +367,9 @@ impl HiveService for CrvHiveService {
 
     async fn launch_submit(
         &self,
-        _request: Request<LaunchSubmitReq>,
+        request: Request<LaunchSubmitReq>,
     ) -> Result<Response<LaunchSubmitRsp>, Status> {
-        todo!("implement launch_submit")
+        submit::launch_submit::handle_launch_submit(request).await
     }
 
     async fn check_chunks(

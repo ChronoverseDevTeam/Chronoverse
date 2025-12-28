@@ -3,8 +3,6 @@ use serde::{Deserialize, Serialize};
 /// `users` 集合
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserDoc {
-    /// Mongo `_id`，即用户名
-    #[serde(rename = "_id")]
     pub id: String,
     /// 用户的明文/加密密码
     pub password: String,
@@ -15,8 +13,6 @@ pub struct UserDoc {
 pub struct BranchMetadata {
     /// 分支描述
     pub description: String,
-    /// 分支所有者列表
-    pub owners: Vec<String>,
 }
 
 /// `branches` 集合
@@ -101,6 +97,8 @@ pub struct FileDoc {
     pub id: String,
     /// 规范化路径，例如：`//src/module/a.cpp`
     pub path: String,
+    /// 该文件存在于哪些分支，"" 代表在默认分支里存在
+    pub seen_on_branches: Vec<String>,
     /// 创建时间（Linux 时间戳，毫秒）
     pub created_at: i64,
     /// 附加元信息
@@ -145,44 +143,4 @@ pub struct FileRevisionDoc {
     pub metadata: FileRevisionMetadata,
 }
 
-/// Workspace 跟踪条目的状态
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum WorkspaceTrackingStatus {
-    Modified,
-    Added,
-    Deleted,
-}
-
-/// `workspaces` 集合中 `tracking` 数组的元素
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WorkspaceTrackingItem {
-    pub file_id: String,
-    pub status: WorkspaceTrackingStatus,
-}
-
-/// `workspaces` 集合中 `metadata` 字段
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WorkspaceMetadata {
-    pub hostname: String,
-}
-
-/// `workspaces` 集合
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WorkspaceDoc {
-    /// Workspace 全局唯一 ID
-    #[serde(rename = "_id")]
-    pub id: String,
-    pub user_id: String,
-    pub base_branch_id: String,
-    pub base_changelist_id: i64,
-    pub tracking: Vec<WorkspaceTrackingItem>,
-    /// 创建时间（Linux 时间戳，毫秒）
-    pub created_at: i64,
-    /// 更新时间（Linux 时间戳，毫秒）
-    pub updated_at: i64,
-    pub metadata: WorkspaceMetadata,
-}
-
+// 工作区管理不是通用逻辑，现已从 core 中移除，请 Edge 在自己的逻辑中定义， 后续 Hive 中会定义用于交换 checkout 和 lock 信息的 gRPC 接口

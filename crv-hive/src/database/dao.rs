@@ -152,10 +152,12 @@ pub async fn find_file_by_id(file_id: &str) -> DaoResult<Option<FileDoc>> {
         .await?;
     let Some(m) = model else { return Ok(None) };
 
+    let seen_on_branches: Vec<String> = serde_json::from_value(m.seen_on_branches)?;
     let metadata: FileMetadata = serde_json::from_value(m.metadata)?;
     Ok(Some(FileDoc {
         id: m.id,
         path: m.path,
+        seen_on_branches,
         created_at: m.created_at,
         metadata,
     }))
@@ -166,6 +168,7 @@ pub async fn insert_file(doc: FileDoc) -> DaoResult<()> {
     let am = entities::files::ActiveModel {
         id: Set(doc.id),
         path: Set(doc.path),
+        seen_on_branches: Set(serde_json::to_value(doc.seen_on_branches)?),
         created_at: Set(doc.created_at),
         metadata: Set(serde_json::to_value(doc.metadata)?),
     };

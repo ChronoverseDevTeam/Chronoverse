@@ -313,7 +313,6 @@ mod tests {
             head_changelist_id: 300,
             metadata: BranchMetadata {
                 description: "main".to_string(),
-                owners: vec!["userA".to_string()],
             },
         }
     }
@@ -325,6 +324,7 @@ mod tests {
             FileDoc {
                 id: "f1".to_string(),
                 path: "//src/module/a.cpp".to_string(),
+                seen_on_branches: vec!["branch_main".to_string()],
                 created_at: 0,
                 metadata: FileMetadata {
                     first_introduced_by: "userA".to_string(),
@@ -336,6 +336,7 @@ mod tests {
             FileDoc {
                 id: "f2".to_string(),
                 path: "//src/other/b.cpp".to_string(),
+                seen_on_branches: vec!["branch_main".to_string()],
                 created_at: 0,
                 metadata: FileMetadata {
                     first_introduced_by: "userA".to_string(),
@@ -576,7 +577,6 @@ mod tests {
             head_changelist_id: 10,
             metadata: BranchMetadata {
                 description: "long random branch".to_string(),
-                owners: vec!["userLong".to_string()],
             },
         };
 
@@ -587,6 +587,7 @@ mod tests {
             FileDoc {
                 id: "fa".to_string(),
                 path: "//src/module/fa.txt".to_string(),
+                seen_on_branches: vec!["branch_rand".to_string()],
                 created_at: 0,
                 metadata: FileMetadata {
                     first_introduced_by: "userLong".to_string(),
@@ -598,6 +599,7 @@ mod tests {
             FileDoc {
                 id: "fb".to_string(),
                 path: "//src/module/deep/fb.txt".to_string(),
+                seen_on_branches: vec!["branch_rand".to_string()],
                 created_at: 0,
                 metadata: FileMetadata {
                     first_introduced_by: "userLong".to_string(),
@@ -609,6 +611,7 @@ mod tests {
             FileDoc {
                 id: "fc".to_string(),
                 path: "//src/other/fc.txt".to_string(),
+                seen_on_branches: vec!["branch_rand".to_string()],
                 created_at: 0,
                 metadata: FileMetadata {
                     first_introduced_by: "userLong".to_string(),
@@ -803,7 +806,6 @@ mod tests {
             head_changelist_id: 1,
             metadata: BranchMetadata {
                 description: "large branch".to_string(),
-                owners: vec!["userLarge".to_string()],
             },
         };
 
@@ -839,6 +841,7 @@ mod tests {
                 FileDoc {
                     id: file_id.clone(),
                     path,
+                    seen_on_branches: vec!["branch_large".to_string()],
                     created_at: 0,
                     metadata: FileMetadata {
                         first_introduced_by: "userLarge".to_string(),

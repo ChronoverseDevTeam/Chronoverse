@@ -2,13 +2,8 @@ use crate::auth::require_user;
 use crate::hive_server::submit::{SubmitManager, submit_manager};
 use crate::hive_server::{derive_file_id_from_path, hive_dao};
 use crate::pb::{LaunchSubmitReq, LaunchSubmitRsp};
+use chrono::Duration;
 use tonic::{Request, Response, Status};
-use uuid::Uuid;
-
-fn generate_ticket() -> String {
-    // 生成 UUID 并去掉连字符
-    Uuid::new_v4().to_string().replace('-', "")
-}
 
 async fn get_current_revision_id_at_head(
     branch_id: &str,
@@ -64,10 +59,20 @@ pub async fn handle_launch_submit(
     let _ = require_user(&request)?;
 
     let req = request.into_inner();
+
+    // 默认 ticket 超时：客户端未提供字段，因此由服务器控制。
+    // 如果你有全局配置项，我们也可以把这里改成从配置读取。
+    const DEFAULT_TICKET_TIMEOUT_SECONDS: i64 = 30;
+    let ticket = submit_manager().create_ticket(Duration::seconds(DEFAULT_TICKET_TIMEOUT_SECONDS));
+
     let files_to_lock = req.files.iter().map(|file| file.path.clone()).collect();
-    submit_manager()
-        .batch_lock_files(&req.branch_id, &files_to_lock, generate_ticket())
-        .map_err(|e| Status::internal(e.to_string()))?;
+    if let Err(e) = submit_manager().batch_lock_files(&req.branch_id, &files_to_lock, ticket.clone()) {
+        // 锁定失败不应留下无效 ticket
+        let _ = submit_manager().cancel_ticket(&ticket);
+        return Err(Status::internal(e.to_string()));
+    }
+
+    // todo: REVIEW starts
 
     // 第二步：对比当前文件 revision 与请求期望 revision 的差距，不一致则直接报错
     for file in &req.files {
@@ -78,6 +83,7 @@ pub async fn handle_launch_submit(
         if file.is_delete {
             let expected = file.expected_file_revision.trim();
             if expected.is_empty() {
+                let _ = submit_manager().cancel_ticket(&ticket);
                 return Err(Status::failed_precondition(format!(
                     "expected_file_revision is required for delete: path={} branch_id={}",
                     file.path, req.branch_id
@@ -85,6 +91,7 @@ pub async fn handle_launch_submit(
             }
 
             let Some(cur) = current_rev else {
+                let _ = submit_manager().cancel_ticket(&ticket);
                 return Err(Status::failed_precondition(format!(
                     "cannot delete non-existing file: path={} branch_id={}",
                     file.path, req.branch_id
@@ -92,6 +99,7 @@ pub async fn handle_launch_submit(
             };
 
             if cur != expected {
+                let _ = submit_manager().cancel_ticket(&ticket);
                 return Err(Status::failed_precondition(format!(
                     "file revision mismatch (delete): path={} branch_id={} current={} expected={}",
                     file.path, req.branch_id, cur, expected
@@ -104,6 +112,7 @@ pub async fn handle_launch_submit(
         // 期望文件不存在
         if file.expected_file_not_exist {
             if let Some(cur) = current_rev {
+                let _ = submit_manager().cancel_ticket(&ticket);
                 return Err(Status::failed_precondition(format!(
                     "file should not exist: path={} branch_id={} current={}",
                     file.path, req.branch_id, cur
@@ -119,6 +128,7 @@ pub async fn handle_launch_submit(
             None => {
                 let expected = file.expected_file_revision.trim();
                 if !expected.is_empty() {
+                    let _ = submit_manager().cancel_ticket(&ticket);
                     return Err(Status::failed_precondition(format!(
                         "file revision mismatch (create): path={} branch_id={} current=<not-exist> expected={}",
                         file.path, req.branch_id, expected
@@ -128,12 +138,14 @@ pub async fn handle_launch_submit(
             Some(cur) => {
                 let expected = file.expected_file_revision.trim();
                 if expected.is_empty() {
+                    let _ = submit_manager().cancel_ticket(&ticket);
                     return Err(Status::failed_precondition(format!(
                         "expected_file_revision is required: path={} branch_id={} current={}",
                         file.path, req.branch_id, cur
                     )));
                 }
                 if cur != expected {
+                    let _ = submit_manager().cancel_ticket(&ticket);
                     return Err(Status::failed_precondition(format!(
                         "file revision mismatch: path={} branch_id={} current={} expected={}",
                         file.path, req.branch_id, cur, expected
@@ -143,5 +155,11 @@ pub async fn handle_launch_submit(
         }
     }
 
-    return Result::Err(Status::aborted("not implemented"));
+    // todo: REWVIEW ends
+
+    Ok(Response::new(LaunchSubmitRsp {
+        ticket,
+        success: true,
+        file_unable_to_lock: Vec::new(),
+    }))
 }
