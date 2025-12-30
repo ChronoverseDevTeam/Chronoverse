@@ -1,6 +1,5 @@
 pub mod client_manager;
 pub mod daemon_server;
-pub mod hive_client;
 pub mod utils;
 
 pub mod pb {

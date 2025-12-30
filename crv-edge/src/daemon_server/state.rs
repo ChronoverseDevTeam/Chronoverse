@@ -3,13 +3,8 @@ use crate::daemon_server::error::{AppError, AppResult};
 
 use super::db::DbManager;
 use lru::LruCache;
-use std::{
-    num::NonZeroUsize,
-    sync::Arc,
-};
-use tokio::sync::Mutex;
+use std::{num::NonZeroUsize, sync::Arc};
 use tonic::transport::{Channel, Endpoint};
-use crate::hive_client::HiveClient;
 
 /// 全局应用状态，将被注入到 gRPC Service 中
 #[derive(Clone)]
@@ -18,7 +13,6 @@ pub struct AppState {
     pub db: Arc<DbManager>,
     /// 与 hive 的连接通道池
     pub hive_channel: Arc<ChannelPool>,
-    pub hive_client: Option<Arc<Mutex<HiveClient>>>,
 }
 
 /// 缓存连接
@@ -66,23 +60,9 @@ impl ChannelPool {
 
 impl AppState {
     pub fn new(db: Arc<DbManager>) -> Self {
-        Self { 
+        Self {
             db,
             hive_channel: Arc::new(ChannelPool::new()),
-            hive_client: None,
         }
-    }
-
-    /// 设置 HiveClient
-    pub fn with_hive_client(mut self, hive_client: HiveClient) -> Self {
-        self.hive_client = Some(Arc::new(Mutex::new(hive_client)));
-        self
-    }
-
-    /// 获取 HiveClient 的引用
-    pub async fn get_hive_client(&self) -> Result<Arc<Mutex<HiveClient>>, tonic::Status> {
-        self.hive_client
-            .clone()
-            .ok_or_else(|| tonic::Status::unavailable("Hive client not initialized"))
     }
 }
