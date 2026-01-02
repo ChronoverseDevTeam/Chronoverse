@@ -91,15 +91,12 @@ message FileToLock {
 }
 
 message LaunchSubmitReq {
-    // 要进行提交的分支，如果为空字符串则不具备分支
-    string branch_id = 1;
     // 要锁定的文件
-    repeated FileToLock files = 2;
+    repeated FileToLock files = 1;
 }
 
 message FileUnableToLock {
     string file_id = 1;
-    string branch_id = 2;
     string path = 3;
     string current_file_revision = 4;
     string expected_file_revision = 5;
@@ -136,12 +133,11 @@ message SubmitRsp {
 // Submit End
 
 message FileRevision {
-    string branch_id = 1;
-    string revision_id = 2;
-    string changelist_id = 3;
-    repeated string binary_id = 4;
-    int64 size = 5;
-    int64 revision_created_at = 6;
+    string revision_id = 1;
+    string changelist_id = 2;
+    repeated string binary_id = 3;
+    int64 size = 4;
+    int64 revision_created_at = 5;
 }
 
 message File {
@@ -164,13 +160,8 @@ message FileTreeNode {
 }
 
 message GetFileTreeReq {
-    // 要包含的分支，如果要包含所有分支，请使用 ["*"]
-    repeated string include_branches = 1;
-    // 要排除的分支，如果要排除所有分支，请使用 ["*"]
-    repeated string exclude_branches = 2;
-    bool include_non_branch_tree = 3;
-    string depot_wildcard = 4;
-    int64 changelist_id = 5;
+    string depot_wildcard = 1;
+    int64 changelist_id = 2;
 }
 
 message GetFileTreeRsp {
@@ -186,7 +177,7 @@ message DownloadFileChunkResp {
     string chunk_hash = 1;
     int64 offset = 2;
     bytes content = 3;
-    bool eof = 4;
+    uint64 size = 4;
     // 本块使用的压缩方式，可选，例如 "none" / "lz4"
     string compression = 5;
     // 解压后的原始大小（字节），用于校验
