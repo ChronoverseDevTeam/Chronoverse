@@ -3,9 +3,10 @@ use sea_orm::entity::prelude::*;
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
 #[sea_orm(table_name = "file_revisions")]
 pub struct Model {
+    pub file: Model,
+    pub generation: u64,
     #[sea_orm(primary_key, auto_increment = false)]
-    pub id: String,
-    pub branch_id: String,
+    pub revision: u64,
     pub file_id: String,
     pub changelist_id: i64,
     pub binary_id: Json,
