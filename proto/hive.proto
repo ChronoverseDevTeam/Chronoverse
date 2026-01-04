@@ -69,9 +69,9 @@ message CheckChunksRsp {
 }
 
 message FileChunks {
-    // 文件 ID（通常为路径的 Blake3 哈希，对应 `files` 集合中的 `_id`）
-    string file_id = 1;
-    repeated string binary_id = 5;
+    // 文件 depot path
+    string path = 1;
+    repeated string binary_id = 2;
 }
 
 message SubmitReq {
@@ -82,12 +82,12 @@ message SubmitReq {
 
 message FileToLock {
     string path = 1;
-    // 期望在锁定时文件的版本，只有在该文件在对应分支上被第一次创建时才能够为空，其他情况下为空应该视为错误
-    string expected_file_revision = 3;
+    // 期望在锁定时文件的版本，只有在该文件被第一次创建时才能够为空，其他情况下为空应该视为错误
+    string expected_file_revision = 2;
     // 若为 true，表示期望文件当前不存在
-    bool expected_file_not_exist = 4;
+    bool expected_file_not_exist = 3;
     // 是否是删除目标文件的请求，在该项目设置为 true 时，expected_file_not_exists 应该为无效
-    bool is_delete = 5;
+    bool is_delete = 4;
 }
 
 message LaunchSubmitReq {
@@ -96,11 +96,10 @@ message LaunchSubmitReq {
 }
 
 message FileUnableToLock {
-    string file_id = 1;
-    string path = 3;
-    string current_file_revision = 4;
-    string expected_file_revision = 5;
-    bool expected_file_not_exist = 6;
+    string path = 1;
+    string current_file_revision = 2;
+    string expected_file_revision = 3;
+    bool expected_file_not_exist = 4;
 }
 
 message LaunchSubmitRsp {
@@ -111,7 +110,7 @@ message LaunchSubmitRsp {
 }
 
 message SubmitConflict {
-    string file_id = 1;
+    string path = 1;
     string expected_file_revision = 2;
     string current_revision = 3;
 }
@@ -128,13 +127,16 @@ message SubmitRsp {
     // 如果在检查时发现任何文件包含的 chunk 尚未全部上传，也可以在这里返回其 chunk_id
     repeated string missing_chunks = 5;
 
-    string message = 6;
+    // 提交的各文件 depot path 到提交后的该文件最新 revision 的映射
+    map<string, FileRevision> latest_revision = 6;
+
+    string message = 7;
 }
 // Submit End
 
 message FileRevision {
     string revision_id = 1;
-    string changelist_id = 2;
+    int64 changelist_id = 2;
     repeated string binary_id = 3;
     int64 size = 4;
     int64 revision_created_at = 5;
@@ -142,9 +144,8 @@ message FileRevision {
 
 message File {
     string name = 1;
-    string file_id = 3;
-    // 目标分支到文件版本的映射，"" 表示不带分支的文件树
-    map<string, FileRevision> revisions = 4;
+    // revision id 到对应的 FileRevision 的映射
+    map<string, FileRevision> revisions = 2;
 }
 
 message Directory {
