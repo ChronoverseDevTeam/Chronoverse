@@ -42,7 +42,7 @@ message UploadFileChunkReq {
     int64 offset = 3;
     bytes content = 4;
     // 某个 file_chunk 的总大小，压缩算法处理后的，如果没有压缩算法那么和 uncompressed_size 应该是一致的
-    bool chunk_size = 5;
+    int64 chunk_size = 5;
     // 本块使用的压缩方式，必须传入，目前可用字段是 "none" / "lz4"，当前算法是只支持了 none，所以 edge 可以先不压缩
     string compression = 6;
     // 解压后的原始大小（字节），用于校验
