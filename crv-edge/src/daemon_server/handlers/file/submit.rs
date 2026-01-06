@@ -5,20 +5,19 @@ use crate::daemon_server::error::{AppError, AppResult};
 use crate::daemon_server::state::AppState;
 use crate::hive_pb::hive_service_client::HiveServiceClient;
 use crate::hive_pb::{
-    self, CheckChunksReq, FileToLock, SubmitFile, TryLockFilesReq, UploadFileChunkReq,
+    self, CheckChunksReq, FileChunks, FileToLock, LaunchSubmitReq, UploadFileChunkReq,
 };
 use crate::pb::{SubmitProgress, SubmitReq};
 use crv_core::path::basic::{DepotPath, LocalPath, PathError, WorkspaceDir, WorkspacePath};
 use crv_core::path::engine::PathEngine;
 use crv_core::repository::compute_chunk_hash;
 use futures::stream::{self, StreamExt};
-use std::collections::HashMap;
 use std::path::Path;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use tokio::fs::File;
 use tokio::io::AsyncReadExt;
-use tokio::sync::{mpsc, watch};
+use tokio::sync::mpsc;
 use tokio_stream::Stream;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
@@ -214,19 +213,18 @@ pub async fn handle(
     let mut files_to_lock = Vec::new();
     for file in &files_to_submit {
         files_to_lock.push(FileToLock {
-            file_id: String::new(), // todo 这个 file id 不知道该咋填
             path: file.depot_path.to_string(),
             expected_file_revision: file.current_revision.clone().unwrap_or(String::new()),
             expected_file_not_exist: file.action == active_file::Action::Add,
+            is_delete: file.action == active_file::Action::Delete,
         });
     }
 
-    let try_lock_req = TryLockFilesReq {
-        branch_id: "main".to_string(), // todo 这个分支现在还没有作用
+    let try_lock_req = LaunchSubmitReq {
         files: files_to_lock,
     };
 
-    let try_lock_file_response = hive_client.try_lock_files(try_lock_req).await?.into_inner();
+    let try_lock_file_response = hive_client.launch_submit(try_lock_req).await?.into_inner();
     if !try_lock_file_response.success {
         // todo 这里是乐观锁，讲道理应该多试几次
         return Err(AppError::Internal(format!(
@@ -235,7 +233,7 @@ pub async fn handle(
         )));
     }
 
-    let uuid = try_lock_file_response.uuid;
+    let ticket = try_lock_file_response.ticket;
 
     // step 3. 初始化通信管道
     // upload_tx: 将 Chunk 发送给网络上传任务
@@ -255,16 +253,16 @@ pub async fn handle(
 
     // step 6. 构造 chunk 上传生产者流
     // 用于收集所有已切块文件的元数据
-    let submitted_files = Arc::new(Mutex::new(Vec::<SubmitFile>::new()));
+    let submitted_files = Arc::new(Mutex::new(Vec::<FileChunks>::new()));
     let upload_tx_clone = upload_tx.clone();
     let response_tx_clone = response_tx.clone();
-    let uuid_clone = uuid.clone();
+    let ticket_clone = ticket.clone();
     let channel_clone = channel.clone();
     let submitted_files_clone = submitted_files.clone();
     let futs = stream::iter(files_to_submit).map(move |file_info| {
         let up_tx = upload_tx_clone.clone();
         let rsp_tx = response_tx_clone.clone();
-        let uuid = uuid_clone.clone();
+        let tk_clone = ticket_clone.clone();
         let chan = channel_clone.clone();
         let s_files = submitted_files_clone.clone();
 
@@ -274,105 +272,83 @@ pub async fn handle(
                 .await
                 .map_err(|e| AppError::Internal(format!("Open error: {e}")))?;
 
-            let zero_chunk_hash = hex::encode(compute_chunk_hash(&[]));
-            let mut batch_buffer = vec![0u8; CHUNK_SIZE];
-            let mut offset = 0i64;
+            let mut chunk_buffer = vec![0u8; CHUNK_SIZE];
             let mut hive_client = HiveServiceClient::new(chan);
-            let mut chunk_hashes = vec![zero_chunk_hash.clone()]; // 收集当前文件的所有块 hash
+            let mut chunk_hashes = vec![]; // 收集当前文件的所有块 hash
             let mut total_size = 0i64;
 
             loop {
-                // 读取一个批次
+                // 读取一个 chunk
                 let n = file
-                    .read(&mut batch_buffer)
+                    .read(&mut chunk_buffer)
                     .await
                     .map_err(|e| AppError::Internal(format!("Read error: {e}")))?;
 
-                let is_eof = n == 0;
-                let data = &batch_buffer[..n];
-
-                let chunks: Vec<&[u8]> = data.chunks(FRAME_SIZE).collect();
-                let mut batch_hashes = Vec::with_capacity(chunks.len());
-
-                for chunk in &chunks {
-                    let hash = hex::encode(compute_chunk_hash(chunk));
-                    batch_hashes.push(hash);
+                if n == 0 {
+                    break;
                 }
+                let data = &chunk_buffer[..n];
 
+                let frames: Vec<&[u8]> = data.chunks(FRAME_SIZE).collect();
                 // 记录 Hash
-                chunk_hashes.extend(batch_hashes.clone());
+                let chunk_hash = hex::encode(compute_chunk_hash(data));
+                chunk_hashes.push(chunk_hash.clone());
 
                 // 秒传逻辑：Check Chunks
                 let check_res = hive_client
                     .check_chunks(CheckChunksReq {
-                        chunk_hashes: batch_hashes.clone(),
+                        chunk_hashes: vec![chunk_hash.clone()],
                     })
                     .await?
                     .into_inner();
 
-                // 将缺失的 Hash 转为 HashSet 以便快速查找
-                let missing_set: std::collections::HashSet<String> =
-                    check_res.missing_chunk_hashes.into_iter().collect();
-
-                // 4. 遍历切片，只上传缺失的部分
-                for (i, chunk_data) in chunks.iter().enumerate() {
-                    let chunk_hash = &batch_hashes[i];
-
-                    if missing_set.contains(chunk_hash) {
-                        // 只有服务端没有的块，才走网络上传
-                        up_tx
-                            .send(UploadFileChunkReq {
-                                chunk_hash: chunk_hash.clone(),
-                                offset,
-                                content: chunk_data.to_vec(), // 这里必须这就得 clone 数据发送了
-                                eof: false, // 此时 EOF 标志可能需要在外层更精细控制，或者让 submit 接口不依赖 chunk 的 eof
-                                uuid: uuid.clone(),
-                                compression: "none".to_string(),
-                                uncompressed_size: chunk_data.len() as u32,
-                            })
-                            .await
-                            .map_err(|_| AppError::Internal("Upload channel closed".into()))?;
-                    }
-
+                // 如果这个 chunk 已经传输完毕，则跳过
+                if check_res.missing_chunk_hashes.is_empty() {
                     // 更新进度
-                    offset += chunk_data.len() as i64;
-                    total_size = offset;
+                    total_size += n as i64;
                     rsp_tx
                         .send(Ok(SubmitProgress {
                             path: file_info.local_path.to_local_path_string(),
-                            bytes_completed_so_far: offset,
+                            bytes_completed_so_far: total_size,
+                        }))
+                        .await
+                        .map_err(|_| AppError::Internal("Response channel closed".into()))?;
+                    continue;
+                }
+
+                // 4. 遍历切片并上传
+                let mut offset = 0i64;
+                for (i, frame_data) in frames.iter().enumerate() {
+                    up_tx
+                        .send(UploadFileChunkReq {
+                            chunk_hash: chunk_hash.clone(),
+                            offset,
+                            content: frame_data.to_vec(), // 这里必须这就得 clone 数据发送了
+                            compression: "none".to_string(),
+                            uncompressed_size: frame_data.len() as u32,
+                            ticket: tk_clone.clone(),
+                            chunk_size: n as i64,
+                        })
+                        .await
+                        .map_err(|_| AppError::Internal("Upload channel closed".into()))?;
+
+                    // 更新进度
+                    offset += frame_data.len() as i64;
+                    total_size += frame_data.len() as i64;
+                    rsp_tx
+                        .send(Ok(SubmitProgress {
+                            path: file_info.local_path.to_local_path_string(),
+                            bytes_completed_so_far: total_size,
                         }))
                         .await
                         .map_err(|_| AppError::Internal("Response channel closed".into()))?;
                 }
-
-                if is_eof {
-                    // 发送 eof 块
-                    up_tx
-                        .send(UploadFileChunkReq {
-                            chunk_hash: zero_chunk_hash.clone(),
-                            offset,
-                            content: vec![],
-                            eof: true,
-                            uuid: uuid.clone(),
-                            compression: "none".to_string(),
-                            uncompressed_size: 0u32,
-                        })
-                        .await
-                        .map_err(|_| AppError::Internal("Upload channel closed".into()))?;
-                    break;
-                }
             }
 
-            // --- 文件切块完成，收集 SubmitFile 信息 ---
-            let submit_file = SubmitFile {
-                file_id: String::new(),
+            // --- 文件切块完成，收集文件 FileChunks 信息 ---
+            let submit_file = FileChunks {
                 path: file_info.depot_path.to_string(), // 使用服务器路径
-                expected_file_revision: file_info.current_revision.clone().unwrap_or_default(),
-                is_delete: false,
                 binary_id: chunk_hashes, // 块 Hash 列表
-                size: total_size,
-                file_mode: Some("755".to_string()), // 实际应从文件元数据获取
             };
 
             s_files.lock().unwrap().push(submit_file);
@@ -381,7 +357,7 @@ pub async fn handle(
     });
 
     // step 7. 驱动生产者开始工作
-    let uuid_for_commit = uuid.clone();
+    let ticket_for_commit = ticket.clone();
     let description = request_body.description.clone();
     tokio::spawn(async move {
         // A. 等待所有文件切块并发送到管道
@@ -406,11 +382,9 @@ pub async fn handle(
                 // 上传成功，准备 Submit
                 let final_files = submitted_files.lock().unwrap().clone();
                 let submit_req = hive_pb::SubmitReq {
-                    branch_id: "main".to_string(),
                     description,
                     files: final_files,
-                    request_id: String::new(),
-                    uuid: uuid_for_commit,
+                    ticket: ticket_for_commit,
                 };
 
                 let mut client = HiveServiceClient::new(channel.clone());
