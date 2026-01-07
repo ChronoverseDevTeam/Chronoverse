@@ -1,5 +1,6 @@
 pub mod dao;
 pub mod entities;
+pub mod ltree_key;
 pub mod migration;
 
 use anyhow::Result;
