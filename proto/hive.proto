@@ -86,8 +86,6 @@ message FileToLock {
     string expected_file_revision = 2;
     // 若为 true，表示期望文件当前不存在
     bool expected_file_not_exist = 3;
-    // 是否是删除目标文件的请求，在该项目设置为 true 时，expected_file_not_exists 应该为无效
-    bool is_delete = 4;
 }
 
 message LaunchSubmitReq {

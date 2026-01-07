@@ -2,7 +2,7 @@ use crate::auth::{AuthInterceptor, AuthService};
 use crate::pb::{
     BonjourReq, BonjourRsp, CheckChunksReq, CheckChunksRsp, DownloadFileChunkReq,
     GetFileTreeReq, GetFileTreeRsp, LaunchSubmitReq, LaunchSubmitRsp, LoginReq, LoginRsp, RegisterReq,
-    RegisterRsp, SubmitReq, SubmitRsp, UploadFileChunkReq,
+    RegisterRsp, SubmitReq, SubmitRsp, UploadFileChunkReq, UploadFileChunkRsp,
     hive_service_server::{HiveService, HiveServiceServer},
 };
 use argon2::password_hash::SaltString;
@@ -79,10 +79,6 @@ pub(crate) fn repository_manager() -> Result<&'static Repository, Status> {
 #[cfg(not(test))]
 pub(crate) mod hive_dao {
     pub use crate::database::dao::{
-        allocate_changelist_id,
-        find_branch_by_id, find_changelist_by_id, find_file_by_id, find_file_revision_by_branch_file_and_cl,
-        find_file_revision_by_id, insert_changelist, insert_file,
-        insert_file_revisions, update_branch_head,
     };
 }
 
@@ -356,7 +352,7 @@ impl HiveService for CrvHiveService {
 
 
     type DownloadFileChunkStream = download::DownloadFileChunkStream;
-    type UploadFileChunkStream = submit::UploadFileChunkStream;
+    type UploadFileChunkStream = submit::submit::UploadFileChunkStream;
 
     async fn download_file_chunk(
         &self,
@@ -374,34 +370,49 @@ impl HiveService for CrvHiveService {
 
     async fn check_chunks(
         &self,
-        _request: Request<CheckChunksReq>,
+        request: Request<CheckChunksReq>,
     ) -> Result<Response<CheckChunksRsp>, Status> {
-        // TODO: 实现 CheckChunks 逻辑
-        todo!("implement check_chunks")
+        let _req = request.into_inner();
+        let rsp = CheckChunksRsp {
+            missing_chunk_hashes: vec![],
+        };
+        Ok(Response::new(rsp))
     }
 
     async fn upload_file_chunk(
         &self,
         _request: Request<tonic::Streaming<UploadFileChunkReq>>,
     ) -> Result<Response<Self::UploadFileChunkStream>, Status> {
-        // TODO: 实现 UploadFileChunk 逻辑
-        todo!("implement upload_file_chunk")
+        use tokio::sync::mpsc;
+        use tokio_stream::wrappers::ReceiverStream;
+        let (_tx, rx) = mpsc::channel::<Result<UploadFileChunkRsp, Status>>(32);
+        Ok(Response::new(ReceiverStream::new(rx)))
     }
 
     async fn submit(
         &self,
         _request: Request<SubmitReq>,
     ) -> Result<Response<SubmitRsp>, Status> {
-        // TODO: 实现 Submit 逻辑
-        todo!("implement submit")
+        let rsp = SubmitRsp {
+            success: false,
+            changelist_id: 0,
+            committed_at: 0,
+            conflicts: vec![],
+            missing_chunks: vec![],
+            latest_revision: std::collections::HashMap::new(),
+            message: "not implemented".to_string(),
+        };
+        Ok(Response::new(rsp))
     }
 
     async fn get_file_tree(
         &self,
         _request: Request<GetFileTreeReq>,
     ) -> Result<Response<GetFileTreeRsp>, Status> {
-        // TODO: 实现 GetFileTree 逻辑
-        todo!("implement get_file_tree")
+        let rsp = GetFileTreeRsp {
+            file_tree_root: vec![],
+        };
+        Ok(Response::new(rsp))
     }
 }
 
