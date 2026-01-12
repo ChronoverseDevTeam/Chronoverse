@@ -216,7 +216,6 @@ pub async fn handle(
             path: file.depot_path.to_string(),
             expected_file_revision: file.current_revision.clone().unwrap_or(String::new()),
             expected_file_not_exist: file.action == active_file::Action::Add,
-            is_delete: file.action == active_file::Action::Delete,
         });
     }
 
@@ -267,6 +266,25 @@ pub async fn handle(
         let s_files = submitted_files_clone.clone();
 
         async move {
+            // 如果是删除行为，则直接回报即可
+            if file_info.action == active_file::Action::Delete {
+                rsp_tx
+                    .send(Ok(SubmitProgress {
+                        path: file_info.local_path.to_local_path_string(),
+                        bytes_completed_so_far: 0i64,
+                    }))
+                    .await
+                    .map_err(|_| AppError::Internal("Response channel closed".into()))?;
+
+                let submit_file = FileChunks {
+                    path: file_info.depot_path.to_string(), // 使用服务器路径
+                    binary_id: vec![],                      // 块 Hash 列表
+                };
+
+                s_files.lock().unwrap().push(submit_file);
+                return Ok::<(), AppError>(());
+            }
+
             let path_str = file_info.local_path.to_local_path_string();
             let mut file = File::open(&path_str)
                 .await
@@ -348,7 +366,7 @@ pub async fn handle(
             // --- 文件切块完成，收集文件 FileChunks 信息 ---
             let submit_file = FileChunks {
                 path: file_info.depot_path.to_string(), // 使用服务器路径
-                binary_id: chunk_hashes, // 块 Hash 列表
+                binary_id: chunk_hashes,                // 块 Hash 列表
             };
 
             s_files.lock().unwrap().push(submit_file);
