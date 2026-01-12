@@ -3,9 +3,9 @@ use crate::daemon_server::db::file::FileMeta;
 use crate::daemon_server::error::{AppError, AppResult};
 use crate::daemon_server::handlers::utils::{expand_paths_to_files, normalize_paths};
 use crate::daemon_server::state::AppState;
-use crate::hive_pb::GetFileTreeReq;
-use crate::hive_pb::file_tree_node::Node;
-use crate::hive_pb::hive_service_client::HiveServiceClient;
+use crate::hive_pb::{
+    GetFileTreeReq, file_tree_node::Node, hive_service_client::HiveServiceClient,
+};
 use crate::pb::{SyncFileUpdate, SyncMetadata, SyncProgress, SyncReq};
 use crv_core::path::basic::{LocalPath, WorkspacePath};
 use crv_core::path::engine::PathEngine;
@@ -71,14 +71,13 @@ pub async fn handle(
 
     let file_tree_rsp = hive_client
         .get_file_tree(GetFileTreeReq {
-            branch_id: "main".to_string(),
             depot_wildcard,
             changelist_id: 0,
         })
         .await?
         .into_inner();
 
-    // 6. 构建 depot_path -> file info 的映射
+    // 6. 构建 depot_path -> file info(revision id & file size) 的映射
     let mut depot_file_map: HashMap<String, (String, i64)> = HashMap::new();
 
     fn traverse_tree(
@@ -95,7 +94,23 @@ pub async fn handle(
                         } else {
                             format!("{}/{}", current_path, file.name)
                         };
-                        map.insert(full_path, (file.revision_id.clone(), file.size));
+                        // todo 从 File revisions 中得到 latest revision 的 revision id 和 file size
+                        let latest_revision = file
+                            .revisions
+                            .iter()
+                            .max_by_key(|x| x.1.changelist_id)
+                            .expect(&format!(
+                                "Cannot get revision history of file {}",
+                                full_path
+                            ));
+
+                        map.insert(
+                            full_path,
+                            (
+                                latest_revision.1.revision_id.clone(),
+                                latest_revision.1.size,
+                            ),
+                        );
                     }
                     Node::Directory(dir) => {
                         let full_path = if current_path.is_empty() {
