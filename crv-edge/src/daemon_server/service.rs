@@ -90,6 +90,11 @@ impl FileService for FileServiceImpl {
             .await
             .map_err(|e| e.into())
     }
+    async fn checkout(&self, request: Request<CheckoutReq>) -> Result<Response<CheckoutRsp>, Status> {
+        handlers::file::checkout::handle(self.state.clone(), request)
+            .await
+            .map_err(|e| e.into())
+    }
     async fn delete(&self, request: Request<DeleteReq>) -> Result<Response<DeleteRsp>, Status> {
         handlers::file::delete::handle(self.state.clone(), request)
             .await

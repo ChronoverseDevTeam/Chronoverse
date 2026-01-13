@@ -78,6 +78,15 @@ message AddRsp {
   repeated string added_paths = 1;
 }
 
+message CheckoutReq {
+  string workspace_name = 1;
+  repeated string paths = 2;
+}
+
+message CheckoutRsp {
+  repeated string checkouted_paths = 1;
+}
+
 message DeleteReq {
   string workspace_name = 1;
   repeated string paths = 2;
@@ -151,6 +160,7 @@ message SubmitProgress {
 
 service FileService {
   rpc Add(AddReq) returns (AddRsp);
+  rpc Checkout(CheckoutReq) returns (CheckoutRsp);
   rpc Delete(DeleteReq) returns (DeleteRsp);
   rpc Sync(SyncReq) returns (stream SyncProgress);
   rpc Lock(LockReq) returns (LockRsp);

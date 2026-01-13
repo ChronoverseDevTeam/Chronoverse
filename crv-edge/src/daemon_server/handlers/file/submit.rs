@@ -2,6 +2,7 @@ use crate::daemon_server::config::RuntimeConfig;
 use crate::daemon_server::context::SessionContext;
 use crate::daemon_server::db::active_file;
 use crate::daemon_server::error::{AppError, AppResult};
+use crate::daemon_server::handlers::utils::{expand_paths_to_files, normalize_paths};
 use crate::daemon_server::state::AppState;
 use crate::hive_pb::hive_service_client::HiveServiceClient;
 use crate::hive_pb::{
@@ -15,11 +16,8 @@ use futures::stream::{self, StreamExt};
 use std::path::Path;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
-use tokio::fs::File;
-use tokio::io::AsyncReadExt;
-use tokio::sync::mpsc;
-use tokio_stream::Stream;
-use tokio_stream::wrappers::ReceiverStream;
+use tokio::{fs::File, io::AsyncReadExt, sync::mpsc};
+use tokio_stream::{Stream, wrappers::ReceiverStream};
 use tonic::{Request, Response, Status};
 use walkdir::WalkDir;
 
@@ -51,120 +49,14 @@ pub async fn handle(
             request_body.workspace_name
         ))))?;
 
-    // step 1. 将用户指定的路径转化为实际的本地绝对路径，并获得待提交文件
-    // 用户指定的路径可能有两种：本地绝对路径（文件或目录）、WorkspaceDir 或者 WorkspacePath
-    // step 1.1. 找出所有 WorkspacePath，将其转化为本地绝对路径
-    let local_file_from_workspace_path = request_body
-        .paths
-        .iter()
-        .filter(|x| x.starts_with("//") && !x.ends_with("/"))
-        .map(|x| WorkspacePath::parse(x))
-        .collect::<Result<Vec<WorkspacePath>, PathError>>()
-        .map_err(|e| {
-            AppError::Raw(Status::invalid_argument(format!(
-                "Can't parse workspace path: {e}"
-            )))
-        })? // 1. 将 workspace path 解析出来
-        .iter()
-        .map(|x| {
-            if x.workspace_name == request_body.workspace_name {
-                Ok(x.clone())
-            } else {
-                Err(AppError::Raw(Status::invalid_argument(format!(
-                    "Workspace path {} is not under workspace {}.",
-                    x.to_string(),
-                    request_body.workspace_name
-                ))))
-            }
-        }) // 2. 检查是否是当前工作区的 workspace path
-        .collect::<AppResult<Vec<WorkspacePath>>>()?
-        .iter()
-        .map(|x| {
-            let local_path = x
-                .into_local_path(&workspace_meta.config.root_dir)
-                .to_local_path_string();
-            if Path::new(&local_path).exists() {
-                Ok(local_path)
-            } else {
-                Err(AppError::Raw(Status::invalid_argument(format!(
-                    "Path {} does not exist.",
-                    local_path
-                ))))
-            }
-        }) // 3. 转化为本地绝对路径，检查是否存在
-        .collect::<AppResult<Vec<String>>>()?;
+    // 规范化路径
+    let local_paths = normalize_paths(
+        &request_body.paths,
+        &request_body.workspace_name,
+        &workspace_meta.config,
+    )?;
 
-    let local_dir_from_workspace_dir = request_body
-        .paths
-        .iter()
-        .filter(|x| x.starts_with("//") && x.ends_with("/"))
-        .map(|x| WorkspaceDir::parse(x))
-        .collect::<Result<Vec<WorkspaceDir>, PathError>>()
-        .map_err(|e| {
-            AppError::Raw(Status::invalid_argument(format!(
-                "Can't parse workspace dir: {e}"
-            )))
-        })? // 1. 将 workspace dir 解析出来
-        .iter()
-        .map(|x| {
-            if x.workspace_name == request_body.workspace_name {
-                Ok(x.clone())
-            } else {
-                Err(AppError::Raw(Status::invalid_argument(format!(
-                    "Workspace path {} is not under workspace {}.",
-                    x.to_string(),
-                    request_body.workspace_name
-                ))))
-            }
-        }) // 2. 检查是否是当前工作区的 workspace dir
-        .collect::<AppResult<Vec<WorkspaceDir>>>()?
-        .iter()
-        .map(|x| {
-            let local_path = x
-                .into_local_dir(&workspace_meta.config.root_dir)
-                .to_local_path_string();
-            if Path::new(&local_path).exists() {
-                Ok(local_path)
-            } else {
-                Err(AppError::Raw(Status::invalid_argument(format!(
-                    "Path {} does not exist.",
-                    local_path
-                ))))
-            }
-        }) // 3. 转化为本地绝对路径，检查是否存在
-        .collect::<AppResult<Vec<String>>>()?;
-
-    let local_paths = request_body
-        .paths
-        .iter()
-        .filter(|x| !x.starts_with("//"))
-        .map(|x| {
-            if Path::new(x).exists() {
-                Ok(x.clone())
-            } else {
-                Err(AppError::Raw(Status::invalid_argument(format!(
-                    "Path {} does not exist.",
-                    x
-                ))))
-            }
-        }) //检查是否存在
-        .collect::<AppResult<Vec<String>>>()?
-        .iter()
-        .chain(local_dir_from_workspace_dir.iter())
-        .chain(local_file_from_workspace_path.iter()) // 合起来！
-        .map(|x| x.clone())
-        .collect::<Vec<String>>();
-
-    let local_files = local_paths
-        .iter()
-        .flat_map(|path| {
-            WalkDir::new(path)
-                .into_iter()
-                .filter_map(|e| e.ok()) // 过滤掉读取失败的条目
-                .filter(|e| e.file_type().is_file()) // 只保留文件
-                .map(|e| e.path().to_string_lossy().into_owned())
-        })
-        .collect::<Vec<String>>();
+    let local_files = expand_paths_to_files(&local_paths);
 
     let path_engine = PathEngine::new(workspace_meta.config.clone());
 
@@ -215,7 +107,6 @@ pub async fn handle(
         files_to_lock.push(FileToLock {
             path: file.depot_path.to_string(),
             expected_file_revision: file.current_revision.clone().unwrap_or(String::new()),
-            expected_file_not_exist: file.action == active_file::Action::Add,
         });
     }
 

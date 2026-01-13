@@ -2,3 +2,4 @@ pub mod add;
 pub mod delete;
 pub mod submit;
 pub mod sync;
+pub mod checkout;
