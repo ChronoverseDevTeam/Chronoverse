@@ -9,8 +9,18 @@ use crate::common::depot_path::DepotPath;
 pub struct LockedFile {
     /// depot path
     path: DepotPath,
-    /// locked file revision, when file not exists, this should be empty
-    locked_file_revision: String,
+    /// locked file generation, when file not exists, this should be None
+    locked_generation: Option<i64>,
+    /// locked file revision, when file not exists, this should be None
+    locked_revision: Option<i64>,
+}
+
+#[derive(Clone)]
+pub struct SubmittedFile {
+    /// depot path
+    path: DepotPath,
+    /// chunk hashes
+    chunk_hashs: Vec<String>,
 }
 
 pub struct SubmitContext {
@@ -32,12 +42,14 @@ pub struct SubmitService {
 }
 
 pub struct LaunchSubmitSuccess {
-    ticket: String,
+    ticket: uuid::Uuid,
 }
 
 pub struct LaunchSubmitFailure {
     file_unable_to_lock: Vec<LockedFile>,
 }
+
+
 
 impl SubmitService {
     pub fn new() -> Self {
@@ -47,7 +59,7 @@ impl SubmitService {
         }
     }
 
-    pub async fn launch_submit(
+    pub fn launch_submit(
         &mut self,
         files: &Vec<LockedFile>,
         submitting_by: String,
@@ -80,9 +92,8 @@ impl SubmitService {
             return Err(LaunchSubmitFailure {
                 file_unable_to_lock: duplicated_paths
                     .into_iter()
-                    .map(|p| LockedFile {
-                        path: p,
-                        locked_file_revision: String::new(),
+                    .map(|p| {
+                        files.iter().find(|f| f.path == p).unwrap().clone()
                     })
                     .collect(),
             });
@@ -102,10 +113,9 @@ impl SubmitService {
             let mut conflicted = Vec::new();
             for p in &unique_paths {
                 if locked.contains_key(p) {
-                    conflicted.push(LockedFile {
-                        path: p.clone(),
-                        locked_file_revision: String::new(),
-                    });
+                    conflicted.push(
+                        files.iter().find(|f| f.path == *p).unwrap().clone()
+                    );
                 }
             }
 
@@ -130,7 +140,15 @@ impl SubmitService {
         }
 
         Ok(LaunchSubmitSuccess {
-            ticket: ticket.to_string(),
+            ticket: ticket,
         })
+    }
+
+    pub fn submit(&mut self, ticket: &uuid::Uuid) {
+        let mut context = self.contexts.write().expect("submit service contexts poisoned");
+
+        let context = context.get(ticket);
+        if context.is_none() {
+        }
     }
 }
