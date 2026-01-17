@@ -33,7 +33,7 @@ pub async fn handle(
     let local_files = expand_paths_to_files(&local_paths);
 
     // 4. 转换为 workspace paths 并标记为 Edit
-    let path_engine = PathEngine::new(workspace_meta.config.clone());
+    let path_engine = PathEngine::new(workspace_meta.config.clone(), &request_body.workspace_name);
     let mut checkouted_paths = Vec::new();
 
     for file in &local_files {

@@ -50,7 +50,7 @@ pub async fn handle(
     let local_files = expand_paths_to_files(&local_paths);
 
     // 4. 转换为 depot paths
-    let path_engine = PathEngine::new(workspace_meta.config.clone());
+    let path_engine = PathEngine::new(workspace_meta.config.clone(), &request_body.workspace_name);
     let mut depot_paths = Vec::new();
     let mut local_to_workspace: HashMap<String, WorkspacePath> = HashMap::new();
 
@@ -162,7 +162,7 @@ pub async fn handle(
                     .iter()
                     .find(|(_, ws_path)| {
                         // 通过比较 depot_path 来匹配
-                        let engine = PathEngine::new(workspace_meta.config.clone());
+                        let engine = PathEngine::new(workspace_meta.config.clone(), &request_body.workspace_name);
                         if let Some(ws_local) = engine.workspace_path_to_local_path(ws_path) {
                             if let Some(ws_depot) = engine.mapping_local_path(&ws_local) {
                                 return ws_depot.to_string() == depot_path_str;

@@ -237,6 +237,14 @@ impl LocalDir {
         parsers::path::local_dir(path)
     }
 
+    pub fn into_workspace_dir(&self, workspace_name: &str, root_dir: &LocalDir) -> WorkspaceDir {
+        let diff = root_dir.match_and_get_diff(self).unwrap();
+        WorkspaceDir {
+            workspace_name: workspace_name.to_string(),
+            dirs: diff.to_vec(),
+        }
+    }
+
     /// 转化为使用 `/` 分割文件夹的路径
     pub fn to_unix_path_string(&self) -> String {
         let dir_string = self
@@ -257,6 +265,9 @@ impl LocalDir {
             // 如果路径是 C: 和 file.txt -> C:\file.txt
             // 如果路径是 C:, Users 和 file.txt -> C:\Users\file.txt
             let mut full_path = drive.clone();
+            if !full_path.ends_with(":") {
+                full_path.push(':');
+            }
 
             // 确保盘符后有分隔符
             full_path.push('\\');
@@ -308,6 +319,15 @@ impl LocalPath {
         parsers::path::local_path(path)
     }
 
+    pub fn into_workspace_path(&self, workspace_name: &str, root_dir: &LocalDir) -> WorkspacePath {
+        let diff = root_dir.match_and_get_diff(&self.dirs).unwrap();
+        WorkspacePath {
+            workspace_name: workspace_name.to_string(),
+            dirs: diff.to_vec(),
+            file: self.file.clone(),
+        }
+    }
+
     /// 转化为使用 `/` 分割文件夹的路径
     pub fn to_unix_path_string(&self) -> String {
         let dir_string = self
@@ -329,6 +349,9 @@ impl LocalPath {
             // 如果路径是 C: 和 file.txt -> C:\file.txt
             // 如果路径是 C:, Users 和 file.txt -> C:\Users\file.txt
             let mut full_path = drive.clone();
+            if !full_path.ends_with(":") {
+                full_path.push(':');
+            }
 
             // 确保盘符后有分隔符
             full_path.push('\\');
@@ -338,6 +361,10 @@ impl LocalPath {
                 full_path.push('\\');
             }
             full_path.push_str(&self.file);
+
+            println!("full_path: {:?}", full_path);
+            println!("self.file: {:?}", self.file);
+            println!("self.dirs: {:?}", self.dirs);
             full_path
         }
 

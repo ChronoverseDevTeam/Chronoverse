@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex};
 /// 路径引擎核心结构
 pub struct PathEngine {
     workspace: Arc<WorkspaceConfig>,
+    workspace_name: String,
     // 缓存编译的正则表达式
     cache: PathCache,
 }
@@ -63,9 +64,10 @@ impl Default for PathCache {
 
 impl PathEngine {
     /// 创建新的路径引擎
-    pub fn new(workspace: WorkspaceConfig) -> Self {
+    pub fn new(workspace: WorkspaceConfig, workspace_name: &str) -> Self {
         Self {
             workspace: Arc::new(workspace),
+            workspace_name: workspace_name.to_string(),
             cache: PathCache::default(),
         }
     }
@@ -184,14 +186,13 @@ impl PathEngine {
 
     /// 将一个本地路径转化为 workspace 路径，如果本地路径不在工作区内，返回 None
     pub fn local_path_to_workspace_path(&self, local_path: &LocalPath) -> Option<WorkspacePath> {
-        todo!()
+        let result = local_path.into_workspace_path(&self.workspace_name, &self.workspace.root_dir);
+        Some(result)
     }
     /// 将一个 workspace 路径转化为本地路径，如果 workspace 路径不在工作区内，返回 None
-    pub fn workspace_path_to_local_path(
-        &self,
-        workspace_path: &WorkspacePath,
-    ) -> Option<LocalPath> {
-        todo!()
+    pub fn workspace_path_to_local_path(&self, workspace_path: &WorkspacePath) -> Option<LocalPath> {
+        let result = workspace_path.into_local_path(&self.workspace.root_dir);
+        Some(result)
     }
 }
 
@@ -215,7 +216,7 @@ mod tests {
         )
         .unwrap();
 
-        let engine = PathEngine::new(config);
+        let engine = PathEngine::new(config, "workspace");
 
         let depot_file = DepotPath::parse("//crv/cli/src/main.rs").unwrap();
         let result = engine.mapping_depot_path(&depot_file).unwrap();
@@ -266,7 +267,7 @@ mod tests {
         )
         .unwrap();
 
-        let engine = PathEngine::new(config);
+        let engine = PathEngine::new(config, "workspace");
         let local_path = LocalPath::parse("/root/test/a/b/z.a").unwrap();
         assert_eq!(
             engine.mapping_local_path(&local_path).unwrap(),

@@ -39,6 +39,8 @@ console = "0.16"
 tabled = "0.20"
 # 启动编辑器
 edit = "0.1"
+rustyline = "17.0.2"
+shlex = "1.3.0"
 
 [build-dependencies]
 tonic-prost-build = "0.14.2"

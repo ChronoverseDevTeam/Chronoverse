@@ -58,7 +58,7 @@ pub async fn handle(
 
     let local_files = expand_paths_to_files(&local_paths);
 
-    let path_engine = PathEngine::new(workspace_meta.config.clone());
+    let path_engine = PathEngine::new(workspace_meta.config.clone(), &request_body.workspace_name);
 
     let mut files_to_submit: Vec<FileToSubmit> = Vec::new();
 

@@ -31,9 +31,8 @@ pub async fn handle(
 
     // 3. 展开为文件列表
     let local_files = expand_paths_to_files(&local_paths);
-
     // 4. 转换为 workspace paths 并标记为 Add
-    let path_engine = PathEngine::new(workspace_meta.config.clone());
+    let path_engine = PathEngine::new(workspace_meta.config.clone(), &request_body.workspace_name);
     let mut added_paths = Vec::new();
 
     for file in &local_files {
