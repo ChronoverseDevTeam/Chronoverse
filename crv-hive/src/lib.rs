@@ -8,3 +8,4 @@ pub mod auth;
 pub mod hive_server;
 pub mod database;
 pub mod caching;
+pub mod common;

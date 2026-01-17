@@ -3,11 +3,12 @@ use std::{
     sync::{Arc, RwLock},
 };
 
+use crate::common::depot_path::DepotPath;
 
 #[derive(Clone)]
 pub struct LockedFile {
     /// depot path
-    path: String,
+    path: DepotPath,
     /// locked file revision, when file not exists, this should be empty
     locked_file_revision: String,
 }
@@ -25,9 +26,9 @@ pub struct SubmitContext {
 
 pub struct SubmitService {
     /// locked files's paths
-    locked_files: RwLock<HashSet<String>>,
+    locked_paths: RwLock<HashMap<DepotPath, uuid::Uuid>>,
     /// contexts of submitting
-    contexts: RwLock<HashMap<uuid::Uuid, Arc<SubmitContext>>>
+    contexts: RwLock<HashMap<uuid::Uuid, Arc<SubmitContext>>>,
 }
 
 pub struct LaunchSubmitSuccess {
@@ -41,7 +42,7 @@ pub struct LaunchSubmitFailure {
 impl SubmitService {
     pub fn new() -> Self {
         Self {
-            locked_files: RwLock::new(HashSet::new()),
+            locked_paths: RwLock::new(HashMap::new()),
             contexts: RwLock::new(HashMap::new()),
         }
     }
@@ -52,17 +53,55 @@ impl SubmitService {
         submitting_by: String,
         timeout: chrono::Duration,
     ) -> Result<LaunchSubmitSuccess, LaunchSubmitFailure> {
-        // 1) 先检查是否有任何文件已被锁定（全有或全无，不做部分加锁）
-        let unique_paths: HashSet<String> = files.into_iter().map(|f| (&f.path).clone()).collect();
+        let ticket = uuid::Uuid::new_v4();
+
+        if self
+            .contexts
+            .read()
+            .expect("submit service contexts poisoned")
+            .contains_key(&ticket)
         {
+            return Err(LaunchSubmitFailure {
+                file_unable_to_lock: Vec::new(),
+            });
+        }
+
+        let deadline = chrono::Utc::now() + timeout;
+
+        // 1) 先检查是否有任何文件已被锁定（全有或全无，不做部分加锁）
+        let mut unique_paths: HashSet<DepotPath> = HashSet::new();
+        let mut duplicated_paths: HashSet<DepotPath> = HashSet::new();
+        for f in files.iter() {
+            if !unique_paths.insert(f.path.clone()) {
+                duplicated_paths.insert(f.path.clone());
+            }
+        }
+        if !duplicated_paths.is_empty() {
+            return Err(LaunchSubmitFailure {
+                file_unable_to_lock: duplicated_paths
+                    .into_iter()
+                    .map(|p| LockedFile {
+                        path: p,
+                        locked_file_revision: String::new(),
+                    })
+                    .collect(),
+            });
+        }
+
+        {
+            // 同时进行锁定，防止出现一致性问题
             let mut locked = self
-                .locked_files
+                .locked_paths
                 .write()
-                .expect("submit service locked_files poisoned");
+                .expect("submit service locked_paths poisoned");
+            let mut contexts = self
+                .contexts
+                .write()
+                .expect("submit service contexts poisoned");
 
             let mut conflicted = Vec::new();
             for p in &unique_paths {
-                if locked.contains(p) {
+                if locked.contains_key(p) {
                     conflicted.push(LockedFile {
                         path: p.clone(),
                         locked_file_revision: String::new(),
@@ -77,25 +116,16 @@ impl SubmitService {
             }
 
             for p in &unique_paths {
-                locked.insert(p.clone());
+                locked.insert(p.clone(), ticket);
             }
-        }
 
-        let ticket = uuid::Uuid::new_v4();
-        let deadline = chrono::Utc::now() + timeout;
-
-        // 2) 写入上下文
-        {
+            // 2) 写入上下文
             let ctx = Arc::new(SubmitContext {
                 ticket,
                 submitting_by,
                 timeout_deadline: deadline,
                 files: files.clone(),
             });
-            let mut contexts = self
-                .contexts
-                .write()
-                .expect("submit service contexts poisoned");
             contexts.insert(ticket, ctx);
         }
 
