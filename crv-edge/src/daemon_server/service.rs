@@ -100,6 +100,11 @@ impl FileService for FileServiceImpl {
             .await
             .map_err(|e| e.into())
     }
+    async fn list_active_files(&self, request: Request<ListActiveFilesReq>) -> Result<Response<ListActiveFilesRsp>, Status> {
+        handlers::file::list_active_files::handle(self.state.clone(), request)
+            .await
+            .map_err(|e| e.into())
+    }
     async fn sync(&self, request: Request<SyncReq>) -> Result<Response<SyncStream>, Status> {
         handlers::file::sync::handle(self.state.clone(), request).await
             .map_err(|e| e.into())

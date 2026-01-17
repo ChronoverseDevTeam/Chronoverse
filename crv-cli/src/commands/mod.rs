@@ -21,6 +21,7 @@ impl Cli {
             Commands::Edge(edge_cli) => edge_cli.handle(channel).await,
             Commands::Add(add_cli) => add_cli.handle(channel).await,
             Commands::Delete(delete_cli) => delete_cli.handle(channel).await,
+            Commands::ListActiveFiles(list_cli) => list_cli.handle(channel).await,
             Commands::Sync(sync_cli) => sync_cli.handle(channel).await,
             Commands::Lock(lock_cli) => lock_cli.handle(channel).await,
             Commands::Submit(submit_cli) => submit_cli.handle(channel).await,
@@ -36,6 +37,8 @@ pub enum Commands {
     Edge(edge::EdgeCli),
     Add(file::AddCli),
     Delete(file::DeleteCli),
+    #[command(name = "showactive")]
+    ListActiveFiles(file::ListActiveFilesCli),
     Sync(file::SyncCli),
     Lock(file::LockCli),
     Submit(file::SubmitCli),

@@ -158,6 +158,20 @@ message SubmitProgress {
   int64 bytes_completed_so_far = 2;
 }
 
+message ListActiveFilesReq {
+  string workspace_name = 1;
+  string path = 2; // 目录路径，可以是本地路径、工作区路径、或者 depot 路径
+}
+
+message ActiveFileInfo {
+  string path = 1;
+  string action = 2; // "add", "edit", "delete"
+}
+
+message ListActiveFilesRsp {
+  repeated ActiveFileInfo active_files = 1;
+}
+
 service FileService {
   rpc Add(AddReq) returns (AddRsp);
   rpc Checkout(CheckoutReq) returns (CheckoutRsp);
@@ -166,6 +180,7 @@ service FileService {
   rpc Lock(LockReq) returns (LockRsp);
   rpc Revert(RevertReq) returns (RevertRsp);
   rpc Submit(SubmitReq) returns (stream SubmitProgress);
+  rpc ListActiveFiles(ListActiveFilesReq) returns (ListActiveFilesRsp);
 }
 
 // Local Changelist management

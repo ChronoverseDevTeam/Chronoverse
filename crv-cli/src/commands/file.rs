@@ -2,7 +2,7 @@ use anyhow::Result;
 use clap::Parser;
 use console::style;
 use crv_edge::pb::{
-    file_service_client::FileServiceClient, AddReq, DeleteReq, SubmitReq, SyncReq,
+    file_service_client::FileServiceClient, AddReq, DeleteReq, ListActiveFilesReq, SubmitReq, SyncReq,
 };
 use dialoguer::{Input, theme::ColorfulTheme};
 use tonic::transport::Channel;
@@ -209,6 +209,48 @@ pub struct RevertCli;
 impl RevertCli {
     pub async fn handle(&self, channel: &Channel) -> Result<()> {
         todo!()
+    }
+}
+
+#[derive(Parser)]
+pub struct ListActiveFilesCli {
+    /// Workspace name
+    #[arg(short, long)]
+    pub workspace: String,
+    
+    /// Directory path to list active files from (default: workspace root)
+    #[arg(short, long, default_value = ".")]
+    pub path: String,
+}
+
+impl ListActiveFilesCli {
+    pub async fn handle(&self, channel: &Channel) -> Result<()> {
+        let mut client = FileServiceClient::new(channel.clone());
+        
+        let request = ListActiveFilesReq {
+            workspace_name: self.workspace.clone(),
+            path: self.path.clone(),
+        };
+        
+        let response = client.list_active_files(request).await?.into_inner();
+        
+        if response.active_files.is_empty() {
+            println!("{}", style("No active files found.").yellow());
+        } else {
+            println!("{}", style(format!("Found {} active file(s):", response.active_files.len())).cyan());
+            println!();
+            for file_info in response.active_files {
+                let action_color = match file_info.action.as_str() {
+                    "add" => style(&file_info.action).green(),
+                    "edit" => style(&file_info.action).yellow(),
+                    "delete" => style(&file_info.action).red(),
+                    _ => style(&file_info.action).white(),
+                };
+                println!("  {} {} {}", action_color, style("|").dim(), file_info.path);
+            }
+        }
+        
+        Ok(())
     }
 }
 
