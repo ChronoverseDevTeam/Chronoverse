@@ -23,6 +23,9 @@ pub enum AppError {
 
     #[error("Internal server error")]
     Unknown,
+
+    #[error("Resource not found: {0}")]
+    NotFound(String),
 }
 
 impl From<Status> for AppError {
@@ -41,6 +44,7 @@ impl From<AppError> for Status {
             AppError::Unknown => Status::internal("Unknown error"),
             AppError::Raw(status) => status,
             AppError::HiveClient(msg) => Status::internal(format!("Hive Client Error: {}", msg)),
+            AppError::NotFound(msg) => Status::not_found(msg),
         }
     }
 }

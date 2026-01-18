@@ -277,8 +277,15 @@ message TransferBlueprintAsyncCheckRsp {
   repeated TransferBlueprintRsp messages = 2;
 }
 
+message CancelJobReq {
+  string job_id = 1;
+}
+
+message CancelJobRsp {}
+
 service DebugService {
   rpc TransferBlueprint(TransferBlueprintReq) returns (stream TransferBlueprintRsp);
   rpc TransferBlueprintAsyncStart(TransferBlueprintAsyncStartReq) returns (TransferBlueprintAsyncStartRsp);
   rpc TransferBlueprintAsyncCheck(TransferBlueprintAsyncCheckReq) returns (TransferBlueprintAsyncCheckRsp);
+  rpc CancelJob(CancelJobReq) returns (CancelJobRsp);
 }

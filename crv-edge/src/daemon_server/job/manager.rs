@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use uuid::Uuid;
 use tokio::sync::mpsc;
-use super::core::{Job, JobId, MessageStoragePolicy, WorkerProtocol};
+use super::core::{Job, JobId, MessageStoragePolicy, WorkerProtocol, JobRetentionPolicy};
 
 pub struct JobManager {
     jobs: Arc<RwLock<HashMap<JobId, Arc<Job>>>>,
@@ -29,23 +29,28 @@ impl JobManager {
         }
     }
 
-    pub fn create_job(&self, request_payload: Option<String>, buffer_policy: MessageStoragePolicy, protocol: WorkerProtocol) -> Arc<Job> {
+    pub fn create_job(
+        &self, 
+        request_payload: Option<String>, 
+        buffer_policy: MessageStoragePolicy, 
+        protocol: WorkerProtocol,
+        retention_policy: JobRetentionPolicy,
+    ) -> Arc<Job> {
         let id = Uuid::new_v4().to_string();
         println!("[JobManager] Creating job: {}", id);
-        let job = Arc::new(Job::new(id.clone(), request_payload, buffer_policy, protocol, self.cleanup_tx.clone()));
+        let job = Arc::new(Job::new(
+            id.clone(), 
+            request_payload, 
+            buffer_policy, 
+            protocol, 
+            retention_policy,
+            self.cleanup_tx.clone()
+        ));
         self.jobs.write().unwrap().insert(id.clone(), job.clone());
         job
     }
 
     pub fn get_job(&self, id: &str) -> Option<Arc<Job>> {
         self.jobs.read().unwrap().get(id).cloned()
-    }
-    
-    pub fn remove_job(&self, id: &str) {
-        if self.jobs.write().unwrap().remove(id).is_some() {
-            println!("[JobManager] Removed job: {}", id);
-        } else {
-            println!("[JobManager] Attempted to remove non-existent job: {}", id);
-        }
     }
 }

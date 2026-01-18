@@ -56,6 +56,15 @@ impl DebugService for DebugServiceImpl {
             .await
             .map_err(|e| e.into())
     }
+
+    async fn cancel_job(
+        &self,
+        request: Request<CancelJobReq>,
+    ) -> Result<Response<CancelJobRsp>, Status> {
+        handlers::debug::cancel_job::handle(self.state.clone(), request)
+            .await
+            .map_err(|e| e.into())
+    }
 }
 
 pub struct ChangelistServiceImpl {
