@@ -2,6 +2,7 @@ pub mod dao;
 pub mod entities;
 pub mod ltree_key;
 pub mod migration;
+pub mod service;
 
 use anyhow::Result;
 use once_cell::sync::OnceCell;
