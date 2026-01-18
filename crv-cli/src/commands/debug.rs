@@ -1,15 +1,18 @@
-use std::collections::HashMap;
-use std::time::Duration;
-
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use console::style;
 use crv_edge::pb::debug_service_client::DebugServiceClient;
 use crv_edge::pb::{
-    TransferBlueprintAsyncCheckReq, TransferBlueprintAsyncStartReq, TransferBlueprintReq,
-    TransferBlueprintRsp,
+    CancelJobReq, TransferBlueprintAsyncCheckReq, TransferBlueprintAsyncStartReq,
+    TransferBlueprintReq, TransferBlueprintRsp,
 };
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use std::collections::HashMap;
+use std::process;
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::signal;
+use tokio::sync::Notify;
 use tokio::time::sleep;
 use tonic::transport::Channel;
 
@@ -102,6 +105,30 @@ impl TransferBlueprintAsyncCli {
         let job_id = start_resp.job_id;
         println!("Job Started: {}", style(&job_id).yellow());
 
+        // Spawn Ctrl+C handler
+        let job_id_clone = job_id.clone();
+        let channel_clone = channel.clone();
+        let stop_notify = Arc::new(Notify::new());
+        let stop_notify_clone = stop_notify.clone();
+
+        tokio::spawn(async move {
+            tokio::select! {
+                _ = signal::ctrl_c() => {
+                    println!("\n{}", style("Cancelling job...").bold().yellow());
+                    let mut cancel_client = DebugServiceClient::new(channel_clone);
+                    let req = CancelJobReq { job_id: job_id_clone };
+                    match cancel_client.cancel_job(req).await {
+                        Ok(_) => println!("{}", style("Job cancelled successfully.").bold().green()),
+                        Err(e) => println!("{}", style(format!("Failed to cancel job: {}", e)).bold().red()),
+                    }
+                    process::exit(0);
+                }
+                _ = stop_notify_clone.notified() => {
+                    // Main loop finished, stop monitoring
+                }
+            }
+        });
+
         // 2. Poll Status
         let m = MultiProgress::new();
         let mut bars: HashMap<String, ProgressBar> = HashMap::new();
@@ -123,11 +150,11 @@ impl TransferBlueprintAsyncCli {
                 update_progress(&m, &mut bars, &progress_style, msg);
             }
 
-            if check_resp.job_status == "Completed" {
+            if check_resp.job_status == "completed" {
                 m.clear().unwrap();
                 println!("{}", style("Job Completed Successfully!").bold().green());
                 break;
-            } else if check_resp.job_status == "Failed" {
+            } else if check_resp.job_status == "failed" {
                 m.clear().unwrap();
                 println!("{}", style("Job Failed!").bold().red());
                 break;
@@ -135,6 +162,8 @@ impl TransferBlueprintAsyncCli {
 
             sleep(Duration::from_millis(500)).await;
         }
+
+        stop_notify.notify_one();
 
         Ok(())
     }

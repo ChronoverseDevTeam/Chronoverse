@@ -144,6 +144,7 @@ impl Job {
                 tokio::select! {
                     _ = cancel_notify.notified() => {
                         set.abort_all();
+                        println!("[JobManager] All workers are aborted because of job canceled.");
                         // Status update is handled in cancel()
                         return;
                     }
