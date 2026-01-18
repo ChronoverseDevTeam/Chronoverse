@@ -17,68 +17,54 @@ async fn main() -> Result<()> {
     let daemon_url = format!("http://[::1]:{}", bootstrap_config.daemon_port);
     let channel = Endpoint::from_shared(daemon_url.clone())?.connect_lazy();
 
+    // 2. 检查参数决定模式
+    let args: Vec<String> = std::env::args().collect();
+    // 仅当没有参数或参数为 --repl 时进入 REPL 模式
+    if args.len() == 1 || (args.len() == 2 && args[1] == "--repl") {
+        run_repl(channel).await?;
+    } else {
+        // 直接执行命令
+        let cli = Cli::parse();
+        cli.handle(&channel).await?;
+    }
+
+    Ok(())
+}
+
+async fn run_repl(channel: tonic::transport::Channel) -> Result<()> {
     println!("{}", console::style("Welcome to CRV Edge Shell").bold().cyan());
     println!("Type 'exit' or 'quit' to leave, 'help' for commands.\n");
 
     // 2. 初始化 Rustyline 编辑器
-    let mut rl = DefaultEditor::new()?;
-    //let _ = rl.load_history("history.txt");
+    // let mut rl = DefaultEditor::new()?;
+    // let _ = rl.load_history("history.txt");
 
     // 3. 进入交互式循环
     loop {
-        //rustyline暂时没法debug（报错Permission denied），先使用标准输入输出
+        // rustyline暂时没法debug（报错Permission denied），先使用标准输入输出
         print!("crv> ");
         io::stdout().flush().unwrap();
-        
+
         let mut input = String::new();
         io::stdin().read_line(&mut input).unwrap();
 
-        input = input.trim().to_string();
+        let input_str = input.trim();
+        if input_str.is_empty() {
+            continue;
+        }
 
-        if let Some(args) = shlex::split(&input) {
+        if input_str == "exit" || input_str == "quit" {
+            break;
+        }
+
+        if let Some(args) = shlex::split(input_str) {
             // 调用处理函数
             if let Err(e) = handle_repl_command(&args, &channel).await {
                 eprintln!("{}: {}", console::style("Error").red(), e);
             }
         }
-        // match input {
-        //     Ok(line) => {
-        //         let line = line.trim();
-        //         if line.is_empty() { continue; }
-                
-        //         // 添加到历史记录
-        //         let _ = rl.add_history_entry(line);
-
-        //         // 处理退出指令
-        //         if line == "exit" || line == "quit" {
-        //             break;
-        //         }
-
-        //         // 4. 解析并执行命令
-        //         // 我们使用 shlex 将字符串转为 Vec<String>，模拟标准命令行参数
-        //         if let Some(args) = shlex::split(line) {
-        //             // 调用处理函数
-        //             if let Err(e) = handle_repl_command(&args, &channel).await {
-        //                 eprintln!("{}: {}", console::style("Error").red(), e);
-        //             }
-        //         }
-        //     }
-        //     Err(ReadlineError::Interrupted) => { // Ctrl-C
-        //         println!("CTRL-C");
-        //         break;
-        //     }
-        //     Err(ReadlineError::Eof) => { // Ctrl-D
-        //         println!("CTRL-D");
-        //         break;
-        //     }
-        //     Err(err) => {
-        //         println!("Error: {:?}", err);
-        //         break;
-        //     }
-        // }
     }
-
-    //let _ = rl.save_history("history.txt");
+    // let _ = rl.save_history("history.txt");
     Ok(())
 }
 
