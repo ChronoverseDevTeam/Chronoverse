@@ -247,3 +247,38 @@ service ChangelistService {
   rpc AppendChangelist(AppendChangelistReq) returns (AppendChangelistRsp);
   rpc SubmitChangelist(SubmitChangelistReq) returns (stream SubmitProgress);
 }
+
+// Debug & Simulation
+message TransferBlueprintReq {
+  int32 worker_count = 1;
+}
+
+message TransferBlueprintRsp {
+  string worker_id = 1;
+  string type = 2; // "progress", "warning", "error"
+  string message = 3;
+  int32 retry_count = 4;
+}
+
+message TransferBlueprintAsyncStartReq {
+  int32 worker_count = 1;
+}
+
+message TransferBlueprintAsyncStartRsp {
+  string job_id = 1;
+}
+
+message TransferBlueprintAsyncCheckReq {
+  string job_id = 1;
+}
+
+message TransferBlueprintAsyncCheckRsp {
+  string job_status = 1;
+  repeated TransferBlueprintRsp messages = 2;
+}
+
+service DebugService {
+  rpc TransferBlueprint(TransferBlueprintReq) returns (stream TransferBlueprintRsp);
+  rpc TransferBlueprintAsyncStart(TransferBlueprintAsyncStartReq) returns (TransferBlueprintAsyncStartRsp);
+  rpc TransferBlueprintAsyncCheck(TransferBlueprintAsyncCheckReq) returns (TransferBlueprintAsyncCheckRsp);
+}

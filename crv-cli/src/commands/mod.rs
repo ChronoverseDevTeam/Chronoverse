@@ -1,4 +1,5 @@
 mod changelist;
+mod debug;
 mod edge;
 mod file;
 mod workspace;
@@ -28,6 +29,7 @@ impl Cli {
             Commands::Revert(revert_cli) => revert_cli.handle(channel).await,
             Commands::Workspace(workspace_cli) => workspace_cli.handle(channel).await,
             Commands::Changelist(changelist_cli) => changelist_cli.handle(channel).await,
+            Commands::Debug(debug_cli) => debug_cli.handle(channel).await,
         }
     }
 }
@@ -45,4 +47,5 @@ pub enum Commands {
     Revert(file::RevertCli),
     Workspace(workspace::WorkspaceCli),
     Changelist(changelist::ChangelistCli),
+    Debug(debug::DebugCli),
 }

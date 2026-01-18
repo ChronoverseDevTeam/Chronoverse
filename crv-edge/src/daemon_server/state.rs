@@ -2,6 +2,7 @@
 use crate::daemon_server::error::{AppError, AppResult};
 
 use super::db::DbManager;
+use super::job::JobManager;
 use lru::LruCache;
 use std::{num::NonZeroUsize, sync::Arc};
 use tonic::transport::{Channel, Endpoint};
@@ -13,6 +14,8 @@ pub struct AppState {
     pub db: Arc<DbManager>,
     /// 与 hive 的连接通道池
     pub hive_channel: Arc<ChannelPool>,
+    /// Job 管理器
+    pub job_manager: Arc<JobManager>,
 }
 
 /// 缓存连接
@@ -63,6 +66,7 @@ impl AppState {
         Self {
             db,
             hive_channel: Arc::new(ChannelPool::new()),
+            job_manager: Arc::new(JobManager::new()),
         }
     }
 }

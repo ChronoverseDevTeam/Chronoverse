@@ -3,6 +3,7 @@ pub mod context;
 pub mod db;
 pub mod error;
 pub mod handlers;
+pub mod job;
 pub mod middleware;
 pub mod service;
 pub mod startup;

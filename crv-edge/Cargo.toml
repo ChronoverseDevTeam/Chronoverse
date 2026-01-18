@@ -16,7 +16,7 @@ confy = { workspace = true }
 bincode = { workspace = true }
 lru = { workspace = true }
 
-tokio-stream = "0.1" # 配合 tonic 进行流处理必须的库
+tokio-stream = { version = "0.1", features = ["sync"] } # 配合 tonic 进行流处理必须的库
 futures = "0.3"
 
 # Fingerprint dependencies
@@ -43,6 +43,7 @@ rocksdb = "0.24.0"
 uuid = { "version" = "1.19", features = ["v4"] }
 walkdir = "2"
 hex = "0.4"
+rand = "0.8"
 
 [dev-dependencies]
 tokio-stream = "0.1"

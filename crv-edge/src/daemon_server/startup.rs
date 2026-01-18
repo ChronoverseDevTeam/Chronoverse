@@ -5,6 +5,7 @@ use super::service::*;
 use crate::daemon_server::db::DbManager;
 use crate::daemon_server::state::AppState;
 use crate::pb::changelist_service_server::ChangelistServiceServer;
+use crate::pb::debug_service_server::DebugServiceServer;
 use crate::pb::file_service_server::FileServiceServer;
 use crate::pb::system_service_server::SystemServiceServer;
 use crate::pb::workspace_service_server::WorkspaceServiceServer;
@@ -20,13 +21,14 @@ where
     let bootstrap_config = BootstrapConfig::load()?;
     let db = DbManager::new(bootstrap_config.embedded_database_root)?;
     let db_arc = Arc::new(db);
-    let mut app_state = AppState::new(db_arc.clone());
+    let app_state = AppState::new(db_arc.clone());
 
     let interceptor = CombinedInterceptor::new(app_state.clone());
     let system_service_impl = SystemServiceImpl::new(app_state.clone());
     let workspace_service_impl = WorkspaceServiceImpl::new(app_state.clone());
     let file_service_impl = FileServiceImpl::new(app_state.clone());
-    let changelist_service_impl = ChangelistServiceImpl::new(app_state);
+    let changelist_service_impl = ChangelistServiceImpl::new(app_state.clone());
+    let debug_service_impl = DebugServiceImpl::new(app_state);
 
     let addr: SocketAddr = format!("[::1]:{}", bootstrap_config.daemon_port).parse()?;
 
@@ -47,6 +49,10 @@ where
         ))
         .add_service(ChangelistServiceServer::with_interceptor(
             changelist_service_impl,
+            interceptor.clone(),
+        ))
+        .add_service(DebugServiceServer::with_interceptor(
+            debug_service_impl,
             interceptor,
         ))
         .serve_with_shutdown(addr, shutdown)
@@ -60,13 +66,14 @@ pub async fn start_server() -> Result<(), Box<dyn std::error::Error>> {
     let bootstrap_config = BootstrapConfig::load()?;
     let db = DbManager::new(bootstrap_config.embedded_database_root)?;
     let db_arc = Arc::new(db);
-    let mut app_state = AppState::new(db_arc.clone());
+    let app_state = AppState::new(db_arc.clone());
 
     let interceptor = CombinedInterceptor::new(app_state.clone());
     let system_service_impl = SystemServiceImpl::new(app_state.clone());
     let workspace_service_impl = WorkspaceServiceImpl::new(app_state.clone());
     let file_service_impl = FileServiceImpl::new(app_state.clone());
-    let changelist_service_impl = ChangelistServiceImpl::new(app_state);
+    let changelist_service_impl = ChangelistServiceImpl::new(app_state.clone());
+    let debug_service_impl = DebugServiceImpl::new(app_state);
 
     let addr: SocketAddr = format!("[::1]:{}", bootstrap_config.daemon_port).parse()?;
 
@@ -85,6 +92,10 @@ pub async fn start_server() -> Result<(), Box<dyn std::error::Error>> {
         ))
         .add_service(ChangelistServiceServer::with_interceptor(
             changelist_service_impl,
+            interceptor.clone(),
+        ))
+        .add_service(DebugServiceServer::with_interceptor(
+            debug_service_impl,
             interceptor,
         ))
         .serve(addr)

@@ -10,8 +10,53 @@ use crate::pb::*;
 use crate::{
     daemon_server::handlers::file::submit::SubmitProgressStream,
     pb::changelist_service_server::ChangelistService,
+    pb::debug_service_server::DebugService,
 };
 use tonic::{Request, Response, Status};
+
+pub struct DebugServiceImpl {
+    pub state: AppState,
+}
+
+impl DebugServiceImpl {
+    pub fn new(state: AppState) -> Self {
+        Self { state }
+    }
+}
+
+type TransferBlueprintStream = handlers::debug::transfer_blueprint::TransferBlueprintStream;
+
+#[tonic::async_trait]
+impl DebugService for DebugServiceImpl {
+    type TransferBlueprintStream = TransferBlueprintStream;
+    
+    async fn transfer_blueprint(
+        &self,
+        request: Request<TransferBlueprintReq>,
+    ) -> Result<Response<Self::TransferBlueprintStream>, Status> {
+        handlers::debug::transfer_blueprint::handle(self.state.clone(), request)
+            .await
+            .map_err(|e| e.into())
+    }
+
+    async fn transfer_blueprint_async_start(
+        &self,
+        request: Request<TransferBlueprintAsyncStartReq>,
+    ) -> Result<Response<TransferBlueprintAsyncStartRsp>, Status> {
+        handlers::debug::transfer_blueprint_async::start(self.state.clone(), request)
+            .await
+            .map_err(|e| e.into())
+    }
+
+    async fn transfer_blueprint_async_check(
+        &self,
+        request: Request<TransferBlueprintAsyncCheckReq>,
+    ) -> Result<Response<TransferBlueprintAsyncCheckRsp>, Status> {
+        handlers::debug::transfer_blueprint_async::check(self.state.clone(), request)
+            .await
+            .map_err(|e| e.into())
+    }
+}
 
 pub struct ChangelistServiceImpl {
     pub state: AppState,

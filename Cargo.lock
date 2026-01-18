@@ -983,6 +983,7 @@ dependencies = [
  "prost",
  "prost-types",
  "protoc-bin-vendored",
+ "rand 0.8.5",
  "rocksdb",
  "serde",
  "serde_json",
@@ -4791,6 +4792,7 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]
