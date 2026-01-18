@@ -24,17 +24,17 @@ impl DebugServiceImpl {
     }
 }
 
-type TransferBlueprintStream = handlers::debug::transfer_blueprint::TransferBlueprintStream;
+type TransferBlueprintStream = handlers::job_system_debug::transfer_blueprint::TransferBlueprintStream;
 
 #[tonic::async_trait]
 impl DebugService for DebugServiceImpl {
     type TransferBlueprintStream = TransferBlueprintStream;
-    
+
     async fn transfer_blueprint(
         &self,
         request: Request<TransferBlueprintReq>,
     ) -> Result<Response<Self::TransferBlueprintStream>, Status> {
-        handlers::debug::transfer_blueprint::handle(self.state.clone(), request)
+        handlers::job_system_debug::transfer_blueprint::handle(self.state.clone(), request)
             .await
             .map_err(|e| e.into())
     }
@@ -43,7 +43,7 @@ impl DebugService for DebugServiceImpl {
         &self,
         request: Request<TransferBlueprintAsyncStartReq>,
     ) -> Result<Response<TransferBlueprintAsyncStartRsp>, Status> {
-        handlers::debug::transfer_blueprint_async::start(self.state.clone(), request)
+        handlers::job_system_debug::transfer_blueprint_async::start(self.state.clone(), request)
             .await
             .map_err(|e| e.into())
     }
@@ -52,7 +52,7 @@ impl DebugService for DebugServiceImpl {
         &self,
         request: Request<TransferBlueprintAsyncCheckReq>,
     ) -> Result<Response<TransferBlueprintAsyncCheckRsp>, Status> {
-        handlers::debug::transfer_blueprint_async::check(self.state.clone(), request)
+        handlers::job_system_debug::transfer_blueprint_async::check(self.state.clone(), request)
             .await
             .map_err(|e| e.into())
     }
@@ -61,7 +61,7 @@ impl DebugService for DebugServiceImpl {
         &self,
         request: Request<CancelJobReq>,
     ) -> Result<Response<CancelJobRsp>, Status> {
-        handlers::debug::cancel_job::handle(self.state.clone(), request)
+        handlers::job_system_debug::cancel_job::handle(self.state.clone(), request)
             .await
             .map_err(|e| e.into())
     }
