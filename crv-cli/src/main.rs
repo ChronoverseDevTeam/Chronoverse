@@ -18,13 +18,12 @@ async fn main() -> Result<()> {
     let channel = Endpoint::from_shared(daemon_url.clone())?.connect_lazy();
 
     // 2. 检查参数决定模式
-    let args: Vec<String> = std::env::args().collect();
+    let cli = Cli::parse();
     // 仅当没有参数或参数为 --repl 时进入 REPL 模式
-    if args.len() == 1 || (args.len() == 2 && args[1] == "--repl") {
+    if cli.repl || cli.command.is_none() {
         run_repl(channel).await?;
     } else {
         // 直接执行命令
-        let cli = Cli::parse();
         cli.handle(&channel).await?;
     }
 
@@ -65,13 +64,14 @@ async fn run_repl(channel: tonic::transport::Channel) -> Result<()> {
         }
     }
     // let _ = rl.save_history("history.txt");
+    println!("{}", console::style("bye~").bold().green());
     Ok(())
 }
 
 /// 解析并处理 REPL 中的单条命令
 async fn handle_repl_command(args: &[String], channel: &tonic::transport::Channel) -> Result<()> {
     // 注意：clap 的 try_parse_from 第一个参数通常是程序名，所以我们需要在开头插入一个占位符
-    let mut full_args = vec!["crv-shell".to_string()];
+    let mut full_args = vec!["crv>".to_string()];
     full_args.extend_from_slice(args);
 
     // 使用 try_parse_from 而不是 parse，防止解析失败时直接 panic 退出程序
