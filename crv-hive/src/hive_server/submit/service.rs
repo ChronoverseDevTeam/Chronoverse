@@ -49,8 +49,6 @@ pub struct LaunchSubmitFailure {
     file_unable_to_lock: Vec<LockedFile>,
 }
 
-
-
 impl SubmitService {
     pub fn new() -> Self {
         Self {
@@ -59,7 +57,31 @@ impl SubmitService {
         }
     }
 
-    pub fn launch_submit(
+    fn unlock_context(&self, ticket: &uuid::Uuid) {
+        let mut locked = self
+            .locked_paths
+            .write()
+            .expect("submit service locked_paths poisoned");
+        let mut context = self
+            .contexts
+            .write()
+            .expect("submit service contexts poisoned");
+
+        let Some(ctx) = context.get(ticket) else {
+            // already unlocked / unknown ticket
+            return;
+        };
+
+        for f in ctx.files.iter() {
+            // 只释放属于该 ticket 的锁，避免误删其他并发 ticket 的占用
+            if locked.get(&f.path) == Some(ticket) {
+                locked.remove(&f.path);
+            }
+        }
+        context.remove(ticket);
+    }
+
+    pub async fn launch_submit(
         &mut self,
         files: &Vec<LockedFile>,
         submitting_by: String,
@@ -80,7 +102,7 @@ impl SubmitService {
 
         let deadline = chrono::Utc::now() + timeout;
 
-        // 1) 先检查是否有任何文件已被锁定（全有或全无，不做部分加锁）
+        // 0) 去重
         let mut unique_paths: HashSet<DepotPath> = HashSet::new();
         let mut duplicated_paths: HashSet<DepotPath> = HashSet::new();
         for f in files.iter() {
@@ -92,9 +114,7 @@ impl SubmitService {
             return Err(LaunchSubmitFailure {
                 file_unable_to_lock: duplicated_paths
                     .into_iter()
-                    .map(|p| {
-                        files.iter().find(|f| f.path == p).unwrap().clone()
-                    })
+                    .map(|p| files.iter().find(|f| f.path == p).unwrap().clone())
                     .collect(),
             });
         }
@@ -113,9 +133,7 @@ impl SubmitService {
             let mut conflicted = Vec::new();
             for p in &unique_paths {
                 if locked.contains_key(p) {
-                    conflicted.push(
-                        files.iter().find(|f| f.path == *p).unwrap().clone()
-                    );
+                    conflicted.push(files.iter().find(|f| f.path == *p).unwrap().clone());
                 }
             }
 
@@ -139,16 +157,78 @@ impl SubmitService {
             contexts.insert(ticket, ctx);
         }
 
-        Ok(LaunchSubmitSuccess {
-            ticket: ticket,
-        })
+        {
+            // 2) 读数据库，对比最新版本是否和预期的锁定版本一致
+            let mut conflicted = Vec::new();
+
+            for p in &unique_paths {
+                let f = files.iter().find(|f| f.path == *p).unwrap();
+
+                let expected = match (f.locked_generation, f.locked_revision) {
+                    (Some(g), Some(r)) => Some((g, r)),
+                    (None, None) => None,
+                    // generation/revision 只给了一个：视为非法期望版本
+                    _ => {
+                        conflicted.push(f.clone());
+                        continue;
+                    }
+                };
+
+                let current = match crate::database::dao::find_latest_file_revision_by_depot_path(
+                    &p.to_string(),
+                )
+                .await
+                {
+                    Ok(latest) => latest.and_then(|m| {
+                        if m.is_delete {
+                            None
+                        } else {
+                            Some((m.generation, m.revision))
+                        }
+                    }),
+                    Err(e) => {
+                        // 约定：当期望版本为 None（即期望文件不存在）时，“查不到记录”属于预期内，视为 current=None
+                        if expected.is_none()
+                            && matches!(
+                                e,
+                                crate::database::dao::DaoError::Db(
+                                    sea_orm::DbErr::RecordNotFound(_)
+                                )
+                            )
+                        {
+                            None
+                        } else {
+                            conflicted.push(f.clone());
+                            continue;
+                        }
+                    }
+                };
+
+                if expected != current {
+                    conflicted.push(f.clone());
+                }
+            }
+
+            if !conflicted.is_empty() {
+                // 回滚：释放本次 ticket 占用的锁与上下文
+                self.unlock_context(&ticket);
+
+                return Err(LaunchSubmitFailure {
+                    file_unable_to_lock: conflicted,
+                });
+            }
+        }
+
+        Ok(LaunchSubmitSuccess { ticket: ticket })
     }
 
     pub fn submit(&mut self, ticket: &uuid::Uuid) {
-        let mut context = self.contexts.write().expect("submit service contexts poisoned");
+        let mut context = self
+            .contexts
+            .write()
+            .expect("submit service contexts poisoned");
 
         let context = context.get(ticket);
-        if context.is_none() {
-        }
+        if context.is_none() {}
     }
 }
