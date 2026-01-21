@@ -112,20 +112,28 @@ message SyncProgress {
   }
 }
 
-// 包含总量的元数据信息（只发送一次）
+message SyncFileMetadata {
+  // 文件 depot path
+  string path = 1;
+  // 文件大小，以字节为单位
+  int64 size = 2;
+}
+
+// 文件元数据信息（只发送一次）
 message SyncMetadata {
-  // 总字节数
-  int64 total_bytes_to_sync = 1;
-  // 总文件数（可以基于文件数或字节数做进度条）
-  int32 total_files_to_sync = 2;
+  repeated SyncFileMetadata files = 1;
 }
 
 // 包含单个文件更新的信息（多次发送）
 message SyncFileUpdate {
+  // 文件 depot path
   string path = 1;
-  string action = 2; // "updated", "deleted", "conflict", ...
   // 已完成的字节数
-  int64 bytes_completed_so_far = 3;
+  int64 bytes_completed_so_far = 2;
+  // 提示信息
+  string info = 3;
+  // 警告信息
+  string warning = 4;
 }
 
 message LockReq {
@@ -154,8 +162,14 @@ message SubmitReq {
 
 message SubmitProgress {
   string path = 1;
+  // 文件总字节数
+  int64 size = 2;
   // 已完成的字节数
-  int64 bytes_completed_so_far = 2;
+  int64 bytes_completed_so_far = 3;
+  // 提示信息
+  string info = 4;
+  // 警告信息
+  string warning = 5;
 }
 
 message ListActiveFilesReq {

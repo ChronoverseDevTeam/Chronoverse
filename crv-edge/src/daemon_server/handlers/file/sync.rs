@@ -2,20 +2,90 @@ use crate::daemon_server::config::RuntimeConfig;
 use crate::daemon_server::db::file::FileMeta;
 use crate::daemon_server::error::{AppError, AppResult};
 use crate::daemon_server::handlers::utils::{expand_paths_to_files, normalize_paths};
+use crate::daemon_server::job::{
+    JobEvent, JobRetentionPolicy, JobStatus, MessageStoragePolicy, WorkerProtocol,
+};
 use crate::daemon_server::state::AppState;
 use crate::hive_pb::{
-    GetFileTreeReq, file_tree_node::Node, hive_service_client::HiveServiceClient,
+    file_tree_node::Node, hive_service_client::HiveServiceClient, GetFileTreeReq,
 };
-use crate::pb::{SyncFileUpdate, SyncMetadata, SyncProgress, SyncReq};
+use crate::pb::{SyncFileMetadata, SyncFileUpdate, SyncMetadata, SyncProgress, SyncReq};
 use crv_core::path::basic::{LocalPath, WorkspacePath};
 use crv_core::path::engine::PathEngine;
+use prost::Message;
 use std::collections::HashMap;
 use std::pin::Pin;
-use tokio_stream::Stream;
+use std::sync::{Arc, Weak};
+use std::task::{Context, Poll};
+use tokio_stream::wrappers::BroadcastStream;
+use tokio_stream::{Stream, StreamExt};
 use tonic::{Request, Response, Status};
 
 pub type SyncProgressStream =
     Pin<Box<dyn Stream<Item = Result<SyncProgress, Status>> + Send + 'static>>;
+
+struct JobCancelOnDropStream {
+    stream: SyncProgressStream,
+    job: Weak<crate::daemon_server::job::Job>,
+}
+
+impl Stream for JobCancelOnDropStream {
+    type Item = Result<SyncProgress, Status>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.stream.as_mut().poll_next(cx)
+    }
+}
+
+impl Drop for JobCancelOnDropStream {
+    fn drop(&mut self) {
+        if let Some(job) = self.job.upgrade() {
+            job.cancel();
+        }
+    }
+}
+
+fn traverse_tree(
+    nodes: &[crate::hive_pb::FileTreeNode],
+    current_path: &str,
+    map: &mut HashMap<String, (String, i64)>,
+) {
+    for node in nodes {
+        if let Some(ref n) = node.node {
+            match n {
+                Node::File(file) => {
+                    let full_path = if current_path.is_empty() {
+                        format!("//{}", file.name)
+                    } else {
+                        format!("{}/{}", current_path, file.name)
+                    };
+                    // todo 从 File revisions 中得到 latest revision 的 revision id 和 file size
+                    let latest_revision = file
+                        .revisions
+                        .iter()
+                        .max_by_key(|x| x.1.changelist_id)
+                        .expect(&format!("Cannot get revision history of file {}", full_path));
+
+                    map.insert(
+                        full_path,
+                        (
+                            latest_revision.1.revision_id.clone(),
+                            latest_revision.1.size,
+                        ),
+                    );
+                }
+                Node::Directory(dir) => {
+                    let full_path = if current_path.is_empty() {
+                        format!("//{}", dir.name)
+                    } else {
+                        format!("{}/{}", current_path, dir.name)
+                    };
+                    traverse_tree(&dir.children, &full_path, map);
+                }
+            }
+        }
+    }
+}
 
 pub async fn handle(
     state: AppState,
@@ -50,7 +120,10 @@ pub async fn handle(
     let local_files = expand_paths_to_files(&local_paths);
 
     // 4. 转换为 depot paths
-    let path_engine = PathEngine::new(workspace_meta.config.clone(), &request_body.workspace_name);
+    let path_engine = PathEngine::new(
+        workspace_meta.config.clone(),
+        &request_body.workspace_name,
+    );
     let mut depot_paths = Vec::new();
     let mut local_to_workspace: HashMap<String, WorkspacePath> = HashMap::new();
 
@@ -80,79 +153,43 @@ pub async fn handle(
     // 6. 构建 depot_path -> file info(revision id & file size) 的映射
     let mut depot_file_map: HashMap<String, (String, i64)> = HashMap::new();
 
-    fn traverse_tree(
-        nodes: &[crate::hive_pb::FileTreeNode],
-        current_path: &str,
-        map: &mut HashMap<String, (String, i64)>,
-    ) {
-        for node in nodes {
-            if let Some(ref n) = node.node {
-                match n {
-                    Node::File(file) => {
-                        let full_path = if current_path.is_empty() {
-                            format!("//{}", file.name)
-                        } else {
-                            format!("{}/{}", current_path, file.name)
-                        };
-                        // todo 从 File revisions 中得到 latest revision 的 revision id 和 file size
-                        let latest_revision = file
-                            .revisions
-                            .iter()
-                            .max_by_key(|x| x.1.changelist_id)
-                            .expect(&format!(
-                                "Cannot get revision history of file {}",
-                                full_path
-                            ));
-
-                        map.insert(
-                            full_path,
-                            (
-                                latest_revision.1.revision_id.clone(),
-                                latest_revision.1.size,
-                            ),
-                        );
-                    }
-                    Node::Directory(dir) => {
-                        let full_path = if current_path.is_empty() {
-                            format!("//{}", dir.name)
-                        } else {
-                            format!("{}/{}", current_path, dir.name)
-                        };
-                        traverse_tree(&dir.children, &full_path, map);
-                    }
-                }
-            }
-        }
-    }
-
     traverse_tree(&file_tree_rsp.file_tree_root, "", &mut depot_file_map);
 
-    // 7. 创建进度流
-    let (tx, rx) = tokio::sync::mpsc::channel(128);
+    // 7. 创建 Job
+    let job = state.job_manager.create_job(
+        None,
+        MessageStoragePolicy::None,
+        WorkerProtocol::And,
+        JobRetentionPolicy::Immediate,
+    );
+
+    let rx = job.tx.subscribe();
     let state_clone = state.clone();
     let local_to_workspace_clone = local_to_workspace.clone();
+    let workspace_config = workspace_meta.config.clone();
+    let workspace_name = request_body.workspace_name.clone();
 
-    tokio::spawn(async move {
+    // 8. 添加 Worker
+    let job_ref = job.clone();
+    job.add_worker(async move {
         // 发送元数据
-        let total_files = depot_paths.len() as i32;
-        let total_bytes: i64 = depot_paths
+        let files = depot_paths
             .iter()
-            .filter_map(|dp| depot_file_map.get(&dp.to_string()))
-            .map(|(_, size)| *size)
-            .sum();
-
-        let _ = tx
-            .send(Ok(SyncProgress {
-                payload: Some(crate::pb::sync_progress::Payload::Metadata(SyncMetadata {
-                    total_bytes_to_sync: total_bytes,
-                    total_files_to_sync: total_files,
-                })),
+            .filter_map(|dp| depot_file_map.get(&dp.to_string()).map(|x| SyncFileMetadata{
+                path: dp.to_string(),
+                size: x.1,
             }))
-            .await;
+            .collect::<Vec<_>>();
+
+        job_ref.report_payload(SyncProgress {
+            payload: Some(crate::pb::sync_progress::Payload::Metadata(SyncMetadata {
+                files,
+            })),
+        });
 
         let mut bytes_completed = 0i64;
 
-        // 8. 处理每个文件
+        // 处理每个文件
         for depot_path in depot_paths {
             let depot_path_str = depot_path.to_string();
 
@@ -162,7 +199,7 @@ pub async fn handle(
                     .iter()
                     .find(|(_, ws_path)| {
                         // 通过比较 depot_path 来匹配
-                        let engine = PathEngine::new(workspace_meta.config.clone(), &request_body.workspace_name);
+                        let engine = PathEngine::new(workspace_config.clone(), &workspace_name);
                         if let Some(ws_local) = engine.workspace_path_to_local_path(ws_path) {
                             if let Some(ws_depot) = engine.mapping_local_path(&ws_local) {
                                 return ws_depot.to_string() == depot_path_str;
@@ -181,35 +218,54 @@ pub async fn handle(
                         .db
                         .set_file_meta(workspace_path.clone(), file_meta)
                     {
-                        let _ = tx
-                            .send(Err(Status::internal(format!(
-                                "Failed to save file meta: {}",
-                                e
-                            ))))
-                            .await;
-                        return;
+                        return Err(format!("Failed to save file meta: {}", e));
                     }
 
                     bytes_completed += size;
 
                     // 发送进度更新
-                    let _ = tx
-                        .send(Ok(SyncProgress {
-                            payload: Some(crate::pb::sync_progress::Payload::FileUpdate(
-                                SyncFileUpdate {
-                                    path: depot_path_str.clone(),
-                                    action: "synced".to_string(),
-                                    bytes_completed_so_far: bytes_completed,
-                                },
-                            )),
-                        }))
-                        .await;
+                    job_ref.report_payload(SyncProgress {
+                        payload: Some(crate::pb::sync_progress::Payload::FileUpdate(
+                            SyncFileUpdate {
+                                path: depot_path_str.clone(),
+                                bytes_completed_so_far: bytes_completed,
+                                info: "".to_string(),
+                                warning: "".to_string(),
+                            },
+                        )),
+                    });
                 }
             }
         }
+        Ok(())
     });
 
-    // 9. 返回流
-    let output_stream = tokio_stream::wrappers::ReceiverStream::new(rx);
-    Ok(Response::new(Box::pin(output_stream) as SyncProgressStream))
+    job.clone().start();
+
+    // 9. 构建输出流
+    let output_stream = BroadcastStream::new(rx).filter_map(move |res| {
+        match res {
+            Ok(event) => match event {
+                JobEvent::Payload(any) => {
+                    SyncProgress::decode(&any.value[..]).ok().map(Ok)
+                }
+                JobEvent::Error(e) => Some(Err(Status::internal(e))),
+                JobEvent::StatusChange(JobStatus::Failed(e)) => Some(Err(Status::internal(e))),
+                JobEvent::StatusChange(JobStatus::Cancelled) => {
+                    Some(Err(Status::cancelled("Sync cancelled")))
+                }
+                _ => None,
+            },
+            Err(_) => Some(Err(Status::internal("Stream lagged"))),
+        }
+    });
+
+    let wrapped_stream = JobCancelOnDropStream {
+        stream: Box::pin(output_stream),
+        job: Arc::downgrade(&job),
+    };
+
+    Ok(Response::new(
+        Box::pin(wrapped_stream) as SyncProgressStream
+    ))
 }
