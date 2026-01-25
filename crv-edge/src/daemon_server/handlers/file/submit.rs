@@ -322,7 +322,7 @@ async fn upload_task(
                 .metadata()
                 .await
                 .map_err(|x| format!("{x}"))?
-                .file_size() as i64;
+                .len() as i64;
             let mut success = false;
 
             loop {
