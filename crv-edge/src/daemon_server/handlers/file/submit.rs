@@ -14,7 +14,6 @@ use crv_core::path::basic::{DepotPath, LocalPath, WorkspacePath};
 use crv_core::path::engine::PathEngine;
 use crv_core::repository::compute_chunk_hash;
 use prost::Message;
-use std::os::windows::fs::MetadataExt;
 use std::pin::Pin;
 use std::sync::{Arc, Weak};
 use std::task::{Context, Poll};
