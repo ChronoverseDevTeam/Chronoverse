@@ -78,4 +78,22 @@ impl DbManager {
 
         return Ok(result);
     }
+
+    pub fn submit_file(&self, path: WorkspacePath, latest_revision: String) -> Result<(), DbError> {
+        // 将文件从 active file 中移除
+        let cf = self
+            .inner
+            .cf_handle(Self::CF_ACTIVE_FILE)
+            .expect(&format!("cf {} must exist", Self::CF_ACTIVE_FILE));
+        self.inner.delete_cf(cf, path.to_string())?;
+        // 写入最新 revision 信息
+        let cf = self
+            .inner
+            .cf_handle(Self::CF_FILE)
+            .expect(&format!("cf {} must exist", Self::CF_FILE));
+        let meta = FileMeta { latest_revision };
+        let bytes = bincode::encode_to_vec(meta, bincode::config::standard())?;
+        self.inner.put_cf(cf, path.to_string(), bytes)?;
+        Ok(())
+    }
 }

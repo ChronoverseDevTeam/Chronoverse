@@ -3,26 +3,51 @@ use crate::daemon_server::context::SessionContext;
 use crate::daemon_server::db::active_file;
 use crate::daemon_server::error::{AppError, AppResult};
 use crate::daemon_server::handlers::utils::{expand_paths_to_files, normalize_paths};
+use crate::daemon_server::job::{
+    JobEvent, JobRetentionPolicy, JobStatus, MessageStoragePolicy, WorkerProtocol,
+};
 use crate::daemon_server::state::AppState;
 use crate::hive_pb::hive_service_client::HiveServiceClient;
-use crate::hive_pb::{
-    self, CheckChunksReq, FileChunks, FileToLock, LaunchSubmitReq, UploadFileChunkReq,
-};
+use crate::hive_pb::{CheckChunksReq, FileChunks, FileToLock, LaunchSubmitReq, UploadFileChunkReq};
 use crate::pb::{SubmitProgress, SubmitReq};
-use crv_core::path::basic::{DepotPath, LocalPath, PathError, WorkspaceDir, WorkspacePath};
+use crv_core::path::basic::{DepotPath, LocalPath, WorkspacePath};
 use crv_core::path::engine::PathEngine;
 use crv_core::repository::compute_chunk_hash;
-use futures::stream::{self, StreamExt};
-use std::path::Path;
+use prost::Message;
+use std::os::windows::fs::MetadataExt;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex};
-use tokio::{fs::File, io::AsyncReadExt, sync::mpsc};
-use tokio_stream::{Stream, wrappers::ReceiverStream};
+use std::sync::{Arc, Weak};
+use std::task::{Context, Poll};
+use tokio::sync::Mutex;
+use tokio::{fs::File, io::AsyncReadExt};
+use tokio_stream::wrappers::{BroadcastStream, ReceiverStream};
+use tokio_stream::{Stream, StreamExt};
+use tonic::transport::Channel;
 use tonic::{Request, Response, Status};
-use walkdir::WalkDir;
 
 pub type SubmitProgressStream =
     Pin<Box<dyn Stream<Item = Result<SubmitProgress, Status>> + Send + Sync + 'static>>;
+
+struct JobCancelOnDropStream {
+    stream: SubmitProgressStream,
+    job: Weak<crate::daemon_server::job::Job>,
+}
+
+impl Stream for JobCancelOnDropStream {
+    type Item = Result<SubmitProgress, Status>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.stream.as_mut().poll_next(cx)
+    }
+}
+
+impl Drop for JobCancelOnDropStream {
+    fn drop(&mut self) {
+        if let Some(job) = self.job.upgrade() {
+            job.cancel();
+        }
+    }
+}
 
 struct FileToSubmit {
     local_path: LocalPath,
@@ -34,6 +59,8 @@ struct FileToSubmit {
 
 const FRAME_SIZE: usize = 64 * 1024; // 64KB，单个报文中的数据大小
 const CHUNK_SIZE: usize = 4 * 1024 * 1024; // 4MB，内存中的处理窗口，也是一个 chunk 的大小
+const WORKER_COUNT: i32 = 8;
+const MAX_RETRY: i32 = 3; // 单个 chunk 的最大重试次数
 
 pub async fn handle(
     state: AppState,
@@ -125,82 +152,194 @@ pub async fn handle(
 
     let ticket = try_lock_file_response.ticket;
 
-    // step 3. 初始化通信管道
-    // upload_tx: 将 Chunk 发送给网络上传任务
-    let (upload_tx, upload_rx) = mpsc::channel::<UploadFileChunkReq>(256);
-    // response_tx: 将进度发送给客户端
-    let (response_tx, response_rx) = mpsc::channel(128);
+    // step 3. 创建 Job
+    let job = state.job_manager.create_job(
+        None,
+        MessageStoragePolicy::None,
+        WorkerProtocol::And,
+        JobRetentionPolicy::Immediate,
+    );
 
-    // step 4. 启动 chunk 上传消费者
-    let mut hive_client_upload = HiveServiceClient::new(channel.clone());
-    let upload_task = tokio::spawn(async move {
-        let request_stream = ReceiverStream::new(upload_rx);
-        hive_client_upload.upload_file_chunk(request_stream).await
+    let rx = job.tx.subscribe();
+    let description = request_body.description.clone();
+    let files_to_submit = Arc::new(Mutex::new(files_to_submit));
+    let file_chunks = Arc::new(Mutex::new(vec![]));
+
+    let (marker_tx, marker_rx) = tokio::sync::mpsc::channel::<()>(1);
+
+    for i in 0..WORKER_COUNT {
+        let files = files_to_submit.clone();
+        let file_chunks = file_chunks.clone();
+        let channel_clone = channel.clone();
+        let job_clone = job.clone();
+        let ticket_clone = ticket.clone();
+        let marker_clone = marker_tx.clone();
+        job.add_worker(async move {
+            upload_task(
+                files,
+                file_chunks,
+                channel_clone,
+                ticket_clone,
+                job_clone,
+                marker_clone,
+                i,
+            )
+            .await
+        });
+    }
+
+    job.add_worker(async move {
+        submit_task(
+            state.clone(),
+            ticket,
+            description,
+            file_chunks,
+            files_to_submit,
+            channel,
+            marker_rx,
+        )
+        .await
     });
 
-    // step 5. 启动进度回报消费者
-    // tokio::spawn(track_progress(response_tx.clone(), progress_watch_rx));
+    drop(marker_tx);
 
-    // step 6. 构造 chunk 上传生产者流
-    // 用于收集所有已切块文件的元数据
-    let submitted_files = Arc::new(Mutex::new(Vec::<FileChunks>::new()));
-    let upload_tx_clone = upload_tx.clone();
-    let response_tx_clone = response_tx.clone();
-    let ticket_clone = ticket.clone();
-    let channel_clone = channel.clone();
-    let submitted_files_clone = submitted_files.clone();
-    let futs = stream::iter(files_to_submit).map(move |file_info| {
-        let up_tx = upload_tx_clone.clone();
-        let rsp_tx = response_tx_clone.clone();
-        let tk_clone = ticket_clone.clone();
-        let chan = channel_clone.clone();
-        let s_files = submitted_files_clone.clone();
+    job.clone().start();
 
-        async move {
+    // step 4. 返回 Response Stream
+    let output_stream = BroadcastStream::new(rx).filter_map(move |res| match res {
+        Ok(event) => match event {
+            JobEvent::Payload(any) => SubmitProgress::decode(&any.value[..]).ok().map(Ok),
+            JobEvent::Error(e) => Some(Err(Status::internal(e))),
+            JobEvent::StatusChange(JobStatus::Failed(e)) => Some(Err(Status::internal(e))),
+            JobEvent::StatusChange(JobStatus::Cancelled) => {
+                Some(Err(Status::cancelled("Submit cancelled")))
+            }
+            _ => None,
+        },
+        Err(_) => Some(Err(Status::internal("Stream lagged"))),
+    });
+
+    let wrapped_stream = JobCancelOnDropStream {
+        stream: Box::pin(output_stream),
+        job: Arc::downgrade(&job),
+    };
+
+    Ok(Response::new(
+        Box::pin(wrapped_stream) as SubmitProgressStream
+    ))
+}
+
+async fn submit_task(
+    state: AppState,
+    ticket: String,
+    description: String,
+    file_chunks: Arc<Mutex<Vec<FileChunks>>>,
+    files_to_submit: Arc<Mutex<Vec<FileToSubmit>>>,
+    channel: Channel,
+    mut marker: tokio::sync::mpsc::Receiver<()>,
+) -> Result<(), String> {
+    while let Some(_) = marker.recv().await {}
+    let mut hive_client = HiveServiceClient::new(channel.clone());
+    let submit_request = crate::hive_pb::SubmitReq {
+        ticket,
+        description,
+        files: file_chunks.lock().await.clone(),
+    };
+    let submit_response = hive_client
+        .submit(submit_request)
+        .await
+        .map_err(|x| format!("{x}"))?
+        .into_inner();
+
+    if !submit_response.success {
+        return Err(format!(
+            "SubmitReq failed with error: {}",
+            submit_response.message
+        ));
+    }
+
+    // 更新数据库
+    for file in files_to_submit.lock().await.iter() {
+        // 没有产生新版本说明提交失败了
+        if !submit_response
+            .latest_revision
+            .contains_key(&file.depot_path.to_string())
+        {
+            continue;
+        }
+        let latest_revision = submit_response
+            .latest_revision
+            .get(&file.depot_path.to_string())
+            .unwrap()
+            .revision_id
+            .clone();
+        state
+            .db
+            .submit_file(file.workspace_path.clone(), latest_revision)
+            .map_err(|x| format!("{x}"))?;
+    }
+
+    // todo 这里可以回报一个最终的提交结果给请求方
+    Ok(())
+}
+
+async fn upload_task(
+    files: Arc<Mutex<Vec<FileToSubmit>>>,
+    file_chunks: Arc<Mutex<Vec<FileChunks>>>,
+    channel: Channel,
+    ticket: String,
+    job: Arc<crate::daemon_server::job::Job>,
+    marker: tokio::sync::mpsc::Sender<()>,
+    _worker_id: i32,
+) -> Result<(), String> {
+    loop {
+        if let Some(file_info) = files.lock().await.pop() {
             // 如果是删除行为，则直接回报即可
             if file_info.action == active_file::Action::Delete {
-                rsp_tx
-                    .send(Ok(SubmitProgress {
-                        path: file_info.local_path.to_local_path_string(),
-                        bytes_completed_so_far: 0i64,
-                    }))
-                    .await
-                    .map_err(|_| AppError::Internal("Response channel closed".into()))?;
-
+                job.report_payload(SubmitProgress {
+                    path: file_info.local_path.to_local_path_string(),
+                    bytes_completed_so_far: 0i64,
+                    size: 0i64,
+                    info: String::new(),
+                    warning: String::new(),
+                });
                 let submit_file = FileChunks {
                     path: file_info.depot_path.to_string(), // 使用服务器路径
                     binary_id: vec![],                      // 块 Hash 列表
                 };
-
-                s_files.lock().unwrap().push(submit_file);
-                return Ok::<(), AppError>(());
+                file_chunks.lock().await.push(submit_file);
+                continue;
             }
-
             let path_str = file_info.local_path.to_local_path_string();
             let mut file = File::open(&path_str)
                 .await
-                .map_err(|e| AppError::Internal(format!("Open error: {e}")))?;
+                .map_err(|e| format!("Open error: {e}"))?;
 
-            let mut chunk_buffer = vec![0u8; CHUNK_SIZE];
-            let mut hive_client = HiveServiceClient::new(chan);
+            let mut hive_client = HiveServiceClient::new(channel.clone());
             let mut chunk_hashes = vec![]; // 收集当前文件的所有块 hash
-            let mut total_size = 0i64;
+            let mut total_size = 0i64; // 当前已经传输的总大小
+            let file_size = file
+                .metadata()
+                .await
+                .map_err(|x| format!("{x}"))?
+                .file_size() as i64;
+            let mut success = false;
 
             loop {
                 // 读取一个 chunk
+                let mut chunk_buffer = vec![0u8; CHUNK_SIZE];
                 let n = file
                     .read(&mut chunk_buffer)
                     .await
-                    .map_err(|e| AppError::Internal(format!("Read error: {e}")))?;
+                    .map_err(|e| format!("Read error: {e}"))?;
+                // 更新进度
+                total_size += n as i64;
 
                 if n == 0 {
                     break;
                 }
-                let data = &chunk_buffer[..n];
-
-                let frames: Vec<&[u8]> = data.chunks(FRAME_SIZE).collect();
                 // 记录 Hash
-                let chunk_hash = hex::encode(compute_chunk_hash(data));
+                let chunk_hash = hex::encode(compute_chunk_hash(&chunk_buffer[..n]));
                 chunk_hashes.push(chunk_hash.clone());
 
                 // 秒传逻辑：Check Chunks
@@ -208,120 +347,115 @@ pub async fn handle(
                     .check_chunks(CheckChunksReq {
                         chunk_hashes: vec![chunk_hash.clone()],
                     })
-                    .await?
+                    .await
+                    .map_err(|x| format!("{x}"))?
                     .into_inner();
 
                 // 如果这个 chunk 已经传输完毕，则跳过
                 if check_res.missing_chunk_hashes.is_empty() {
-                    // 更新进度
-                    total_size += n as i64;
-                    rsp_tx
-                        .send(Ok(SubmitProgress {
-                            path: file_info.local_path.to_local_path_string(),
-                            bytes_completed_so_far: total_size,
-                        }))
-                        .await
-                        .map_err(|_| AppError::Internal("Response channel closed".into()))?;
+                    job.report_payload(SubmitProgress {
+                        path: file_info.local_path.to_local_path_string(),
+                        bytes_completed_so_far: total_size,
+                        size: file_size,
+                        info: format!("Chunk already exists on hive."),
+                        warning: String::new(),
+                    });
                     continue;
                 }
 
                 // 4. 遍历切片并上传
-                let mut offset = 0i64;
-                for (i, frame_data) in frames.iter().enumerate() {
-                    up_tx
-                        .send(UploadFileChunkReq {
-                            chunk_hash: chunk_hash.clone(),
-                            offset,
-                            content: frame_data.to_vec(), // 这里必须这就得 clone 数据发送了
-                            compression: "none".to_string(),
-                            uncompressed_size: frame_data.len() as u32,
-                            ticket: tk_clone.clone(),
-                            chunk_size: n as i64,
-                        })
-                        .await
-                        .map_err(|_| AppError::Internal("Upload channel closed".into()))?;
+                success = false;
+                let chunk = Arc::new(chunk_buffer);
+                for retry in 0..MAX_RETRY {
+                    let (tx, rx) = tokio::sync::mpsc::channel(10);
+                    let chunk_clone = chunk.clone();
+                    let chunk_hash_clone = chunk_hash.clone();
+                    let ticket_clone = ticket.clone();
+                    let task = tokio::spawn(async move {
+                        let mut offset = 0i64;
+                        let frames: Vec<&[u8]> = chunk_clone.chunks(FRAME_SIZE).collect();
+                        for (i, frame_data) in frames.iter().enumerate() {
+                            if tx
+                                .send(UploadFileChunkReq {
+                                    chunk_hash: chunk_hash_clone.clone(),
+                                    offset,
+                                    content: frame_data.to_vec(), // 这里必须这就得 clone 数据发送了
+                                    compression: "none".to_string(),
+                                    uncompressed_size: frame_data.len() as u32,
+                                    ticket: ticket_clone.clone(),
+                                    chunk_size: n as i64,
+                                })
+                                .await
+                                .is_err()
+                            {
+                                break;
+                            }
 
-                    // 更新进度
-                    offset += frame_data.len() as i64;
-                    total_size += frame_data.len() as i64;
-                    rsp_tx
-                        .send(Ok(SubmitProgress {
-                            path: file_info.local_path.to_local_path_string(),
-                            bytes_completed_so_far: total_size,
-                        }))
+                            // 更新进度
+                            offset += frame_data.len() as i64;
+                        }
+                    });
+
+                    let upload_rsp = hive_client
+                        .upload_file_chunk(ReceiverStream::new(rx))
                         .await
-                        .map_err(|_| AppError::Internal("Response channel closed".into()))?;
+                        .map_err(|x| format!("{x}"))?;
+                    let mut upload_rsp_stream = upload_rsp.into_inner();
+                    let mut completed = true;
+                    while let Some(rsp) = upload_rsp_stream
+                        .message()
+                        .await
+                        .map_err(|x| format!("{x}"))?
+                    {
+                        if rsp.success {
+                            job.report_payload(SubmitProgress {
+                                path: file_info.local_path.to_local_path_string(),
+                                bytes_completed_so_far: total_size,
+                                size: file_size,
+                                info: format!("Upload chunk success."),
+                                warning: String::new(),
+                            });
+                        } else {
+                            job.report_payload(SubmitProgress {
+                                path: file_info.local_path.to_local_path_string(),
+                                bytes_completed_so_far: total_size,
+                                size: file_size,
+                                info: format!("retry [{}/{MAX_RETRY}]", retry + 1),
+                                warning: rsp.message,
+                            });
+                            completed = false;
+                            break;
+                        }
+                    }
+                    // 等待 chunk 上传任务完全结束
+                    task.await.unwrap();
+                    if !completed {
+                        continue;
+                    }
+                    success = true;
+                }
+                if !success {
+                    break;
                 }
             }
-
-            // --- 文件切块完成，收集文件 FileChunks 信息 ---
-            let submit_file = FileChunks {
-                path: file_info.depot_path.to_string(), // 使用服务器路径
-                binary_id: chunk_hashes,                // 块 Hash 列表
-            };
-
-            s_files.lock().unwrap().push(submit_file);
-            Ok::<(), AppError>(())
-        }
-    });
-
-    // step 7. 驱动生产者开始工作
-    let ticket_for_commit = ticket.clone();
-    let description = request_body.description.clone();
-    tokio::spawn(async move {
-        // A. 等待所有文件切块并发送到管道
-        let results: Vec<_> = futs.buffer_unordered(8).collect().await;
-
-        // B. 检查切块过程是否有本地错误（如读取文件失败）
-        for res in results {
-            if let Err(e) = res {
-                let _ = response_tx
-                    .send(Err(Status::internal(format!("Local process error: {e}"))))
-                    .await;
-                return; // 发生错误，提前终止，不执行 Commit
-            }
-        }
-
-        // C. 关闭管道，通知 upload_task 数据已全部发送
-        drop(upload_tx);
-
-        // D. 等待网络上传任务彻底完成
-        match upload_task.await {
-            Ok(Ok(_)) => {
-                // 上传成功，准备 Submit
-                let final_files = submitted_files.lock().unwrap().clone();
-                let submit_req = hive_pb::SubmitReq {
-                    description,
-                    files: final_files,
-                    ticket: ticket_for_commit,
+            if !success {
+                return Err(format!(
+                    "Upload file {} failed.",
+                    file_info.depot_path.to_string()
+                ));
+            } else {
+                // --- 文件切块完成，收集文件 FileChunks 信息 ---
+                let submit_file = FileChunks {
+                    path: file_info.depot_path.to_string(), // 使用服务器路径
+                    binary_id: chunk_hashes,                // 块 Hash 列表
                 };
-
-                let mut client = HiveServiceClient::new(channel.clone());
-                match client.submit(submit_req).await {
-                    Ok(_) => {
-                        // 这里的逻辑可以根据业务调整：
-                        // 发送一个特殊的进度包，或者直接关闭流表示成功
-                        println!("Commit success!");
-                    }
-                    Err(status) => {
-                        let _ = response_tx.send(Err(status)).await;
-                    }
-                }
+                file_chunks.lock().await.push(submit_file);
             }
-            Ok(Err(status)) => {
-                // 服务端返回的上传错误（如校验失败）
-                let _ = response_tx.send(Err(status)).await;
-            }
-            Err(e) => {
-                // Task panic
-                let _ = response_tx.send(Err(Status::internal(e.to_string()))).await;
-            }
+        } else {
+            break;
         }
-    });
+    }
 
-    // step 8. 返回 Response Stream
-    let output_stream = ReceiverStream::new(response_rx);
-    Ok(Response::new(
-        Box::pin(output_stream) as SubmitProgressStream
-    ))
+    drop(marker);
+    Ok(())
 }

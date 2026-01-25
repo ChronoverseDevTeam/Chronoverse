@@ -1,3 +1,5 @@
+use std::process;
+
 use anyhow::Result;
 use clap::Parser;
 use console::style;
@@ -6,6 +8,7 @@ use crv_edge::pb::{
     file_service_client::FileServiceClient,
 };
 use dialoguer::{Input, theme::ColorfulTheme};
+use tokio::signal;
 use tokio_stream::StreamExt;
 use tonic::transport::Channel;
 
@@ -84,15 +87,33 @@ impl SubmitCli {
 
         let mut stream = client.submit(request).await?.into_inner();
 
+        // Spawn Ctrl+C handler
+        tokio::spawn(async move {
+            if let Ok(_) = signal::ctrl_c().await {
+                println!("\n{}", style("Cancelling submit...").bold().yellow());
+                process::exit(0);
+            }
+        });
+
         // Process the stream
         while let Some(progress) = stream.next().await {
             match progress {
                 Ok(p) => {
                     println!(
-                        "  {} {} (completed: {} bytes)",
+                        "  {} {} (completed: {} bytes){}{}",
                         style("✓").green(),
                         p.path,
-                        p.bytes_completed_so_far
+                        p.bytes_completed_so_far,
+                        if !p.info.is_empty() {
+                            format!("[info]{}.", p.info)
+                        } else {
+                            String::new()
+                        },
+                        if !p.warning.is_empty() {
+                            format!("[warning]{}.", p.warning)
+                        } else {
+                            String::new()
+                        }
                     );
                 }
                 Err(e) => {
@@ -152,9 +173,12 @@ impl SyncCli {
                         use crv_edge::pb::sync_progress::Payload;
                         match payload {
                             Payload::Metadata(meta) => {
+                                let total_files_to_sync = meta.files.len();
+                                let total_bytes_to_sync =
+                                    meta.files.iter().map(|x| x.size).sum::<i64>();
                                 println!(
                                     "Total files to sync: {}, total size: {} bytes",
-                                    meta.total_files_to_sync, meta.total_bytes_to_sync
+                                    total_files_to_sync, total_bytes_to_sync
                                 );
                             }
                             Payload::FileUpdate(update) => {
@@ -168,7 +192,7 @@ impl SyncCli {
                                     "  {} {} [{}] (completed: {} bytes)",
                                     status_icon,
                                     update.path,
-                                    update.action,
+                                    update.info,
                                     update.bytes_completed_so_far
                                 );
 
