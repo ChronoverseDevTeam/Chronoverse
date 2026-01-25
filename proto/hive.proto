@@ -38,15 +38,16 @@ message LoginRsp {
 message UploadFileChunkReq {
     string ticket = 1;
     // 可支持同时上传多个 file chunk
-    string chunk_hash = 2;
-    int64 offset = 3;
-    bytes content = 4;
+    int64 chunks_amount = 2;
+    string chunk_hash = 3;
+    int64 offset = 4;
+    bytes content = 5;
     // 某个 file_chunk 的总大小，压缩算法处理后的，如果没有压缩算法那么和 uncompressed_size 应该是一致的
-    int64 chunk_size = 5;
+    int64 chunk_size = 6;
     // 本块使用的压缩方式，必须传入，目前可用字段是 "none" / "lz4"，当前算法是只支持了 none，所以 edge 可以先不压缩
-    string compression = 6;
+    string compression = 7;
     // 解压后的原始大小（字节），用于校验
-    uint32 uncompressed_size = 7;
+    uint32 uncompressed_size = 8;
 }
 
 message UploadFileChunkRsp {
@@ -82,8 +83,10 @@ message SubmitReq {
 
 message FileToLock {
     string path = 1;
-    // 期望在锁定时文件的版本，只有在该文件被第一次创建时才能够为空，其他情况下为空应该视为错误
-    string expected_file_revision = 2;
+    // 期望在锁定时文件的代数
+    optional int64 expected_file_generation = 2;
+    // 期望在锁定时文件的版本
+    optional int64 expected_file_revision = 3;
 }
 
 message LaunchSubmitReq {

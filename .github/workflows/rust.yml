@@ -12,6 +12,8 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  # Skip tests that require an external Postgres (e.g. some `crv-hive` unit tests).
+  CRV_SKIP_HIVE_DB_TESTS: "1"
 
 jobs:
   build:

@@ -11,6 +11,7 @@ pub struct ConfigEntity {
 
     pub hive_address: Option<String>,
     pub repository_path: String,
+    pub upload_cache_path: String,
     pub jwt_secret: String,
 }
 
@@ -23,9 +24,10 @@ impl Default for ConfigEntity {
             postgres_username: "postgres".to_string(),
             postgres_password: "postgres".to_string(),
             postgres_port: 5432,
-
+            
             hive_address: Some("0.0.0.0:34560".to_string()),
             repository_path: default_repository_path(),
+            upload_cache_path: default_upload_cache_path(),
             jwt_secret: "dev-secret".to_string(),
         }
     }
@@ -44,5 +46,21 @@ fn default_repository_path() -> String {
     } else {
         let home = std::env::var("HOME").unwrap_or_else(|_| "~".to_string());
         format!("{home}/.crv/shards")
+    }
+}
+
+fn default_upload_cache_path() -> String {
+    if cfg!(target_os = "windows") {
+        if let Ok(appdata) = std::env::var("APPDATA") {
+            let mut path = std::path::PathBuf::from(appdata);
+            path.push("crv");
+            path.push("upload_cache");
+            path.to_string_lossy().into_owned()
+        } else {
+            "%AppData%/crv/shards/upload_cache".to_string()
+        }
+    } else {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "~".to_string());
+        format!("{home}/.crv/upload_cache")
     }
 }

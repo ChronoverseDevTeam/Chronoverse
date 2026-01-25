@@ -32,6 +32,14 @@ pub fn get_or_init_config() -> &'static ConfigEntity {
     CONFIG.get_or_init(|| ConfigEntity::default())
 }
 
+/// 在首次初始化前注入配置（例如覆盖 Postgres 的 host/port）。
+///
+/// - 成功：返回 `Ok(())`
+/// - 若已初始化：返回 `Err`
+pub fn try_set_config(cfg: ConfigEntity) -> Result<(), &'static str> {
+    CONFIG.set(cfg).map_err(|_| "config already initialized")
+}
+
 pub async fn load_config() -> Result<(), Box<dyn std::error::Error>> {
     let path = default_config_path();
     if path.exists() {

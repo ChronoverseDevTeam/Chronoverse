@@ -5,17 +5,17 @@ use std::{
 
 use crate::common::depot_path::DepotPath;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct LockedFile {
     /// depot path
-    path: DepotPath,
+    pub path: DepotPath,
     /// locked file generation, when file not exists, this should be None
-    locked_generation: Option<i64>,
+    pub locked_generation: Option<i64>,
     /// locked file revision, when file not exists, this should be None
-    locked_revision: Option<i64>,
+    pub locked_revision: Option<i64>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct SubmittedFile {
     /// depot path
     path: DepotPath,
@@ -41,12 +41,14 @@ pub struct SubmitService {
     contexts: RwLock<HashMap<uuid::Uuid, Arc<SubmitContext>>>,
 }
 
+#[derive(Debug)]
 pub struct LaunchSubmitSuccess {
-    ticket: uuid::Uuid,
+    pub ticket: uuid::Uuid,
 }
 
+#[derive(Debug)]
 pub struct LaunchSubmitFailure {
-    file_unable_to_lock: Vec<LockedFile>,
+    pub file_unable_to_lock: Vec<LockedFile>,
 }
 
 impl SubmitService {
@@ -58,35 +60,59 @@ impl SubmitService {
     }
 
     fn unlock_context(&self, ticket: &uuid::Uuid) {
+        // 这里不依赖 contexts 里的 file 列表做定向删除，而是直接按 ticket 清除锁：
+        // - 更稳健：即便 contexts 因异常路径缺失，也不会导致锁泄漏；
+        // - 安全：只移除 value==ticket 的条目，不会误删其他并发 ticket 的锁。
         let mut locked = self
             .locked_paths
             .write()
             .expect("submit service locked_paths poisoned");
+        locked.retain(|_, v| v != ticket);
+
         let mut context = self
             .contexts
             .write()
             .expect("submit service contexts poisoned");
-
-        let Some(ctx) = context.get(ticket) else {
-            // already unlocked / unknown ticket
-            return;
-        };
-
-        for f in ctx.files.iter() {
-            // 只释放属于该 ticket 的锁，避免误删其他并发 ticket 的占用
-            if locked.get(&f.path) == Some(ticket) {
-                locked.remove(&f.path);
-            }
-        }
         context.remove(ticket);
     }
 
+    fn cleanup_expired_tickets(&self) {
+        // 注意：这里绝不能在持有 `contexts` 写锁时调用 `unlock_context`，
+        // 否则会在 `unlock_context` 内部二次申请 `contexts` 写锁导致自我死锁。
+        //
+        // 目前的解决方案：先在读锁下收集过期 ticket，释放锁后再逐个解锁。
+        let now = chrono::Utc::now();
+        let expired: Vec<uuid::Uuid> = {
+            let contexts = self
+                .contexts
+                .read()
+                .expect("submit service contexts poisoned");
+            contexts
+                .iter()
+                .filter_map(|(ticket, ctx)| {
+                    if ctx.timeout_deadline <= now {
+                        Some(*ticket)
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        };
+
+        for ticket in expired {
+            self.unlock_context(&ticket);
+        }
+    }
+
     pub async fn launch_submit(
-        &mut self,
+        &self,
         files: &Vec<LockedFile>,
         submitting_by: String,
         timeout: chrono::Duration,
     ) -> Result<LaunchSubmitSuccess, LaunchSubmitFailure> {
+        // 进行周边工作，清理超时的 ticket
+        self.cleanup_expired_tickets();
+
         let ticket = uuid::Uuid::new_v4();
 
         if self
@@ -222,13 +248,314 @@ impl SubmitService {
         Ok(LaunchSubmitSuccess { ticket: ticket })
     }
 
-    pub fn submit(&mut self, ticket: &uuid::Uuid) {
-        let mut context = self
+    pub fn submit(&self, ticket: &uuid::Uuid) {
+        let context = self
             .contexts
             .write()
             .expect("submit service contexts poisoned");
 
         let context = context.get(ticket);
         if context.is_none() {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::sync::OnceLock;
+
+    use crate::database;
+    use crate::database::entities;
+    use sea_orm::{ActiveModelTrait, ConnectionTrait, DatabaseBackend, Set, Statement};
+
+    static INIT_MUTEX: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+
+    // ============================
+    // 直接在这里填写测试数据库地址
+    // ============================
+    const TEST_PG_HOST: &str = "172.18.168.1";
+    const TEST_PG_PORT: u16 = 5432;
+    const TEST_PG_DB: &str = "chronoverse";
+    const TEST_PG_USER: &str = "postgres";
+    const TEST_PG_PASS: &str = "postgres";
+
+    async fn ensure_db() {
+        if database::try_get().is_some() {
+            return;
+        }
+
+        let m = INIT_MUTEX.get_or_init(|| tokio::sync::Mutex::new(()));
+        let _guard = m.lock().await;
+
+        if database::try_get().is_some() {
+            return;
+        }
+
+        // 通过“变量/常量”注入测试配置（不使用环境变量）
+        let mut cfg = crate::config::entity::ConfigEntity::default();
+        cfg.postgres_hostname = TEST_PG_HOST.to_string();
+        cfg.postgres_port = TEST_PG_PORT;
+        cfg.postgres_database = TEST_PG_DB.to_string();
+        cfg.postgres_username = TEST_PG_USER.to_string();
+        cfg.postgres_password = TEST_PG_PASS.to_string();
+        let _ = crate::config::holder::try_set_config(cfg);
+
+        // migrations 是幂等的。
+        database::init().await.expect("db init");
+    }
+
+    fn unique_depot_file(name: &str) -> String {
+        format!(
+            "//tests/submit_service/{}/{}.txt",
+            uuid::Uuid::new_v4(),
+            name
+        )
+    }
+
+    async fn insert_revision(
+        depot_path: &str,
+        generation: i64,
+        revision: i64,
+        is_delete: bool,
+    ) -> i64 {
+        ensure_db().await;
+        let db = database::get();
+        let backend = DatabaseBackend::Postgres;
+
+        // 1) changelist（外键依赖）
+        let cl = entities::changelists::ActiveModel {
+            author: Set("test".to_string()),
+            description: Set("test".to_string()),
+            changes: Set(serde_json::json!([])),
+            committed_at: Set(0),
+            metadata: Set(serde_json::json!({})),
+            ..Default::default()
+        }
+        .insert(db)
+        .await
+        .expect("insert changelist");
+
+        // 2) file + 3) revision
+        //
+        // 注意：`files.path` / `file_revisions.path` 是 Postgres `ltree`，而 SeaORM 这里用 `String`
+        // 绑定时会按 `text` 走，导致出现 “column path is of type ltree but expression is of type text”。
+        // 测试辅助插入用 raw SQL 显式 `::ltree` cast，确保类型正确。
+        let key = crate::database::ltree_key::depot_path_str_to_ltree_key(depot_path)
+            .expect("encode depot path to ltree key");
+
+        db.execute(Statement::from_sql_and_values(
+            backend,
+            r#"
+            INSERT INTO files (path, created_at, metadata)
+            VALUES ($1::ltree, 0, '{}'::jsonb)
+            "#,
+            [key.clone().into()].to_vec(),
+        ))
+        .await
+        .expect("insert file");
+
+        db.execute(Statement::from_sql_and_values(
+            backend,
+            r#"
+            INSERT INTO file_revisions
+                (path, generation, revision, changelist_id, binary_id, size, is_delete, created_at, metadata)
+            VALUES
+                ($1::ltree, $2, $3, $4, '{}'::jsonb, 0, $5, 0, '{}'::jsonb)
+            "#,
+            vec![
+                key.into(),
+                generation.into(),
+                revision.into(),
+                cl.id.into(),
+                is_delete.into(),
+            ],
+        ))
+        .await
+        .expect("insert file revision");
+
+        cl.id
+    }
+
+    async fn launch_submit_success_when_expected_none_and_no_db_record() {
+        ensure_db().await;
+
+        let depot_path = unique_depot_file("no_db_record");
+        let p = DepotPath::new(&depot_path).unwrap();
+
+        let svc = SubmitService::new();
+        let files = vec![LockedFile {
+            path: p,
+            locked_generation: None,
+            locked_revision: None,
+        }];
+
+        let r = svc
+            .launch_submit(&files, "alice".to_string(), chrono::Duration::minutes(10))
+            .await;
+
+        assert!(r.is_ok(), "expected Ok, got: {:?}", r.err());
+    }
+
+    async fn launch_submit_rejects_duplicated_paths_in_request() {
+        ensure_db().await;
+
+        let depot_path = unique_depot_file("duplicated_paths");
+        let p = DepotPath::new(&depot_path).unwrap();
+
+        let svc = SubmitService::new();
+        let files = vec![
+            LockedFile {
+                path: p.clone(),
+                locked_generation: None,
+                locked_revision: None,
+            },
+            LockedFile {
+                path: p.clone(),
+                locked_generation: None,
+                locked_revision: None,
+            },
+        ];
+
+        let r = svc
+            .launch_submit(&files, "alice".to_string(), chrono::Duration::minutes(10))
+            .await;
+
+        assert!(r.is_err(), "expected Err");
+        let e = r.err().unwrap();
+        assert_eq!(e.file_unable_to_lock.len(), 1);
+        assert_eq!(e.file_unable_to_lock[0].path.to_string(), depot_path);
+    }
+
+    async fn launch_submit_conflicts_when_already_locked_in_memory() {
+        ensure_db().await;
+
+        let depot_path = unique_depot_file("mem_lock_conflict");
+        let p = DepotPath::new(&depot_path).unwrap();
+
+        let svc = SubmitService::new();
+        let files = vec![LockedFile {
+            path: p.clone(),
+            locked_generation: None,
+            locked_revision: None,
+        }];
+
+        let first = svc
+            .launch_submit(&files, "alice".to_string(), chrono::Duration::minutes(10))
+            .await;
+        assert!(first.is_ok(), "first should succeed");
+
+        let second = svc
+            .launch_submit(&files, "bob".to_string(), chrono::Duration::minutes(10))
+            .await;
+        assert!(second.is_err(), "second should conflict");
+        let e = second.err().unwrap();
+        assert_eq!(e.file_unable_to_lock.len(), 1);
+        assert_eq!(e.file_unable_to_lock[0].path.to_string(), depot_path);
+    }
+
+    async fn launch_submit_rolls_back_locks_when_db_version_mismatch() {
+        ensure_db().await;
+
+        let depot_path = unique_depot_file("db_version_mismatch");
+        insert_revision(&depot_path, 1, 2, false).await;
+
+        // sanity: 确保 DB 里确实存在 (1,2) 且不是 delete
+        let latest = crate::database::dao::find_latest_file_revision_by_depot_path(&depot_path)
+            .await
+            .expect("query latest revision")
+            .expect("expected a latest revision");
+        assert_eq!(latest.generation, 1);
+        assert_eq!(latest.revision, 2);
+        assert!(!latest.is_delete);
+
+        let p = DepotPath::new(&depot_path).unwrap();
+        let svc = SubmitService::new();
+
+        // 期望版本不匹配：应失败，并且必须回滚释放锁（否则下一次会被内存锁挡住）
+        let bad = vec![LockedFile {
+            path: p.clone(),
+            locked_generation: Some(1),
+            locked_revision: Some(1),
+        }];
+        let r1 = svc
+            .launch_submit(&bad, "alice".to_string(), chrono::Duration::minutes(10))
+            .await;
+        assert!(r1.is_err(), "expected mismatch to fail");
+        assert!(
+            svc.locked_paths
+                .read()
+                .expect("submit service locked_paths poisoned")
+                .is_empty(),
+            "expected locks to be rolled back after mismatch"
+        );
+
+        // 期望版本匹配：应成功（证明上一次失败后已释放 ticket 占用的锁）
+        let good = vec![LockedFile {
+            path: p.clone(),
+            locked_generation: Some(1),
+            locked_revision: Some(2),
+        }];
+        let r2 = svc
+            .launch_submit(&good, "alice".to_string(), chrono::Duration::minutes(10))
+            .await;
+        assert!(
+            r2.is_ok(),
+            "expected rollback then succeed, got: {:?}",
+            r2.err()
+        );
+    }
+
+    async fn launch_submit_treats_deleted_latest_as_nonexistent() {
+        ensure_db().await;
+
+        let depot_path = unique_depot_file("deleted_latest");
+        insert_revision(&depot_path, 9, 9, true).await;
+
+        let p = DepotPath::new(&depot_path).unwrap();
+        let svc = SubmitService::new();
+
+        // latest 是 delete => current=None，因此 expected None 应成功
+        let expected_none = vec![LockedFile {
+            path: p.clone(),
+            locked_generation: None,
+            locked_revision: None,
+        }];
+        let r1 = svc
+            .launch_submit(&expected_none, "alice".to_string(), chrono::Duration::minutes(10))
+            .await;
+        assert!(r1.is_ok());
+    }
+
+    /// 这些测试依赖全局单例数据库连接池（`crate::database::DB_CONN`），而 `#[tokio::test]`
+    /// 默认会为每个测试创建并销毁一个独立 runtime，导致连接池跨 runtime 复用时出现
+    /// “Tokio context ... is being shutdown”。
+    ///
+    /// 因此这里用一个共享 runtime 的单一 harness 串行执行。
+    #[test]
+    fn submit_service_tests_harness() {
+        // CI 默认不应运行依赖外部 Postgres 的测试（GitHub Actions 里没有这套环境）。
+        // - GitHub Actions 会自动设置 `GITHUB_ACTIONS=true`
+        // - 工作流里也额外设置了 `CRV_SKIP_HIVE_DB_TESTS=1`
+        if std::env::var("GITHUB_ACTIONS").is_ok()
+            || std::env::var("CRV_SKIP_HIVE_DB_TESTS").as_deref() == Ok("1")
+        {
+            eprintln!("skip submit service db tests on CI");
+            return;
+        }
+
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .worker_threads(1)
+            .build()
+            .expect("build tokio runtime for submit service tests");
+
+        rt.block_on(async {
+            launch_submit_success_when_expected_none_and_no_db_record().await;
+            launch_submit_rejects_duplicated_paths_in_request().await;
+            launch_submit_conflicts_when_already_locked_in_memory().await;
+            launch_submit_rolls_back_locks_when_db_version_mismatch().await;
+            launch_submit_treats_deleted_latest_as_nonexistent().await;
+        });
     }
 }

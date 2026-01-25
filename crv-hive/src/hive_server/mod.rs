@@ -10,12 +10,10 @@ use argon2::{Argon2, PasswordHasher};
 use http::header::{HeaderName, ACCEPT, AUTHORIZATION, CONTENT_TYPE};
 use http::Method;
 use crv_core::repository::{
-    Repository, blake3_hash_to_hex, compute_blake3_str,
+    Repository
 };
-use crv_core::tree::depot_tree::DepotTree;
 use rand::rngs::OsRng;
 use std::sync::{Arc, OnceLock};
-use tokio::sync::Mutex;
 use tonic::{Request, Response, Status, transport::Server};
 use tonic_web::GrpcWebLayer;
 use tower_http::cors::{Any, CorsLayer};
@@ -35,23 +33,6 @@ impl CrvHiveService {
 }
 
 use crate::config::holder::get_or_init_config;
-
-/// 全局 Submit 串行化锁。
-///
-/// 当前实现为进程级别的单一互斥锁，保证在同一 hive 实例内所有 Submit 调用串行执行，
-/// 从而避免并发提交导致的 HEAD 竞争更新等问题。
-static SUBMIT_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-
-pub(crate) fn submit_lock() -> &'static Mutex<()> {
-    SUBMIT_LOCK.get_or_init(|| Mutex::new(()))
-}
-
-/// 全局 DepotTree 实例，用于在内存中维护分支的文件锁与文件树缓存。
-static DEPOT_TREE: OnceLock<Mutex<DepotTree>> = OnceLock::new();
-
-pub(crate) fn depot_tree() -> &'static Mutex<DepotTree> {
-    DEPOT_TREE.get_or_init(|| Mutex::new(DepotTree::new()))
-}
 
 /// 全局 RepositoryManager 实例，用于访问底层 chunk 仓库。
 ///
@@ -73,138 +54,6 @@ pub(crate) fn repository_manager() -> Result<&'static Repository, Status> {
     }
 }
 
-/// 数据访问层抽象：
-/// - 在正常构建中，直接复用 `crate::database::dao`；
-/// - 在测试构建中，使用内存中的 Mock DAO，避免依赖真实 MongoDB。
-#[cfg(not(test))]
-pub(crate) mod hive_dao {
-    pub use crate::database::dao::{
-    };
-}
-
-#[cfg(test)]
-pub(crate) mod hive_dao {
-    use super::*;
-    use crate::database::dao::DaoError;
-    use crv_core::metadata::{BranchDoc, ChangelistDoc, FileDoc, FileRevisionDoc};
-    use std::collections::HashMap;
-    use std::sync::Mutex;
-
-    pub type DaoResult<T> = Result<T, DaoError>;
-
-    #[derive(Default)]
-    struct MockState {
-        branches: HashMap<String, BranchDoc>,
-        files: HashMap<String, FileDoc>,
-        file_revisions: Vec<FileRevisionDoc>,
-        changelists: HashMap<i64, ChangelistDoc>,
-        max_changelist_id: i64,
-    }
-
-    static STATE: OnceLock<Mutex<MockState>> = OnceLock::new();
-
-    fn state() -> &'static Mutex<MockState> {
-        STATE.get_or_init(|| Mutex::new(MockState::default()))
-    }
-
-    /// 测试辅助函数：重置全部内存数据。
-    pub fn reset_all() {
-        let mut s = state().lock().expect("lock mock dao state");
-        *s = MockState::default();
-    }
-
-    /// 测试辅助函数：插入或更新一个分支文档。
-    pub fn put_branch(doc: BranchDoc) {
-        let mut s = state().lock().expect("lock mock dao state");
-        s.branches.insert(doc.id.clone(), doc);
-    }
-
-    /// 测试辅助函数：获取当前内存中的 changelist 文档数量。
-    pub fn changelists_len() -> usize {
-        let s = state().lock().expect("lock mock dao state");
-        s.changelists.len()
-    }
-
-    pub async fn find_branch_by_id(branch_id: &str) -> DaoResult<Option<BranchDoc>> {
-        let s = state().lock().expect("lock mock dao state");
-        Ok(s.branches.get(branch_id).cloned())
-    }
-
-    pub async fn find_changelist_by_id(changelist_id: i64) -> DaoResult<Option<ChangelistDoc>> {
-        let s = state().lock().expect("lock mock dao state");
-        Ok(s.changelists.get(&changelist_id).cloned())
-    }
-
-    pub async fn allocate_changelist_id() -> DaoResult<i64> {
-        let mut s = state().lock().expect("lock mock dao state");
-        s.max_changelist_id += 1;
-        Ok(s.max_changelist_id)
-    }
-
-    pub async fn find_file_revision_by_branch_file_and_cl(
-        branch_id: &str,
-        file_id: &str,
-        changelist_id: i64,
-    ) -> DaoResult<Option<FileRevisionDoc>> {
-        let s = state().lock().expect("lock mock dao state");
-        Ok(s.file_revisions
-            .iter()
-            .find(|rev| {
-                rev.branch_id == branch_id
-                    && rev.file_id == file_id
-                    && rev.changelist_id == changelist_id
-            })
-            .cloned())
-    }
-
-    pub async fn find_file_revision_by_id(revision_id: &str) -> DaoResult<Option<FileRevisionDoc>> {
-        let s = state().lock().expect("lock mock dao state");
-        Ok(s.file_revisions.iter().find(|r| r.id == revision_id).cloned())
-    }
-
-    pub async fn find_file_by_id(file_id: &str) -> DaoResult<Option<FileDoc>> {
-        let s = state().lock().expect("lock mock dao state");
-        Ok(s.files.get(file_id).cloned())
-    }
-
-    pub async fn insert_file(doc: FileDoc) -> DaoResult<()> {
-        let mut s = state().lock().expect("lock mock dao state");
-        s.files.insert(doc.id.clone(), doc);
-        Ok(())
-    }
-
-    pub async fn insert_file_revisions(docs: Vec<FileRevisionDoc>) -> DaoResult<()> {
-        if docs.is_empty() {
-            return Ok(());
-        }
-        let mut s = state().lock().expect("lock mock dao state");
-        for d in docs {
-            s.file_revisions.push(d);
-        }
-        Ok(())
-    }
-
-    pub async fn insert_changelist(doc: ChangelistDoc) -> DaoResult<()> {
-        let mut s = state().lock().expect("lock mock dao state");
-        s.max_changelist_id = s.max_changelist_id.max(doc.id);
-        s.changelists.insert(doc.id, doc);
-        Ok(())
-    }
-
-    pub async fn update_branch_head(branch_id: &str, new_head: i64) -> DaoResult<()> {
-        let mut s = state().lock().expect("lock mock dao state");
-        if let Some(branch) = s.branches.get_mut(branch_id) {
-            branch.head_changelist_id = new_head;
-        }
-        Ok(())
-    }
-}
-
-pub(crate) fn derive_file_id_from_path(path: &str) -> String {
-    let hash_bytes = compute_blake3_str(path);
-    blake3_hash_to_hex(&hash_bytes)
-}
-
 fn build_cors_layer() -> CorsLayer {
     CorsLayer::new()
         .allow_origin(Any)
@@ -224,20 +73,6 @@ fn build_cors_layer() -> CorsLayer {
             HeaderName::from_static("grpc-message"),
             HeaderName::from_static("grpc-status-details-bin"),
         ])
-}
-
-/// 测试用全局互斥锁：用于串行化依赖进程级全局状态（Mock DAO / DepotTree 等）的单元测试，
-/// 避免 `cargo test` 默认并行执行导致的状态互相污染与偶发失败。
-#[cfg(test)]
-static TEST_GLOBAL_LOCK: tokio::sync::OnceCell<Mutex<()>> = tokio::sync::OnceCell::const_new();
-
-#[cfg(test)]
-pub(crate) async fn test_global_lock() -> tokio::sync::MutexGuard<'static, ()> {
-    TEST_GLOBAL_LOCK
-        .get_or_init(|| async { Mutex::new(()) })
-        .await
-        .lock()
-        .await
 }
 
 #[tonic::async_trait]
@@ -383,10 +218,7 @@ impl HiveService for CrvHiveService {
         &self,
         _request: Request<tonic::Streaming<UploadFileChunkReq>>,
     ) -> Result<Response<Self::UploadFileChunkStream>, Status> {
-        use tokio::sync::mpsc;
-        use tokio_stream::wrappers::ReceiverStream;
-        let (_tx, rx) = mpsc::channel::<Result<UploadFileChunkRsp, Status>>(32);
-        Ok(Response::new(ReceiverStream::new(rx)))
+        submit::upload_file_chunk::upload_file_chunk(_request)
     }
 
     async fn submit(

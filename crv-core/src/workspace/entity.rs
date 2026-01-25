@@ -1,7 +1,7 @@
 use crate::{
     parsers,
     path::basic::{
-        DepotPath, DepotPathWildcard, LocalDir, LocalPath, LocalPathWildcard, RangeDepotWildcard,
+        DepotPath, DepotPathWildcard, LocalDir, LocalPath, RangeDepotWildcard,
     },
 };
 use bincode::{Decode, Encode};

@@ -1,5 +1,5 @@
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DbErr, EntityTrait, QueryFilter, QueryOrder, Set,
+    ActiveModelTrait, DbErr, EntityTrait, Set, Statement, DatabaseBackend,
 };
 use thiserror::Error;
 
@@ -58,10 +58,32 @@ pub async fn find_latest_file_revision_by_depot_path(
 ) -> DaoResult<Option<entities::file_revisions::Model>> {
     let key = ltree_key::depot_path_str_to_ltree_key(depot_path)?;
 
+    // `file_revisions.path` 是 Postgres `ltree`，而 SeaORM 这里字段类型用 `String`。
+    // 在某些 Postgres 版本/配置下，`ltree = text` 不会隐式 cast，导致查询报错。
+    // 这里用 raw SQL 显式 `$1::ltree`，避免类型不匹配。
+    let stmt = Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        r#"
+        SELECT
+            path::text AS path,
+            generation,
+            revision,
+            changelist_id,
+            binary_id,
+            size,
+            is_delete,
+            created_at,
+            metadata
+        FROM file_revisions
+        WHERE path = $1::ltree
+        ORDER BY generation DESC, revision DESC
+        LIMIT 1
+        "#,
+        [key.into()].to_vec(),
+    );
+
     let model = entities::file_revisions::Entity::find()
-        .filter(entities::file_revisions::Column::Path.eq(key))
-        .order_by_desc(entities::file_revisions::Column::Generation)
-        .order_by_desc(entities::file_revisions::Column::Revision)
+        .from_raw_sql(stmt)
         .one(db()?)
         .await?;
 
