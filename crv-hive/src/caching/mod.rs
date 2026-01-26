@@ -37,9 +37,7 @@ impl ChunkCache {
     /// 缓存目录为：`{repository_path}/cache/chunks`
     pub fn from_config() -> ChunkCacheResult<Self> {
         let cfg = get_or_init_config();
-        let mut root = PathBuf::from(&cfg.repository_path);
-        root.push("cache");
-        root.push("chunks");
+        let root = PathBuf::from(&cfg.upload_cache_path);
         fs::create_dir_all(&root)?;
         Ok(Self { root })
     }
