@@ -78,7 +78,6 @@ message FileChunks {
 message SubmitReq {
     string ticket = 1;
     string description = 2;
-    repeated FileChunks files = 3;
 }
 
 message FileToLock {
@@ -110,8 +109,10 @@ message LaunchSubmitRsp {
 
 message SubmitConflict {
     string path = 1;
-    string expected_file_revision = 2;
-    string current_revision = 3;
+    int64 expected_file_generation = 2;
+    int64 expected_file_revision = 3;
+    int64 current_file_generation = 4;
+    int64 current_file_revision = 5;
 }
 
 message SubmitRsp {
@@ -134,29 +135,13 @@ message SubmitRsp {
 // Submit End
 
 message FileRevision {
-    string revision_id = 1;
-    int64 changelist_id = 2;
+    string path = 1;
+    int64 generation = 2;
+    int64 revision = 3;
+    // 目前还未支持压缩算法，后续这里可能会变复杂，会变成一个对象同时描述这个块的压缩算法，但是现在默认所有块都无压缩
     repeated string binary_id = 3;
     int64 size = 4;
     int64 revision_created_at = 5;
-}
-
-message File {
-    string name = 1;
-    // revision id 到对应的 FileRevision 的映射
-    map<string, FileRevision> revisions = 2;
-}
-
-message Directory {
-    string name = 1;
-    repeated FileTreeNode children = 2;
-}
-
-message FileTreeNode {
-    oneof node {
-        File file = 1;
-        Directory directory = 2;
-    }
 }
 
 message GetFileTreeReq {
@@ -165,7 +150,7 @@ message GetFileTreeReq {
 }
 
 message GetFileTreeRsp {
-    repeated FileTreeNode file_tree_root = 1;
+    repeated FileRevision file_revisions = 1;
 }
 
 message DownloadFileChunkReq {
