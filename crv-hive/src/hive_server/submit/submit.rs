@@ -1,3 +1,5 @@
+use std::vec;
+
 use crate::{hive_server::submit::submit_service, pb::{SubmitReq, SubmitRsp, UploadFileChunkRsp}};
 use serde_json::ser;
 use tokio_stream::wrappers::ReceiverStream;
@@ -18,7 +20,7 @@ pub fn submit(
         committed_at: 0,
         conflicts: vec![],
         missing_chunks: vec![],
-        latest_revision: std::collections::HashMap::new(),
+        latest_revisions: vec![],
         message: "not implemented".to_string(),
     };
     Ok(Response::new(rsp))
