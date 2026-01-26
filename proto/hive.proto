@@ -139,9 +139,9 @@ message FileRevision {
     int64 generation = 2;
     int64 revision = 3;
     // 目前还未支持压缩算法，后续这里可能会变复杂，会变成一个对象同时描述这个块的压缩算法，但是现在默认所有块都无压缩
-    repeated string binary_id = 3;
-    int64 size = 4;
-    int64 revision_created_at = 5;
+    repeated string binary_id = 4;
+    int64 size = 5;
+    int64 revision_created_at = 6;
 }
 
 message GetFileTreeReq {
