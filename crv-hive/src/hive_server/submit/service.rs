@@ -51,6 +51,42 @@ pub struct LaunchSubmitFailure {
     pub file_unable_to_lock: Vec<LockedFile>,
 }
 
+#[derive(Debug)]
+pub struct FileRevision {
+    pub path: String,
+    pub generation: i64,
+    pub revision: i64,
+    pub binary_id: Vec<String>,
+    pub size: i64,
+    pub revision_created_at: i64,
+}
+
+#[derive(Debug)]
+pub struct SubmitSuccess {
+    pub changelist_id: i64,
+    pub committed_at: i64,
+
+    pub latest_revisions: Vec<FileRevision>,
+    pub message: String,
+}
+
+#[derive(Debug)]
+pub struct SubmitConflict {
+    pub path: String,
+    pub expected_generation: i64,
+    pub expected_revision: i64,
+    pub current_generation: i64,
+    pub current_revision: i64,
+}
+
+#[derive(Debug)]
+pub struct SubmitFailure {
+    pub context_not_found: bool,
+    pub conflicts: Vec<SubmitConflict>,
+    pub missing_chunks: Vec<String>,
+    pub message: String,
+}
+
 impl SubmitService {
     pub fn new() -> Self {
         Self {
@@ -248,14 +284,30 @@ impl SubmitService {
         Ok(LaunchSubmitSuccess { ticket: ticket })
     }
 
-    pub fn submit(&self, ticket: &uuid::Uuid) {
+    pub fn submit(&self, ticket: &uuid::Uuid) -> Result<SubmitSuccess, SubmitFailure> {
         let context = self
             .contexts
             .write()
             .expect("submit service contexts poisoned");
 
         let context = context.get(ticket);
-        if context.is_none() {}
+        if context.is_none() {
+            return Result::Err(SubmitFailure {
+                context_not_found: true,
+                conflicts: vec![],
+                missing_chunks: vec![],
+                message: "context not found".to_string(),
+            });
+        }
+
+        // todo: implement here
+
+        return Result::Ok(SubmitSuccess {
+            changelist_id: 0,
+            committed_at: 0,
+            latest_revisions: vec![],
+            message: "success".to_string(),
+        });
     }
 }
 

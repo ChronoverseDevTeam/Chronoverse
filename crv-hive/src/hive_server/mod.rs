@@ -225,25 +225,14 @@ impl HiveService for CrvHiveService {
         &self,
         _request: Request<SubmitReq>,
     ) -> Result<Response<SubmitRsp>, Status> {
-        let rsp = SubmitRsp {
-            success: false,
-            changelist_id: 0,
-            committed_at: 0,
-            conflicts: vec![],
-            missing_chunks: vec![],
-            latest_revision: std::collections::HashMap::new(),
-            message: "not implemented".to_string(),
-        };
-        Ok(Response::new(rsp))
+        submit::submit::submit(_request)
     }
 
     async fn get_file_tree(
         &self,
         _request: Request<GetFileTreeReq>,
     ) -> Result<Response<GetFileTreeRsp>, Status> {
-        let rsp = GetFileTreeRsp {
-            file_tree_root: vec![],
-        };
+        let rsp = GetFileTreeRsp::default();
         Ok(Response::new(rsp))
     }
 }

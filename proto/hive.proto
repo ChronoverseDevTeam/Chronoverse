@@ -128,7 +128,7 @@ message SubmitRsp {
     repeated string missing_chunks = 5;
 
     // 提交的各文件 depot path 到提交后的该文件最新 revision 的映射
-    map<string, FileRevision> latest_revision = 6;
+    repeated FileRevision latest_revisions = 6;
 
     string message = 7;
 }
