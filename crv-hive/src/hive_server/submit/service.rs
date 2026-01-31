@@ -743,6 +743,9 @@ impl SubmitService {
         {
             Ok(id) => id,
             Err(e) => {
+                // P0 修复：落库失败必须释放锁/上下文，否则会导致该 ticket 占用的文件锁长期不释放，
+                // 后续提交会持续冲突（直到下一次触发 cleanup）。
+                self.unlock_context(ticket);
                 return Err(SubmitFailure {
                     context_not_found: false,
                     conflicts: vec![],
