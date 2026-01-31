@@ -3,11 +3,11 @@ use std::{
     sync::{Arc, RwLock},
 };
 
-use serde_json::Error;
-
 use crate::common::depot_path::DepotPath;
 use crate::hive_server::submit::cache_service;
+use crate::hive_server::repository_manager;
 use crate::caching::ChunkCacheError;
+use crv_core::repository::{Compression, RepositoryError};
 
 #[derive(Clone, Debug)]
 pub struct LockedFile {
@@ -461,30 +461,306 @@ impl SubmitService {
         }
     }
 
-    pub fn submit(&self, ticket: &uuid::Uuid) -> Result<SubmitSuccess, SubmitFailure> {
-        let context = self
-            .contexts
-            .write()
-            .expect("submit service contexts poisoned");
+    /// ticket 是进行提交的上下文
+    /// description 是提交的描述
+    /// validations 是用于提交的验证，其中，key 是 depot path，value 是期望该文件在 cache 中已经完成上传的 chunk 的 hash 形成列表
+    pub async fn submit(
+        &self,
+        ticket: &uuid::Uuid,
+        description: String,
+        validations: HashMap<DepotPath, Vec<String>>,
+    ) -> Result<SubmitSuccess, SubmitFailure> {
+        // 清理超时票据，避免长期占用锁
+        self.cleanup_expired_tickets();
 
-        let context = context.get(ticket);
-        if context.is_none() {
-            return Result::Err(SubmitFailure {
-                context_not_found: true,
-                conflicts: vec![],
+        let ctx: Arc<SubmitContext> = {
+            let contexts = self
+                .contexts
+                .read()
+                .expect("submit service contexts poisoned");
+            let Some(ctx) = contexts.get(ticket) else {
+                return Err(SubmitFailure {
+                    context_not_found: true,
+                    conflicts: vec![],
+                    missing_chunks: vec![],
+                    message: "context not found".to_string(),
+                });
+            };
+            Arc::clone(ctx)
+        };
+
+        // 0) 检查 validations 覆盖了本次锁定的所有文件
+        for f in &ctx.files {
+            if !validations.contains_key(&f.path) {
+                return Err(SubmitFailure {
+                    context_not_found: false,
+                    conflicts: vec![],
+                    missing_chunks: vec![],
+                    message: format!("missing validations for path: {}", f.path),
+                });
+            }
+        }
+
+        // 1) 再次检查版本冲突（即使 launch_submit 已检查过，也要防止跨实例/外部写入）
+        let mut conflicts: Vec<SubmitConflict> = Vec::new();
+        for f in &ctx.files {
+            let expected_visible = match (f.locked_generation, f.locked_revision) {
+                (Some(g), Some(r)) => Some((g, r)),
+                (None, None) => None,
+                _ => {
+                    conflicts.push(SubmitConflict {
+                        path: f.path.to_string(),
+                        expected_generation: -1,
+                        expected_revision: -1,
+                        current_generation: -1,
+                        current_revision: -1,
+                    });
+                    continue;
+                }
+            };
+
+            let latest = match crate::database::dao::find_latest_file_revision_by_depot_path(
+                &f.path.to_string(),
+            )
+            .await
+            {
+                Ok(m) => m,
+                Err(e) => {
+                    return Err(SubmitFailure {
+                        context_not_found: false,
+                        conflicts: vec![],
+                        missing_chunks: vec![],
+                        message: format!("database error while checking conflicts: {e}"),
+                    });
+                }
+            };
+
+            // “可见版本”：如果 latest 是 delete，则视为文件不存在（与 launch_submit 一致）
+            let current_visible = latest.as_ref().and_then(|m| {
+                if m.is_delete {
+                    None
+                } else {
+                    Some((m.generation, m.revision))
+                }
+            });
+
+            if expected_visible != current_visible {
+                let (cur_g, cur_r) = latest
+                    .as_ref()
+                    .map(|m| (m.generation, m.revision))
+                    .unwrap_or((0, 0));
+                let (exp_g, exp_r) = expected_visible.unwrap_or((0, 0));
+                conflicts.push(SubmitConflict {
+                    path: f.path.to_string(),
+                    expected_generation: exp_g,
+                    expected_revision: exp_r,
+                    current_generation: cur_g,
+                    current_revision: cur_r,
+                });
+            }
+        }
+
+        if !conflicts.is_empty() {
+            return Err(SubmitFailure {
+                context_not_found: false,
+                conflicts,
                 missing_chunks: vec![],
-                message: "context not found".to_string(),
+                message: "submit conflict".to_string(),
             });
         }
 
-        // todo: implement here
+        // 2) 检查 validations 描述的所有 chunk 都已完整存在于 cache（并通过 hash 校验）
+        let cache = cache_service();
+        let mut missing_chunks: Vec<String> = Vec::new();
+        let mut unique_chunks: HashSet<String> = HashSet::new();
 
-        return Result::Ok(SubmitSuccess {
-            changelist_id: 0,
-            committed_at: 0,
-            latest_revisions: vec![],
+        for (_path, chunks) in validations.iter() {
+            // 约定：空列表表示“删除该文件”，无需任何 chunk
+            if chunks.is_empty() {
+                continue;
+            }
+            for h in chunks {
+                unique_chunks.insert(h.clone());
+                match cache.has_chunk(h) {
+                    Ok(true) => {}
+                    Ok(false) => missing_chunks.push(h.clone()),
+                    Err(_e) => {
+                        // HashMismatch / IO 等都算“不可用”，直接按 missing 返回
+                        missing_chunks.push(h.clone())
+                    }
+                }
+            }
+        }
+
+        if !missing_chunks.is_empty() {
+            missing_chunks.sort();
+            missing_chunks.dedup();
+            return Err(SubmitFailure {
+                context_not_found: false,
+                conflicts: vec![],
+                missing_chunks,
+                message: "missing chunks".to_string(),
+            });
+        }
+
+        // 3) 将 chunk 写入 repository（写入成功或已存在都算通过）。
+        //    同时记录每个 chunk 的长度，用于后续计算文件 size。
+        let repo = match repository_manager() {
+            Ok(r) => r,
+            Err(e) => {
+                return Err(SubmitFailure {
+                    context_not_found: false,
+                    conflicts: vec![],
+                    missing_chunks: vec![],
+                    message: format!("repository init error: {}", e.message()),
+                });
+            }
+        };
+
+        let mut chunk_sizes: HashMap<String, i64> = HashMap::new();
+        for h in unique_chunks.iter() {
+            let data = match cache.read_chunk(h) {
+                Ok(b) => b,
+                Err(e) => {
+                    return Err(SubmitFailure {
+                        context_not_found: false,
+                        conflicts: vec![],
+                        missing_chunks: vec![h.clone()],
+                        message: format!("failed to read chunk from cache: {e}"),
+                    });
+                }
+            };
+            chunk_sizes.insert(h.clone(), data.len() as i64);
+
+            match repo.write_chunk(&data, Compression::None) {
+                Ok(_record) => {}
+                Err(RepositoryError::DuplicateHash { .. }) => {
+                    // repo 已存在该 chunk：视为 OK
+                }
+                Err(e) => {
+                    return Err(SubmitFailure {
+                        context_not_found: false,
+                        conflicts: vec![],
+                        missing_chunks: vec![],
+                        message: format!("failed to write chunk into repository: {e}"),
+                    });
+                }
+            }
+        }
+
+        // 4) 落库（changelist + file_revisions），成功后再删除 ticket/清理 cache
+        let committed_at = chrono::Utc::now().timestamp();
+        let author = ctx.submitting_by.clone();
+
+        // 计算每个文件的新 generation/revision 与 size
+        let mut revisions_to_insert: Vec<crate::database::dao::NewFileRevisionInput> = Vec::new();
+        let mut latest_revisions: Vec<FileRevision> = Vec::new();
+
+        for locked_file in &ctx.files {
+            let depot_path = locked_file.path.to_string();
+            let chunks = validations
+                .get(&locked_file.path)
+                .cloned()
+                .unwrap_or_default();
+            let is_delete = chunks.is_empty();
+
+            let latest = crate::database::dao::find_latest_file_revision_by_depot_path(&depot_path)
+                .await
+                .map_err(|e| SubmitFailure {
+                    context_not_found: false,
+                    conflicts: vec![],
+                    missing_chunks: vec![],
+                    message: format!("database error while preparing revisions: {e}"),
+                })?;
+
+            let (new_generation, new_revision) = match latest {
+                Some(m) => (m.generation, m.revision.saturating_add(1)),
+                None => (1, 1),
+            };
+
+            let size: i64 = if is_delete {
+                0
+            } else {
+                let mut size: i64 = 0;
+                for h in &chunks {
+                    if let Some(len) = chunk_sizes.get(h) {
+                        size = size.saturating_add(*len);
+                    }
+                }
+                size
+            };
+
+            let binary_id_json = serde_json::json!(chunks);
+            revisions_to_insert.push(crate::database::dao::NewFileRevisionInput {
+                depot_path: depot_path.clone(),
+                generation: new_generation,
+                revision: new_revision,
+                binary_id: binary_id_json.clone(),
+                size,
+                is_delete,
+                created_at: committed_at,
+                metadata: serde_json::json!({}),
+            });
+
+            latest_revisions.push(FileRevision {
+                path: depot_path,
+                generation: new_generation,
+                revision: new_revision,
+                binary_id: binary_id_json
+                    .as_array()
+                    .unwrap_or(&Vec::new())
+                    .iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect(),
+                size,
+                revision_created_at: committed_at,
+            });
+        }
+
+        let changes = serde_json::json!(
+            revisions_to_insert
+                .iter()
+                .map(|r| serde_json::json!({
+                    "path": r.depot_path,
+                    "generation": r.generation,
+                    "revision": r.revision,
+                    "binary_id": r.binary_id,
+                    "size": r.size,
+                    "is_delete": r.is_delete,
+                }))
+                .collect::<Vec<_>>()
+        );
+
+        let changelist_id = match crate::database::dao::commit_submit(
+            &author,
+            &description,
+            committed_at,
+            changes,
+            serde_json::json!({}),
+            revisions_to_insert,
+        )
+        .await
+        {
+            Ok(id) => id,
+            Err(e) => {
+                return Err(SubmitFailure {
+                    context_not_found: false,
+                    conflicts: vec![],
+                    missing_chunks: vec![],
+                    message: format!("database error while committing submit: {e}"),
+                });
+            }
+        };
+
+        // 5) 提交完成：删除 ticket 并清理 cache/释放锁
+        self.unlock_context(ticket);
+
+        Ok(SubmitSuccess {
+            changelist_id,
+            committed_at,
+            latest_revisions,
             message: "success".to_string(),
-        });
+        })
     }
 }
 

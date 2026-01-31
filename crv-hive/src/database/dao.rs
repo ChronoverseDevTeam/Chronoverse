@@ -1,5 +1,6 @@
 use sea_orm::{
-    ActiveModelTrait, DbErr, EntityTrait, Set, Statement, DatabaseBackend,
+    ActiveModelTrait, ConnectionTrait, DatabaseBackend, DbErr, EntityTrait, Set, Statement,
+    TransactionTrait,
 };
 use thiserror::Error;
 
@@ -26,6 +27,18 @@ pub type DaoResult<T> = Result<T, DaoError>;
 
 fn db() -> DaoResult<&'static sea_orm::DatabaseConnection> {
     crate::database::try_get().ok_or(DaoError::DatabaseNotInitialized)
+}
+
+#[derive(Debug, Clone)]
+pub struct NewFileRevisionInput {
+    pub depot_path: String,
+    pub generation: i64,
+    pub revision: i64,
+    pub binary_id: serde_json::Value,
+    pub size: i64,
+    pub is_delete: bool,
+    pub created_at: i64,
+    pub metadata: serde_json::Value,
 }
 
 /// 根据用户名查找用户。
@@ -88,4 +101,114 @@ pub async fn find_latest_file_revision_by_depot_path(
         .await?;
 
     Ok(model)
+}
+
+/// 创建一个 changelist，并返回其自增 id。
+pub async fn insert_changelist(
+    author: &str,
+    description: &str,
+    changes: serde_json::Value,
+    committed_at: i64,
+    metadata: serde_json::Value,
+) -> DaoResult<i64> {
+    let am = entities::changelists::ActiveModel {
+        author: Set(author.to_string()),
+        description: Set(description.to_string()),
+        changes: Set(changes),
+        committed_at: Set(committed_at),
+        metadata: Set(metadata),
+        ..Default::default()
+    };
+
+    let model = am.insert(db()?).await?;
+    Ok(model.id)
+}
+
+async fn ensure_file_exists_in_txn(
+    txn: &sea_orm::DatabaseTransaction,
+    depot_path: &str,
+    created_at: i64,
+    metadata: serde_json::Value,
+) -> DaoResult<()> {
+    let key = ltree_key::depot_path_str_to_ltree_key(depot_path)?;
+    txn.execute(Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        r#"
+        INSERT INTO files (path, created_at, metadata)
+        VALUES ($1::ltree, $2, $3::jsonb)
+        ON CONFLICT (path) DO NOTHING
+        "#,
+        vec![key.into(), created_at.into(), metadata.to_string().into()],
+    ))
+    .await?;
+    Ok(())
+}
+
+async fn insert_file_revision_in_txn(
+    txn: &sea_orm::DatabaseTransaction,
+    input: &NewFileRevisionInput,
+    changelist_id: i64,
+) -> DaoResult<()> {
+    let key = ltree_key::depot_path_str_to_ltree_key(&input.depot_path)?;
+
+    txn.execute(Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        r#"
+        INSERT INTO file_revisions
+            (path, generation, revision, changelist_id, binary_id, size, is_delete, created_at, metadata)
+        VALUES
+            ($1::ltree, $2, $3, $4, $5::jsonb, $6, $7, $8, $9::jsonb)
+        "#,
+        vec![
+            key.into(),
+            input.generation.into(),
+            input.revision.into(),
+            changelist_id.into(),
+            input.binary_id.to_string().into(),
+            input.size.into(),
+            input.is_delete.into(),
+            input.created_at.into(),
+            input.metadata.to_string().into(),
+        ],
+    ))
+    .await?;
+
+    Ok(())
+}
+
+/// 原子提交：
+/// - 创建 changelist
+/// - 确保 files 行存在
+/// - 写入每个文件的 file_revisions
+pub async fn commit_submit(
+    author: &str,
+    description: &str,
+    committed_at: i64,
+    changes: serde_json::Value,
+    metadata: serde_json::Value,
+    revisions: Vec<NewFileRevisionInput>,
+) -> DaoResult<i64> {
+    let conn = db()?;
+    let txn = conn.begin().await?;
+
+    let changelist_id = {
+        let am = entities::changelists::ActiveModel {
+            author: Set(author.to_string()),
+            description: Set(description.to_string()),
+            changes: Set(changes),
+            committed_at: Set(committed_at),
+            metadata: Set(metadata),
+            ..Default::default()
+        };
+        let model = am.insert(&txn).await?;
+        model.id
+    };
+
+    for r in &revisions {
+        ensure_file_exists_in_txn(&txn, &r.depot_path, r.created_at, r.metadata.clone()).await?;
+        insert_file_revision_in_txn(&txn, r, changelist_id).await?;
+    }
+
+    txn.commit().await?;
+    Ok(changelist_id)
 }

@@ -2,7 +2,7 @@ use crate::auth::{AuthInterceptor, AuthService};
 use crate::pb::{
     BonjourReq, BonjourRsp, CheckChunksReq, CheckChunksRsp, DownloadFileChunkReq,
     GetFileTreeReq, GetFileTreeRsp, LaunchSubmitReq, LaunchSubmitRsp, LoginReq, LoginRsp, RegisterReq,
-    RegisterRsp, SubmitReq, SubmitRsp, UploadFileChunkReq, UploadFileChunkRsp,
+    RegisterRsp, SubmitReq, SubmitRsp, UploadFileChunkReq,
     hive_service_server::{HiveService, HiveServiceServer},
 };
 use argon2::password_hash::SaltString;
@@ -225,7 +225,7 @@ impl HiveService for CrvHiveService {
         &self,
         _request: Request<SubmitReq>,
     ) -> Result<Response<SubmitRsp>, Status> {
-        submit::submit::submit(_request)
+        submit::submit::submit(_request).await
     }
 
     async fn get_file_tree(
