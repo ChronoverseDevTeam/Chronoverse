@@ -1,4 +1,5 @@
 use crate::auth::{AuthInterceptor, AuthService};
+use crate::hive_server::fetch::download;
 use crate::pb::{
     BonjourReq, BonjourRsp, CheckChunksReq, CheckChunksRsp, DownloadFileChunkReq,
     GetFileTreeReq, GetFileTreeRsp, LaunchSubmitReq, LaunchSubmitRsp, LoginReq, LoginRsp, RegisterReq,
@@ -19,7 +20,6 @@ use tonic_web::GrpcWebLayer;
 use tower_http::cors::{Any, CorsLayer};
 
 mod fetch;
-mod download;
 mod submit;
 
 pub struct CrvHiveService {

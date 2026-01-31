@@ -33,26 +33,30 @@ pub async fn submit(
         .await;
 
     let rsp = match result {
-        Ok(success) => SubmitRsp {
-            success: true,
-            changelist_id: success.changelist_id,
-            committed_at: success.committed_at,
-            conflicts: vec![],
-            missing_chunks: vec![],
-            latest_revisions: success
-                .latest_revisions
-                .into_iter()
-                .map(|r| PbFileRevision {
-                    path: r.path,
-                    generation: r.generation,
-                    revision: r.revision,
-                    binary_id: r.binary_id,
-                    size: r.size,
-                    revision_created_at: r.revision_created_at,
-                })
-                .collect(),
-            message: format!("submitted by {}", submitting_by),
-        },
+        Ok(success) => {
+            let changelist_id = success.changelist_id;
+            SubmitRsp {
+                success: true,
+                changelist_id,
+                committed_at: success.committed_at,
+                conflicts: vec![],
+                missing_chunks: vec![],
+                latest_revisions: success
+                    .latest_revisions
+                    .into_iter()
+                    .map(|r| PbFileRevision {
+                        path: r.path,
+                        generation: r.generation,
+                        revision: r.revision,
+                        changelist_id,
+                        binary_id: r.binary_id,
+                        size: r.size,
+                        revision_created_at: r.revision_created_at,
+                    })
+                    .collect(),
+                message: format!("submitted by {}", submitting_by),
+            }
+        }
         Err(failure) => SubmitRsp {
             success: false,
             changelist_id: 0,
