@@ -69,7 +69,7 @@ message CheckChunksRsp {
     repeated string missing_chunk_hashes = 1;
 }
 
-message FileChunks {
+message FileChunk {
     // 文件 depot path
     string path = 1;
     repeated string binary_id = 2;
@@ -78,6 +78,7 @@ message FileChunks {
 message SubmitReq {
     string ticket = 1;
     string description = 2;
+    repeated FileChunk file_chunks = 3;
 }
 
 message FileToLock {
