@@ -3,7 +3,11 @@ use std::{
     sync::{Arc, RwLock},
 };
 
+use serde_json::Error;
+
 use crate::common::depot_path::DepotPath;
+use crate::hive_server::submit::cache_service;
+use crate::caching::ChunkCacheError;
 
 #[derive(Clone, Debug)]
 pub struct LockedFile {
@@ -32,6 +36,10 @@ pub struct SubmitContext {
     timeout_deadline: chrono::DateTime<chrono::Utc>,
     /// files that submitting
     files: Vec<LockedFile>,
+    /// chunks uploaded (completed)
+    chunks_uploaded: RwLock<Vec<String>>,
+    /// chunks in progress (including incomplete ones)
+    chunks_in_progress: RwLock<HashSet<String>>,
 }
 
 pub struct SubmitService {
@@ -87,6 +95,17 @@ pub struct SubmitFailure {
     pub message: String,
 }
 
+#[derive(Debug)]
+pub enum UploadFileChunkResult {
+    FileUploadFinished,
+    FileAppended
+}
+
+#[derive(Debug)]
+pub struct UploadFileChunkError {
+    pub message: String
+}
+
 impl SubmitService {
     pub fn new() -> Self {
         Self {
@@ -95,10 +114,64 @@ impl SubmitService {
         }
     }
 
+    /// 仅用于单元测试：向 service 注入一个 context，避免依赖外部 DB / launch_submit。
+    #[cfg(test)]
+    pub(crate) fn insert_test_context(&self, ticket: uuid::Uuid) {
+        let deadline = chrono::Utc::now() + chrono::Duration::minutes(10);
+        let ctx = Arc::new(SubmitContext {
+            ticket,
+            submitting_by: "test".to_string(),
+            timeout_deadline: deadline,
+            files: Vec::new(),
+            chunks_uploaded: RwLock::new(Vec::new()),
+            chunks_in_progress: RwLock::new(HashSet::new()),
+        });
+
+        let mut contexts = self
+            .contexts
+            .write()
+            .expect("submit service contexts poisoned");
+        contexts.insert(ticket, ctx);
+    }
+
     fn unlock_context(&self, ticket: &uuid::Uuid) {
         // 这里不依赖 contexts 里的 file 列表做定向删除，而是直接按 ticket 清除锁：
         // - 更稳健：即便 contexts 因异常路径缺失，也不会导致锁泄漏；
         // - 安全：只移除 value==ticket 的条目，不会误删其他并发 ticket 的锁。
+        
+        // 先获取需要清理的 chunk 列表（包括已上传和上传中的）
+        let chunks_to_cleanup: HashSet<String> = {
+            let contexts = self
+                .contexts
+                .read()
+                .expect("submit service contexts poisoned");
+            if let Some(ctx) = contexts.get(ticket) {
+                let mut chunks = HashSet::new();
+                
+                // 添加已上传的 chunk
+                let chunks_uploaded = ctx.chunks_uploaded.read()
+                    .expect("submit service chunks_uploaded poisoned");
+                chunks.extend(chunks_uploaded.iter().cloned());
+                
+                // 添加上传中的 chunk（可能包含未完成的）
+                let chunks_in_progress = ctx.chunks_in_progress.read()
+                    .expect("submit service chunks_in_progress poisoned");
+                chunks.extend(chunks_in_progress.iter().cloned());
+                
+                chunks
+            } else {
+                HashSet::new()
+            }
+        };
+        
+        // 清理所有相关的 chunk cache（包括已上传和上传中的）
+        let cache = cache_service();
+        for chunk_hash in &chunks_to_cleanup {
+            // 忽略删除错误，因为 chunk 可能已经被其他 ticket 使用或已被删除
+            // 这些都是缓存文件，清理是安全的
+            let _ = cache.remove_chunk(chunk_hash);
+        }
+        
         let mut locked = self
             .locked_paths
             .write()
@@ -215,6 +288,8 @@ impl SubmitService {
                 submitting_by,
                 timeout_deadline: deadline,
                 files: files.clone(),
+                chunks_uploaded: RwLock::new(Vec::new()),
+                chunks_in_progress: RwLock::new(HashSet::new()),
             });
             contexts.insert(ticket, ctx);
         }
@@ -282,6 +357,108 @@ impl SubmitService {
         }
 
         Ok(LaunchSubmitSuccess { ticket: ticket })
+    }
+
+    pub fn upload_file_chunk(&self, ticket: &uuid::Uuid, chunk_hash: &String, offset: i64, chunk_size: i64, bytes: &[u8]) -> Result<UploadFileChunkResult, UploadFileChunkError> {
+        let contexts = self.contexts.read().expect("submit service contexts poisoned");
+        let context = contexts.get(ticket);
+
+        match context {
+            Some(context_inner) => {
+                let mut chunks_uploaded = context_inner.chunks_uploaded.write().expect("submit service chunks_uploaded poisoned");
+                let mut chunks_in_progress = context_inner.chunks_in_progress.write().expect("submit service chunks_in_progress poisoned");
+                
+                // 将 chunk_hash 添加到正在进行的列表中（无论是否完成）
+                chunks_in_progress.insert(chunk_hash.clone());
+                
+                // 使用 mod.rs 中的 CACHE_SERVICE 处理上传逻辑
+                let cache = cache_service();
+                
+                // 将 offset 从 i64 转换为 u64
+                let offset_u64 = offset.try_into().map_err(|_| UploadFileChunkError {
+                    message: format!("invalid offset: {}", offset),
+                })?;
+                
+                // 调用缓存服务写入 chunk 数据
+                cache.append_chunk_part(chunk_hash, offset_u64, bytes).map_err(|e| {
+                    UploadFileChunkError {
+                        message: match e {
+                            ChunkCacheError::InvalidChunkHash(msg) => format!("invalid chunk hash: {}", msg),
+                            ChunkCacheError::Io(io_err) => format!("io error: {}", io_err),
+                            ChunkCacheError::HashMismatch { expected, actual } => {
+                                format!("hash mismatch: expected {}, actual {}", expected, actual)
+                            }
+                        },
+                    }
+                })?;
+                
+                // 判断当前写入是否已完成整个 chunk
+                let bytes_written = bytes.len() as i64;
+                let current_total_size = offset + bytes_written;
+                
+                // 检查是否超出预期大小
+                if current_total_size > chunk_size {
+                    return Err(UploadFileChunkError {
+                        message: format!(
+                            "chunk size exceeded: expected {}, actual {}",
+                            chunk_size, current_total_size
+                        ),
+                    });
+                }
+                
+                // 判断是否已完成整个 chunk
+                let is_chunk_complete = current_total_size == chunk_size;
+                
+                // 如果 chunk 已完成，验证整个 chunk 的哈希值
+                if is_chunk_complete {
+                    
+                    // 验证整个 chunk 的哈希值
+                    match cache.has_chunk(chunk_hash) {
+                        Ok(true) => {
+                            // 哈希验证通过，chunk 上传完成
+                            // 如果成功，将 chunk_hash 添加到已上传列表（去重）
+                            if !chunks_uploaded.contains(chunk_hash) {
+                                chunks_uploaded.push(chunk_hash.clone());
+                            }
+                            return Ok(UploadFileChunkResult::FileUploadFinished);
+                        }
+                        Ok(false) => {
+                            // chunk 文件不存在（不应该发生，因为刚刚写入）
+                            return Err(UploadFileChunkError {
+                                message: format!("chunk file not found after write: {}", chunk_hash),
+                            });
+                        }
+                        Err(e) => {
+                            // 哈希验证失败
+                            return Err(UploadFileChunkError {
+                                message: match e {
+                                    ChunkCacheError::InvalidChunkHash(msg) => {
+                                        format!("invalid chunk hash during verification: {}", msg)
+                                    }
+                                    ChunkCacheError::Io(io_err) => {
+                                        format!("io error during verification: {}", io_err)
+                                    }
+                                    ChunkCacheError::HashMismatch { expected, actual } => {
+                                        format!(
+                                            "chunk hash verification failed: expected {}, actual {}",
+                                            expected, actual
+                                        )
+                                    }
+                                },
+                            });
+                        }
+                    }
+                } else {
+                    // chunk 尚未完成，只是追加了一部分数据
+                    return Ok(UploadFileChunkResult::FileAppended);
+                }
+            }
+            None => {
+                return Result::Err(UploadFileChunkError{
+                    message: "context not found".to_string(),
+                });
+            }
+        }
     }
 
     pub fn submit(&self, ticket: &uuid::Uuid) -> Result<SubmitSuccess, SubmitFailure> {
