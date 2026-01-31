@@ -776,14 +776,46 @@ mod tests {
 
     static INIT_MUTEX: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
 
-    // ============================
-    // 直接在这里填写测试数据库地址
-    // ============================
-    const TEST_PG_HOST: &str = "172.18.168.1";
-    const TEST_PG_PORT: u16 = 5432;
-    const TEST_PG_DB: &str = "chronoverse";
-    const TEST_PG_USER: &str = "postgres";
-    const TEST_PG_PASS: &str = "postgres";
+    fn should_run_hive_db_tests() -> bool {
+        // 统一用环境变量控制：
+        // - 默认不跑（本地/CI 都一样），避免没有 Postgres 环境时误失败
+        // - `CRV_RUN_HIVE_DB_TESTS=1` => 允许运行（CI 可以显式开启，并配套启动 Postgres service）
+        // - `CRV_SKIP_HIVE_DB_TESTS=1` => 强制跳过（用于临时禁用）
+        if std::env::var("CRV_SKIP_HIVE_DB_TESTS").as_deref() == Ok("1") {
+            eprintln!("skip submit service db tests (CRV_SKIP_HIVE_DB_TESTS=1)");
+            return false;
+        }
+
+        if std::env::var("CRV_RUN_HIVE_DB_TESTS").as_deref() == Ok("1") {
+            return true;
+        }
+
+        eprintln!(
+            "skip submit service db tests (set CRV_RUN_HIVE_DB_TESTS=1 and run with --ignored)"
+        );
+        false
+    }
+
+    fn test_pg_config() -> crate::config::entity::ConfigEntity {
+        // 允许通过环境变量覆盖，避免改源码才能在不同机器上跑。
+        // 这些值只在 `CRV_RUN_HIVE_DB_TESTS=1` 时会被使用。
+        let host = std::env::var("CRV_HIVE_TEST_PG_HOST").unwrap_or_else(|_| "127.0.0.1".into());
+        let port = std::env::var("CRV_HIVE_TEST_PG_PORT")
+            .ok()
+            .and_then(|s| s.parse::<u16>().ok())
+            .unwrap_or(5432);
+        let db = std::env::var("CRV_HIVE_TEST_PG_DB").unwrap_or_else(|_| "chronoverse".into());
+        let user = std::env::var("CRV_HIVE_TEST_PG_USER").unwrap_or_else(|_| "postgres".into());
+        let pass = std::env::var("CRV_HIVE_TEST_PG_PASS").unwrap_or_else(|_| "postgres".into());
+
+        let mut cfg = crate::config::entity::ConfigEntity::default();
+        cfg.postgres_hostname = host;
+        cfg.postgres_port = port;
+        cfg.postgres_database = db;
+        cfg.postgres_username = user;
+        cfg.postgres_password = pass;
+        cfg
+    }
 
     async fn ensure_db() {
         if database::try_get().is_some() {
@@ -797,13 +829,7 @@ mod tests {
             return;
         }
 
-        // 通过“变量/常量”注入测试配置（不使用环境变量）
-        let mut cfg = crate::config::entity::ConfigEntity::default();
-        cfg.postgres_hostname = TEST_PG_HOST.to_string();
-        cfg.postgres_port = TEST_PG_PORT;
-        cfg.postgres_database = TEST_PG_DB.to_string();
-        cfg.postgres_username = TEST_PG_USER.to_string();
-        cfg.postgres_password = TEST_PG_PASS.to_string();
+        let cfg = test_pg_config();
         let _ = crate::config::holder::try_set_config(cfg);
 
         // migrations 是幂等的。
@@ -1038,14 +1064,9 @@ mod tests {
     ///
     /// 因此这里用一个共享 runtime 的单一 harness 串行执行。
     #[test]
+    #[ignore = "requires external Postgres; enable with CRV_RUN_HIVE_DB_TESTS=1"]
     fn submit_service_tests_harness() {
-        // CI 默认不应运行依赖外部 Postgres 的测试（GitHub Actions 里没有这套环境）。
-        // - GitHub Actions 会自动设置 `GITHUB_ACTIONS=true`
-        // - 工作流里也额外设置了 `CRV_SKIP_HIVE_DB_TESTS=1`
-        if std::env::var("GITHUB_ACTIONS").is_ok()
-            || std::env::var("CRV_SKIP_HIVE_DB_TESTS").as_deref() == Ok("1")
-        {
-            eprintln!("skip submit service db tests on CI");
+        if !should_run_hive_db_tests() {
             return;
         }
 
