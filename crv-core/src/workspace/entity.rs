@@ -2,7 +2,9 @@ use crate::{
     parsers,
     path::basic::{
         DepotPath, DepotPathWildcard, LocalDir, LocalPath, RangeDepotWildcard,
+        FilenameWildcard,
     },
+    workspace::conflict_detector_v2::{ConflictDetector, FilenameFilter, PathMapping},
 };
 use bincode::{Decode, Encode};
 use chrono::{DateTime, Utc};
@@ -313,13 +315,89 @@ impl WorkspaceConfig {
         )
     }
 
+    /// 将 IncludeMapping 转换为 conflict_detector_v2 的 PathMapping
+    fn include_mapping_to_path_mapping(mapping: &IncludeMapping) -> PathMapping {
+        match mapping {
+            IncludeMapping::File(file_mapping) => {
+                // 文件映射：直接转换为带文件名的路径
+                let server_path = file_mapping.depot_file.to_custom_string().trim_start_matches("/").to_string();
+                let local_path = file_mapping.local_file.to_unix_path_string().trim_start_matches("/").to_string();
+                
+                let filename_filter = std::path::Path::new(&file_mapping.local_file.file)
+                    .extension()
+                    .and_then(|ext| ext.to_str())
+                    .map(|ext| FilenameFilter::Extension(ext.to_string()))
+                    .unwrap_or(FilenameFilter::All);
+
+                PathMapping::new(
+                    server_path,
+                    local_path,
+                    false,
+                    filename_filter,
+                )
+            }
+            IncludeMapping::Folder(folder_mapping) => {
+                // 文件夹映射：转换为目录路径（以 / 结尾）
+                let server_path = {
+                    let mut path = String::new();
+                    for dir in &folder_mapping.depot_folder.dirs {
+                        path.push_str(dir);
+                        path.push('/');
+                    }
+                    path
+                };
+                let local_path = {
+                    let mut path = String::new();
+                    for dir in &folder_mapping.local_folder.0 {
+                        path.push_str(dir);
+                        path.push('/');
+                    }
+                    path
+                };
+                let recursive = folder_mapping.depot_folder.recursive;
+                
+                // 转换文件名过滤器
+                let filename_filter = match &folder_mapping.depot_folder.wildcard {
+                    FilenameWildcard::All => FilenameFilter::All,
+                    FilenameWildcard::Extension(ext) => {
+                        // 移除开头的 '.' 如果存在
+                        let ext_str = if ext.starts_with('.') {
+                            &ext[1..]
+                        } else {
+                            ext
+                        };
+                        FilenameFilter::Extension(ext_str.to_string())
+                    }
+                    FilenameWildcard::Exact(_) => FilenameFilter::All, // 精确文件名视为 All
+                };
+
+                PathMapping::new(server_path, local_path, recursive, filename_filter)
+            }
+        }
+    }
+
     /// 给定两个映射的索引，判断是否存在冲突
     fn verify_mapping_pair(&self, index_1: usize, index_2: usize) -> Result<(), String> {
+        // 使用 conflict_detector_v2 进行冲突检测
         let race_pair = self.try_race_mapping_pair(index_1, index_2);
         if race_pair.is_none() {
             return Ok(());
         }
         let (primary, secondary) = race_pair.unwrap();
+        
+        // 转换为 PathMapping 并使用 v2 检测器
+        let mapping_1 = Self::include_mapping_to_path_mapping(&primary);
+        let mapping_2 = Self::include_mapping_to_path_mapping(&secondary);
+        println!("mapping_1: {:?}", mapping_1);
+        println!("mapping_2: {:?}", mapping_2);
+        let detector = ConflictDetector::new(vec![mapping_2, mapping_1]);
+        
+        match detector.verify_mappings() {
+            Ok(_) => Ok(()),
+            Err(e) => Err(format!("Mapping conflict: {}", e)),
+        }
+
+        /* ========== 原有逻辑（已注释） ==========
         let conflict_file_example = match self.possible_conflict_file(index_1, index_2) {
             Some(filename) => filename,
             None => return Ok(()),
@@ -848,6 +926,7 @@ impl WorkspaceConfig {
                 }
             }
         }
+        ========== 原有逻辑结束 ========== */
     }
 
     /// 求两个切片的公共前缀的结束索引，如果返回 0 则代表没有公共前缀
