@@ -346,9 +346,6 @@ impl LocalPath {
             }
             full_path.push_str(&self.file);
 
-            println!("full_path: {:?}", full_path);
-            println!("self.file: {:?}", self.file);
-            println!("self.dirs: {:?}", self.dirs);
             full_path
         }
 

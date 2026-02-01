@@ -383,7 +383,7 @@ async fn upload_task(
                 }
 
                 // 遍历切片并上传
-                let chunk = Arc::new(chunk_buffer);
+                let chunk = Arc::new(chunk_buffer[..n].to_vec());
                 let mut offset = 0i64;
                 let frames: Vec<&[u8]> = chunk.chunks(FRAME_SIZE).collect();
                 for (_, frame_data) in frames.iter().enumerate() {
