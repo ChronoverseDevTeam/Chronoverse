@@ -258,7 +258,7 @@ impl HiveService for CrvHiveService {
         log.info("rpc start");
         let _req = request.into_inner();
         let rsp = CheckChunksRsp {
-            missing_chunk_hashes: vec![],
+            missing_chunk_hashes: _req.chunk_hashes,
         };
         let out = Ok(Response::new(rsp));
         log.finish_ok();
