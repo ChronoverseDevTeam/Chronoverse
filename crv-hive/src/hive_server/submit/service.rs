@@ -717,25 +717,10 @@ impl SubmitService {
             });
         }
 
-        let changes = serde_json::json!(
-            revisions_to_insert
-                .iter()
-                .map(|r| serde_json::json!({
-                    "path": r.depot_path,
-                    "generation": r.generation,
-                    "revision": r.revision,
-                    "binary_id": r.binary_id,
-                    "size": r.size,
-                    "is_delete": r.is_delete,
-                }))
-                .collect::<Vec<_>>()
-        );
-
         let changelist_id = match crate::database::dao::commit_submit(
             &author,
             &description,
             committed_at,
-            changes,
             serde_json::json!({}),
             revisions_to_insert,
         )
@@ -861,7 +846,6 @@ mod tests {
         let cl = entities::changelists::ActiveModel {
             author: Set("test".to_string()),
             description: Set("test".to_string()),
-            changes: Set(serde_json::json!([])),
             committed_at: Set(0),
             metadata: Set(serde_json::json!({})),
             ..Default::default()

@@ -1,4 +1,5 @@
 use sea_orm::entity::prelude::*;
+use super::file_revisions;
 
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
 #[sea_orm(table_name = "changelists")]
@@ -9,12 +10,20 @@ pub struct Model {
     pub id: i64,
     pub author: String,
     pub description: String,
-    pub changes: Json,
     pub committed_at: i64,
     pub metadata: Json,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
-pub enum Relation {}
+pub enum Relation {
+    #[sea_orm(has_many = "file_revisions::Entity")]
+    FileRevisions,
+}
+
+impl Related<file_revisions::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::FileRevisions.def()
+    }
+}
 
 impl ActiveModelBehavior for ActiveModel {}

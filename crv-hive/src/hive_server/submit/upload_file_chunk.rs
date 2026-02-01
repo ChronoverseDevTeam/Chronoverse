@@ -184,6 +184,11 @@ mod tests {
 
     static TEST_CACHE_DIR: OnceLock<tempfile::TempDir> = OnceLock::new();
     static TEST_INIT: OnceLock<()> = OnceLock::new();
+    static TEST_MUTEX: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+
+    fn test_mutex() -> &'static tokio::sync::Mutex<()> {
+        TEST_MUTEX.get_or_init(|| tokio::sync::Mutex::new(()))
+    }
 
     fn init_test_globals() {
         TEST_INIT.get_or_init(|| {
@@ -214,6 +219,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_upload_single_chunk_success() {
+        let _g = test_mutex().lock().await;
         init_test_globals();
         let ticket = uuid::Uuid::new_v4();
         ensure_ticket(ticket);
@@ -253,6 +259,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_upload_multiple_chunks_success() {
+        let _g = test_mutex().lock().await;
         init_test_globals();
         let ticket = uuid::Uuid::new_v4();
         ensure_ticket(ticket);
@@ -302,6 +309,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_invalid_ticket_format() {
+        let _g = test_mutex().lock().await;
         init_test_globals();
 
         let req = UploadFileChunkReq {
@@ -330,12 +338,22 @@ mod tests {
 
     #[tokio::test]
     async fn test_chunks_amount_mismatch() {
+        let _g = test_mutex().lock().await;
         init_test_globals();
         let ticket = uuid::Uuid::new_v4();
         ensure_ticket(ticket);
 
         let data = b"test";
         let chunk_hash = compute_chunk_hash(data);
+
+        // 该测试依赖“第二个请求触发 chunks_amount mismatch”。
+        // 由于测试进程内 cache 是全局单例（OnceLock），其它测试可能留下同 hash 的残留/损坏数据，
+        // 导致第一个请求在 has_chunk() 阶段就返回 Internal（例如 hash mismatch）。
+        // 这里显式清理，确保行为稳定。
+        {
+            let cache = crate::hive_server::submit::cache_service();
+            let _ = cache.remove_chunk(&chunk_hash);
+        }
 
         let reqs = vec![
             UploadFileChunkReq {
@@ -386,6 +404,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_duplicate_chunk_hash() {
+        let _g = test_mutex().lock().await;
         init_test_globals();
         let ticket = uuid::Uuid::new_v4();
         ensure_ticket(ticket);
@@ -444,6 +463,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_chunk_already_exists() {
+        let _g = test_mutex().lock().await;
         init_test_globals();
         let ticket = uuid::Uuid::new_v4();
         // already_exists 分支不依赖 context，但保持一致性
@@ -454,6 +474,7 @@ mod tests {
 
         // 先上传一个 chunk
         let cache = crate::hive_server::submit::cache_service();
+        let _ = cache.remove_chunk(&chunk_hash);
         cache
             .append_chunk_part(&chunk_hash, 0, data)
             .expect("append chunk");

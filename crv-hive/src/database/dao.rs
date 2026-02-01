@@ -51,7 +51,6 @@ pub trait Dao: Send + Sync {
         &self,
         author: &str,
         description: &str,
-        changes: serde_json::Value,
         committed_at: i64,
         metadata: serde_json::Value,
     ) -> DaoResult<i64>;
@@ -61,7 +60,6 @@ pub trait Dao: Send + Sync {
         author: &str,
         description: &str,
         committed_at: i64,
-        changes: serde_json::Value,
         metadata: serde_json::Value,
         revisions: Vec<NewFileRevisionInput>,
     ) -> DaoResult<i64>;
@@ -95,11 +93,10 @@ impl Dao for SeaOrmDao {
         &self,
         author: &str,
         description: &str,
-        changes: serde_json::Value,
         committed_at: i64,
         metadata: serde_json::Value,
     ) -> DaoResult<i64> {
-        insert_changelist_on(db()?, author, description, changes, committed_at, metadata).await
+        insert_changelist_on(db()?, author, description, committed_at, metadata).await
     }
 
     async fn commit_submit(
@@ -107,11 +104,10 @@ impl Dao for SeaOrmDao {
         author: &str,
         description: &str,
         committed_at: i64,
-        changes: serde_json::Value,
         metadata: serde_json::Value,
         revisions: Vec<NewFileRevisionInput>,
     ) -> DaoResult<i64> {
-        commit_submit_on(db()?, author, description, committed_at, changes, metadata, revisions)
+        commit_submit_on(db()?, author, description, committed_at, metadata, revisions)
             .await
     }
 }
@@ -177,7 +173,6 @@ impl Dao for MockDao {
         &self,
         _author: &str,
         _description: &str,
-        _changes: serde_json::Value,
         _committed_at: i64,
         _metadata: serde_json::Value,
     ) -> DaoResult<i64> {
@@ -192,12 +187,11 @@ impl Dao for MockDao {
         author: &str,
         description: &str,
         committed_at: i64,
-        changes: serde_json::Value,
         metadata: serde_json::Value,
         revisions: Vec<NewFileRevisionInput>,
     ) -> DaoResult<i64> {
         let changelist_id = self
-            .insert_changelist(author, description, changes, committed_at, metadata)
+            .insert_changelist(author, description, committed_at, metadata)
             .await?;
 
         let mut g = self.inner.lock().expect("MockDao poisoned");
@@ -353,12 +347,11 @@ async fn find_latest_file_revision_by_depot_path_on<C: ConnectionTrait>(
 pub async fn insert_changelist(
     author: &str,
     description: &str,
-    changes: serde_json::Value,
     committed_at: i64,
     metadata: serde_json::Value,
 ) -> DaoResult<i64> {
     dao()
-        .insert_changelist(author, description, changes, committed_at, metadata)
+        .insert_changelist(author, description, committed_at, metadata)
         .await
 }
 
@@ -366,14 +359,12 @@ async fn insert_changelist_on<C: ConnectionTrait>(
     conn: &C,
     author: &str,
     description: &str,
-    changes: serde_json::Value,
     committed_at: i64,
     metadata: serde_json::Value,
 ) -> DaoResult<i64> {
     let am = entities::changelists::ActiveModel {
         author: Set(author.to_string()),
         description: Set(description.to_string()),
-        changes: Set(changes),
         committed_at: Set(committed_at),
         metadata: Set(metadata),
         ..Default::default()
@@ -443,12 +434,11 @@ pub async fn commit_submit(
     author: &str,
     description: &str,
     committed_at: i64,
-    changes: serde_json::Value,
     metadata: serde_json::Value,
     revisions: Vec<NewFileRevisionInput>,
 ) -> DaoResult<i64> {
     dao()
-        .commit_submit(author, description, committed_at, changes, metadata, revisions)
+        .commit_submit(author, description, committed_at, metadata, revisions)
         .await
 }
 
@@ -457,7 +447,6 @@ async fn commit_submit_on(
     author: &str,
     description: &str,
     committed_at: i64,
-    changes: serde_json::Value,
     metadata: serde_json::Value,
     revisions: Vec<NewFileRevisionInput>,
 ) -> DaoResult<i64> {
@@ -465,7 +454,7 @@ async fn commit_submit_on(
 
     // 复用 DAO 的插入逻辑（只是在事务里执行）
     let changelist_id =
-        insert_changelist_on(&txn, author, description, changes, committed_at, metadata).await?;
+        insert_changelist_on(&txn, author, description, committed_at, metadata).await?;
 
     for r in &revisions {
         ensure_file_exists_on(&txn, &r.depot_path, r.created_at, &r.metadata).await?;

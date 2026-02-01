@@ -92,7 +92,6 @@ impl MigrationTrait for Migration {
                     )
                     .col(ColumnDef::new(Changelists::Author).string().not_null())
                     .col(ColumnDef::new(Changelists::Description).text().not_null())
-                    .col(ColumnDef::new(Changelists::Changes).json_binary().not_null())
                     .col(ColumnDef::new(Changelists::CommittedAt).big_integer().not_null())
                     .col(ColumnDef::new(Changelists::Metadata).json_binary().not_null())
                     .to_owned(),
@@ -231,7 +230,6 @@ enum Changelists {
     Id,
     Author,
     Description,
-    Changes,
     CommittedAt,
     Metadata,
 }

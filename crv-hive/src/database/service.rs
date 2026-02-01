@@ -1,11 +1,33 @@
 use crate::common::depot_path::DepotPath;
-use crate::database::{dao::DaoError, entities::file_revisions, ltree_key};
-use sea_orm::{ColumnTrait, DbErr, EntityTrait, QueryFilter, QueryOrder};
+use crate::database::{dao::DaoError, entities::{changelists, file_revisions}, ltree_key};
+use sea_orm::{ColumnTrait, DbErr, EntityTrait, ModelTrait, QueryFilter, QueryOrder};
 use std::collections::HashMap;
 
 
 fn db() -> Result<&'static sea_orm::DatabaseConnection, DaoError> {
     crate::database::try_get().ok_or(DaoError::DatabaseNotInitialized)
+}
+
+/// 按 changelist id 查询 changelist 及其关联的所有 file_revisions。
+///
+/// 这依赖 SeaORM entity 关系：
+/// - `file_revisions` belongs_to `changelists`
+/// - `changelists` has_many `file_revisions`
+pub async fn get_changelist_with_file_revisions(
+    changelist_id: i64,
+) -> Result<(changelists::Model, Vec<file_revisions::Model>), DaoError> {
+    let cl = changelists::Entity::find_by_id(changelist_id)
+        .one(db()?)
+        .await?;
+
+    let cl = cl.ok_or_else(|| {
+        DaoError::Db(DbErr::RecordNotFound(format!(
+            "changelist not found for id: {changelist_id}"
+        )))
+    })?;
+
+    let revisions = cl.find_related(file_revisions::Entity).all(db()?).await?;
+    Ok((cl, revisions))
 }
 
 /// 按 depot path 查询该文件的最新 revision。

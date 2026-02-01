@@ -1,6 +1,6 @@
 use sea_orm::entity::prelude::*;
 use sea_orm::Set;
-use super::files;
+use super::{changelists, files};
 use crate::database::ltree_key;
 
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
@@ -32,11 +32,23 @@ pub enum Relation {
         to = "files::Column::Path"
     )]
     File,
+    #[sea_orm(
+        belongs_to = "changelists::Entity",
+        from = "Column::ChangelistId",
+        to = "changelists::Column::Id"
+    )]
+    Changelist,
 }
 
 impl Related<files::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::File.def()
+    }
+}
+
+impl Related<changelists::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::Changelist.def()
     }
 }
 
