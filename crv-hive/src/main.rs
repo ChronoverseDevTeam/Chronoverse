@@ -4,6 +4,8 @@ use tokio::signal;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    crv_hive::logging::init_logging();
+
     config::holder::load_config().await?;
 
     database::init().await?;

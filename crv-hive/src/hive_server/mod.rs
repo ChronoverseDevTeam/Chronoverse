@@ -1,5 +1,6 @@
 use crate::auth::{AuthInterceptor, AuthService};
 use crate::hive_server::fetch::download;
+use crate::logging::HiveLog;
 use crate::pb::{
     BonjourReq, BonjourRsp, CheckChunksReq, CheckChunksRsp, DownloadFileChunkReq,
     GetFileTreeReq, GetFileTreeRsp, LaunchSubmitReq, LaunchSubmitRsp, LoginReq, LoginRsp, RegisterReq,
@@ -78,6 +79,9 @@ fn build_cors_layer() -> CorsLayer {
 #[tonic::async_trait]
 impl HiveService for CrvHiveService {
     async fn bonjour(&self, _request: Request<BonjourReq>) -> Result<Response<BonjourRsp>, Status> {
+        let log = HiveLog::from_request("Bonjour", &_request);
+        let _g = log.enter();
+        log.info("rpc start");
         let rsp = BonjourRsp {
             major_version: 1,
             minor_version: 1,
@@ -86,17 +90,24 @@ impl HiveService for CrvHiveService {
             os: std::env::consts::OS.to_string(),
             architecture: std::env::consts::ARCH.to_string(),
         };
-
-        Ok(Response::new(rsp))
+        let out = Ok(Response::new(rsp));
+        log.finish_ok();
+        out
     }
 
     async fn login(&self, request: Request<LoginReq>) -> Result<Response<LoginRsp>, Status> {
+        let log = HiveLog::from_request("Login", &request);
+        let _g = log.enter();
+        log.info("rpc start");
         let req = request.into_inner();
+        log.debug(&format!("login attempt username={}", req.username));
 
         if req.username.trim().is_empty() || req.password.is_empty() {
-            return Err(Status::invalid_argument(
+            let e = Status::invalid_argument(
                 "username and password are required",
-            ));
+            );
+            log.finish_err(&e);
+            return Err(e);
         }
 
         // 抽象出的用户名/密码校验逻辑，当前实现总是返回 false，
@@ -106,7 +117,9 @@ impl HiveService for CrvHiveService {
             .map_err(Status::from)?;
 
         if !is_valid {
-            return Err(Status::unauthenticated("invalid username or password"));
+            let e = Status::unauthenticated("invalid username or password");
+            log.finish_err(&e);
+            return Err(e);
         }
 
         let (token, exp) = self
@@ -119,34 +132,45 @@ impl HiveService for CrvHiveService {
             expires_at: exp,
         };
 
-        Ok(Response::new(rsp))
+        let out = Ok(Response::new(rsp));
+        log.finish_ok();
+        out
     }
 
     async fn register(
         &self,
         request: Request<RegisterReq>,
     ) -> Result<Response<RegisterRsp>, Status> {
+        let log = HiveLog::from_request("Register", &request);
+        let _g = log.enter();
+        log.info("rpc start");
         let req = request.into_inner();
 
         let username = req.username.trim();
         let password = req.password;
 
         if username.is_empty() || password.is_empty() {
-            return Err(Status::invalid_argument(
+            let e = Status::invalid_argument(
                 "username and password are required",
-            ));
+            );
+            log.finish_err(&e);
+            return Err(e);
         }
 
         if username.len() < 3 {
-            return Err(Status::invalid_argument(
+            let e = Status::invalid_argument(
                 "username must be at least 3 characters",
-            ));
+            );
+            log.finish_err(&e);
+            return Err(e);
         }
 
         if password.len() < 6 {
-            return Err(Status::invalid_argument(
+            let e = Status::invalid_argument(
                 "password must be at least 6 characters",
-            ));
+            );
+            log.finish_err(&e);
+            return Err(e);
         }
 
         // 检查用户名是否已存在
@@ -159,9 +183,11 @@ impl HiveService for CrvHiveService {
             }
             Ok(None) => {}
             Err(e) => {
-                return Err(Status::internal(format!(
+                let s = Status::internal(format!(
                     "database error while checking user: {e}"
-                )));
+                ));
+                log.finish_err(&s);
+                return Err(s);
             }
         }
 
@@ -174,15 +200,19 @@ impl HiveService for CrvHiveService {
             .to_string();
 
         if let Err(e) = crate::database::dao::insert_user(username, &password_hash).await {
-            return Err(Status::internal(format!(
+            let s = Status::internal(format!(
                 "database error while inserting user: {e}"
-            )));
+            ));
+            log.finish_err(&s);
+            return Err(s);
         }
 
-        Ok(Response::new(RegisterRsp {
+        let out = Ok(Response::new(RegisterRsp {
             success: true,
             message: String::from("registered"),
-        }))
+        }));
+        log.finish_ok();
+        out
     }
 
 
@@ -193,47 +223,89 @@ impl HiveService for CrvHiveService {
         &self,
         request: Request<DownloadFileChunkReq>,
     ) -> Result<Response<Self::DownloadFileChunkStream>, Status> {
-        download::handle_download_file_chunk(request).await
+        let log = HiveLog::from_request("DownloadFileChunk", &request);
+        let _g = log.enter();
+        log.info("rpc start");
+        let out = download::handle_download_file_chunk(log.clone(), request).await;
+        match &out {
+            Ok(_) => log.info("rpc accepted (stream opened)"),
+            Err(e) => log.finish_err(e),
+        }
+        out
     }
 
     async fn launch_submit(
         &self,
         request: Request<LaunchSubmitReq>,
     ) -> Result<Response<LaunchSubmitRsp>, Status> {
-        submit::launch_submit::handle_launch_submit(request).await
+        let log = HiveLog::from_request("LaunchSubmit", &request);
+        let _g = log.enter();
+        log.info("rpc start");
+        let out = submit::launch_submit::handle_launch_submit(log.clone(), request).await;
+        match &out {
+            Ok(_) => log.finish_ok(),
+            Err(e) => log.finish_err(e),
+        }
+        out
     }
 
     async fn check_chunks(
         &self,
         request: Request<CheckChunksReq>,
     ) -> Result<Response<CheckChunksRsp>, Status> {
+        let log = HiveLog::from_request("CheckChunks", &request);
+        let _g = log.enter();
+        log.info("rpc start");
         let _req = request.into_inner();
         let rsp = CheckChunksRsp {
             missing_chunk_hashes: vec![],
         };
-        Ok(Response::new(rsp))
+        let out = Ok(Response::new(rsp));
+        log.finish_ok();
+        out
     }
 
     async fn upload_file_chunk(
         &self,
         _request: Request<tonic::Streaming<UploadFileChunkReq>>,
     ) -> Result<Response<Self::UploadFileChunkStream>, Status> {
-        submit::upload_file_chunk::upload_file_chunk(_request)
+        let log = HiveLog::from_request("UploadFileChunk", &_request);
+        let _g = log.enter();
+        log.info("rpc start (stream)");
+        let out = submit::upload_file_chunk::upload_file_chunk(log.clone(), _request);
+        match &out {
+            Ok(_) => log.info("rpc accepted (stream opened)"),
+            Err(e) => log.finish_err(e),
+        }
+        out
     }
 
     async fn submit(
         &self,
         _request: Request<SubmitReq>,
     ) -> Result<Response<SubmitRsp>, Status> {
-        submit::submit::submit(_request).await
+        let log = HiveLog::from_request("Submit", &_request);
+        let _g = log.enter();
+        log.info("rpc start");
+        let out = submit::submit::submit(log.clone(), _request).await;
+        match &out {
+            Ok(_) => log.finish_ok(),
+            Err(e) => log.finish_err(e),
+        }
+        out
     }
 
     async fn get_file_tree(
         &self,
         _request: Request<GetFileTreeReq>,
     ) -> Result<Response<GetFileTreeRsp>, Status> {
+        let log = HiveLog::from_request("GetFileTree", &_request);
+        let _g = log.enter();
+        log.info("rpc start");
         let rsp = GetFileTreeRsp::default();
-        Ok(Response::new(rsp))
+        let out = Ok(Response::new(rsp));
+        log.finish_ok();
+        out
     }
 }
 

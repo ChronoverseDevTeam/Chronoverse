@@ -1,6 +1,7 @@
 use crate::auth::require_user;
 use crate::common::depot_path::DepotPath;
 use crate::hive_server::submit::submit_service;
+use crate::logging::HiveLog;
 use crate::pb::{FileRevision as PbFileRevision, SubmitConflict as PbSubmitConflict, SubmitReq, SubmitRsp, UploadFileChunkRsp};
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
@@ -8,10 +9,13 @@ use tonic::{Request, Response, Status};
 pub type UploadFileChunkStream = ReceiverStream<Result<UploadFileChunkRsp, Status>>;
 
 pub async fn submit(
+    log: HiveLog,
     r: Request<SubmitReq>,
 ) -> Result<Response<SubmitRsp>, Status> {
     let user = require_user(&r)?;
     let submitting_by = user.username.clone();
+    let log = log.with_user(&submitting_by);
+    let _g = log.enter();
     let request = r.into_inner();
 
     let service = submit_service();
@@ -28,6 +32,13 @@ pub async fn submit(
         validations.insert(path, fc.binary_id.clone());
     }
 
+    log.info(&format!(
+        "submit received: ticket={}, files={}, description_len={}",
+        ticket_uuid,
+        request.file_chunks.len(),
+        request.description.len()
+    ));
+
     let result = service
         .submit(&ticket_uuid, request.description.clone(), validations)
         .await;
@@ -35,6 +46,11 @@ pub async fn submit(
     let rsp = match result {
         Ok(success) => {
             let changelist_id = success.changelist_id;
+            log.info(&format!(
+                "submit success: changelist_id={}, latest_revisions={}",
+                changelist_id,
+                success.latest_revisions.len()
+            ));
             SubmitRsp {
                 success: true,
                 changelist_id,
@@ -57,25 +73,32 @@ pub async fn submit(
                 message: format!("submitted by {}", submitting_by),
             }
         }
-        Err(failure) => SubmitRsp {
-            success: false,
-            changelist_id: 0,
-            committed_at: 0,
-            conflicts: failure
-                .conflicts
-                .into_iter()
-                .map(|c| PbSubmitConflict {
-                    path: c.path,
-                    expected_file_generation: c.expected_generation,
-                    expected_file_revision: c.expected_revision,
-                    current_file_generation: c.current_generation,
-                    current_file_revision: c.current_revision,
-                })
-                .collect(),
-            missing_chunks: failure.missing_chunks,
-            latest_revisions: vec![],
-            message: failure.message,
-        },
+        Err(failure) => {
+            log.warn(&format!(
+                "submit failed: conflicts={}, missing_chunks={}",
+                failure.conflicts.len(),
+                failure.missing_chunks.len()
+            ));
+            SubmitRsp {
+                success: false,
+                changelist_id: 0,
+                committed_at: 0,
+                conflicts: failure
+                    .conflicts
+                    .into_iter()
+                    .map(|c| PbSubmitConflict {
+                        path: c.path,
+                        expected_file_generation: c.expected_generation,
+                        expected_file_revision: c.expected_revision,
+                        current_file_generation: c.current_generation,
+                        current_file_revision: c.current_revision,
+                    })
+                    .collect(),
+                missing_chunks: failure.missing_chunks,
+                latest_revisions: vec![],
+                message: failure.message,
+            }
+        }
     };
     Ok(Response::new(rsp))
 }

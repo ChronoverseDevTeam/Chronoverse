@@ -2,10 +2,11 @@ use tonic::{Request, Response, Status};
 
 use crate::{
     hive_server::submit::{submit_service, cache_service, submit::UploadFileChunkStream},
+    logging::HiveLog,
     pb::{UploadFileChunkReq, UploadFileChunkRsp},
 };
 
-fn spawn_upload_file_chunk_handler<S>(mut req: S) -> UploadFileChunkStream
+fn spawn_upload_file_chunk_handler<S>(log: HiveLog, mut req: S) -> UploadFileChunkStream
 where
     S: tokio_stream::Stream<Item = Result<UploadFileChunkReq, Status>> + Send + Unpin + 'static,
 {
@@ -17,6 +18,8 @@ where
     let (tx, rx) = mpsc::channel::<Result<UploadFileChunkRsp, Status>>(32);
 
     tokio::spawn(async move {
+        let _g = log.enter();
+        log.info("upload_file_chunk stream started");
         // 一个 stream 里可能包含多个不同的 chunk（由 chunks_amount 指示总数）
         let mut expected_chunks_amount: Option<usize> = None;
         // 已经对某个 chunk_hash 发送过"最终响应"的集合，保证每个 chunk 只回应一次
@@ -26,6 +29,7 @@ where
             let item = match item {
                 Ok(item) => item,
                 Err(e) => {
+                    log.warn(&format!("stream recv error: {e}"));
                     let _ = tx
                         .send(Err(Status::internal(format!("stream error: {}", e))))
                         .await;
@@ -37,6 +41,7 @@ where
             let ticket_uuid = match uuid::Uuid::parse_str(&item.ticket) {
                 Ok(uuid) => uuid,
                 Err(e) => {
+                    log.warn(&format!("invalid ticket format: {e}"));
                     let _ = tx
                         .send(Err(Status::invalid_argument(format!(
                             "invalid ticket format: {}",
@@ -50,6 +55,10 @@ where
             // 验证并设置预期的 chunk 数量（只能设置一次）
             if let Some(expected_amount) = expected_chunks_amount {
                 if item.chunks_amount > 0 && expected_amount != item.chunks_amount as usize {
+                    log.warn(&format!(
+                        "chunks_amount mismatch: expected={}, got={}, chunk_hash={}",
+                        expected_amount, item.chunks_amount, item.chunk_hash
+                    ));
                     let _ = tx
                         .send(Err(Status::invalid_argument(format!(
                             "chunks_amount mismatch: expected {}, got {}",
@@ -64,6 +73,7 @@ where
 
             // 检查是否已经对该 chunk 发送过最终响应
             if responded_chunks.contains(&item.chunk_hash) {
+                log.warn(&format!("duplicate chunk_hash: {}", item.chunk_hash));
                 let _ = tx
                     .send(Err(Status::invalid_argument(format!(
                         "duplicate chunk_hash: {}",
@@ -79,6 +89,7 @@ where
                 let cache = cache_service();
                 match cache.has_chunk(&item.chunk_hash) {
                     Ok(true) => {
+                        log.info(&format!("chunk already exists: {}", item.chunk_hash));
                         responded_chunks.insert(item.chunk_hash.clone());
 
                         let rsp = UploadFileChunkRsp {
@@ -112,6 +123,7 @@ where
                                 )
                             }
                         };
+                        log.error(&format!("{error_msg}; chunk_hash={}", item.chunk_hash));
                         let _ = tx.send(Err(Status::internal(error_msg))).await;
                         break;
                     }
@@ -131,6 +143,7 @@ where
                     use crate::hive_server::submit::service::UploadFileChunkResult;
                     match result {
                         UploadFileChunkResult::FileUploadFinished => {
+                            log.info(&format!("chunk upload finished: {}", item.chunk_hash));
                             responded_chunks.insert(item.chunk_hash.clone());
 
                             let rsp = UploadFileChunkRsp {
@@ -146,11 +159,19 @@ where
                             }
                         }
                         UploadFileChunkResult::FileAppended => {
+                            log.debug(&format!(
+                                "chunk part appended: chunk_hash={}, offset={}",
+                                item.chunk_hash, item.offset
+                            ));
                             // 未完成不回应
                         }
                     }
                 }
                 Err(e) => {
+                    log.warn(&format!(
+                        "upload_file_chunk error: chunk_hash={}, offset={}, msg={}",
+                        item.chunk_hash, item.offset, e.message
+                    ));
                     let rsp = UploadFileChunkRsp {
                         ticket: item.ticket.clone(),
                         success: false,
@@ -164,16 +185,19 @@ where
                 }
             }
         }
+
+        log.finish_ok();
     });
 
     ReceiverStream::new(rx)
 }
 
 pub fn upload_file_chunk(
+    log: HiveLog,
     r: Request<tonic::Streaming<UploadFileChunkReq>>,
 ) -> Result<Response<UploadFileChunkStream>, Status> {
     let req = r.into_inner();
-    Ok(Response::new(spawn_upload_file_chunk_handler(req)))
+    Ok(Response::new(spawn_upload_file_chunk_handler(log, req)))
 }
 
 #[cfg(test)]
@@ -221,6 +245,7 @@ mod tests {
     async fn test_upload_single_chunk_success() {
         let _g = test_mutex().lock().await;
         init_test_globals();
+        let log = crate::logging::HiveLog::new("UploadFileChunk(test_upload_single_chunk_success)");
         let ticket = uuid::Uuid::new_v4();
         ensure_ticket(ticket);
 
@@ -240,7 +265,7 @@ mod tests {
         };
 
         let input = tokio_stream::iter(vec![Ok(req)]);
-        let mut stream = spawn_upload_file_chunk_handler(input);
+        let mut stream = spawn_upload_file_chunk_handler(log, input);
         let mut responses = Vec::new();
         
         while let Some(result) = stream.next().await {
@@ -261,6 +286,7 @@ mod tests {
     async fn test_upload_multiple_chunks_success() {
         let _g = test_mutex().lock().await;
         init_test_globals();
+        let log = crate::logging::HiveLog::new("UploadFileChunk(test_upload_multiple_chunks_success)");
         let ticket = uuid::Uuid::new_v4();
         ensure_ticket(ticket);
 
@@ -293,7 +319,7 @@ mod tests {
         ];
 
         let input = tokio_stream::iter(reqs.into_iter().map(Ok));
-        let mut stream = spawn_upload_file_chunk_handler(input);
+        let mut stream = spawn_upload_file_chunk_handler(log, input);
         let mut responses = Vec::new();
         
         while let Some(result) = stream.next().await {
@@ -311,6 +337,7 @@ mod tests {
     async fn test_invalid_ticket_format() {
         let _g = test_mutex().lock().await;
         init_test_globals();
+        let log = crate::logging::HiveLog::new("UploadFileChunk(test_invalid_ticket_format)");
 
         let req = UploadFileChunkReq {
             ticket: "invalid-ticket".to_string(),
@@ -324,7 +351,7 @@ mod tests {
         };
 
         let input = tokio_stream::iter(vec![Ok(req)]);
-        let mut stream = spawn_upload_file_chunk_handler(input);
+        let mut stream = spawn_upload_file_chunk_handler(log, input);
         let result = stream.next().await;
         
         assert!(result.is_some());
@@ -340,6 +367,7 @@ mod tests {
     async fn test_chunks_amount_mismatch() {
         let _g = test_mutex().lock().await;
         init_test_globals();
+        let log = crate::logging::HiveLog::new("UploadFileChunk(test_chunks_amount_mismatch)");
         let ticket = uuid::Uuid::new_v4();
         ensure_ticket(ticket);
 
@@ -379,7 +407,7 @@ mod tests {
         ];
 
         let input = tokio_stream::iter(reqs.into_iter().map(Ok));
-        let mut stream = spawn_upload_file_chunk_handler(input);
+        let mut stream = spawn_upload_file_chunk_handler(log, input);
         let mut responses: Vec<UploadFileChunkRsp> = Vec::new();
         let mut errors: Vec<tonic::Status> = Vec::new();
         
@@ -406,6 +434,7 @@ mod tests {
     async fn test_duplicate_chunk_hash() {
         let _g = test_mutex().lock().await;
         init_test_globals();
+        let log = crate::logging::HiveLog::new("UploadFileChunk(test_duplicate_chunk_hash)");
         let ticket = uuid::Uuid::new_v4();
         ensure_ticket(ticket);
 
@@ -446,7 +475,7 @@ mod tests {
         ];
 
         let input = tokio_stream::iter(reqs.into_iter().map(Ok));
-        let mut stream = spawn_upload_file_chunk_handler(input);
+        let mut stream = spawn_upload_file_chunk_handler(log, input);
 
         let first = stream.next().await.expect("first item exists");
         assert!(first.is_ok(), "first should be ok");
@@ -465,6 +494,7 @@ mod tests {
     async fn test_chunk_already_exists() {
         let _g = test_mutex().lock().await;
         init_test_globals();
+        let log = crate::logging::HiveLog::new("UploadFileChunk(test_chunk_already_exists)");
         let ticket = uuid::Uuid::new_v4();
         // already_exists 分支不依赖 context，但保持一致性
         ensure_ticket(ticket);
@@ -495,7 +525,7 @@ mod tests {
         };
 
         let input = tokio_stream::iter(vec![Ok(req)]);
-        let mut stream = spawn_upload_file_chunk_handler(input);
+        let mut stream = spawn_upload_file_chunk_handler(log, input);
         let result = stream.next().await;
         
         assert!(result.is_some());
