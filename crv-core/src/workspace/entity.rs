@@ -320,7 +320,7 @@ impl WorkspaceConfig {
         match mapping {
             IncludeMapping::File(file_mapping) => {
                 // 文件映射：直接转换为带文件名的路径
-                let server_path = file_mapping.depot_file.to_string().trim_start_matches("/").to_string();
+                let server_path = file_mapping.depot_file.to_custom_string().trim_start_matches("/").to_string();
                 let local_path = file_mapping.local_file.to_unix_path_string().trim_start_matches("/").to_string();
                 
                 let filename_filter = std::path::Path::new(&file_mapping.local_file.file)
