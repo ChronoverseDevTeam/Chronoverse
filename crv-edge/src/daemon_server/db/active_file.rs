@@ -11,6 +11,16 @@ pub enum Action {
     Edit,
 }
 
+impl Action {
+    pub fn to_custom_string(&self) -> String {
+        match self {
+            Action::Add => "add".to_string(),
+            Action::Edit => "edit".to_string(),
+            Action::Delete => "delete".to_string(),
+        }
+    }
+}
+
 impl DbManager {
     pub fn set_active_file_action(
         &self,
@@ -22,7 +32,7 @@ impl DbManager {
             .cf_handle(Self::CF_ACTIVE_FILE)
             .expect(&format!("cf {} must exist", Self::CF_ACTIVE_FILE));
         let bytes = bincode::encode_to_vec(action, bincode::config::standard())?;
-        self.inner.put_cf(cf, path.to_string(), bytes)?;
+        self.inner.put_cf(cf, path.to_custom_string(), bytes)?;
         Ok(())
     }
 
@@ -31,7 +41,7 @@ impl DbManager {
             .inner
             .cf_handle(Self::CF_ACTIVE_FILE)
             .expect(&format!("cf {} must exist", Self::CF_ACTIVE_FILE));
-        match self.inner.get_cf(cf, path.to_string())? {
+        match self.inner.get_cf(cf, path.to_custom_string())? {
             Some(bytes) => {
                 let action: Action =
                     bincode::decode_from_slice(&bytes, bincode::config::standard())?.0;
@@ -49,7 +59,7 @@ impl DbManager {
             .inner
             .cf_handle(Self::CF_ACTIVE_FILE)
             .expect(&format!("cf {} must exist", Self::CF_ACTIVE_FILE));
-        let dir_string = dir.to_string();
+        let dir_string = dir.to_custom_string();
         let dir_bytes = dir_string.as_bytes();
         let iter = self.inner.iterator_cf(
             cf,

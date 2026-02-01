@@ -1,9 +1,8 @@
-use crate::daemon_server::db::active_file::Action;
 use crate::daemon_server::error::{AppError, AppResult};
-use crate::daemon_server::handlers::utils::normalize_paths;
+use crate::daemon_server::handlers::utils::{expand_to_mapped_files_in_fs, normalize_paths_strict};
 use crate::daemon_server::state::AppState;
 use crate::pb::{ActiveFileInfo, ListActiveFilesReq, ListActiveFilesRsp};
-use crv_core::path::basic::{LocalPath, WorkspaceDir};
+use crv_core::path::engine::PathEngine;
 use tonic::{Request, Response, Status};
 
 pub async fn handle(
@@ -21,12 +20,10 @@ pub async fn handle(
             request_body.workspace_name
         ))))?;
 
+    let path_engine = PathEngine::new(workspace_meta.config.clone(), &request_body.workspace_name);
+
     // 2. 规范化路径，获取目录路径
-    let local_paths = normalize_paths(
-        &[request_body.path],
-        &request_body.workspace_name,
-        &workspace_meta.config,
-    )?;
+    let local_paths = normalize_paths_strict(&[request_body.path], &path_engine)?;
 
     if local_paths.is_empty() {
         return Ok(Response::new(ListActiveFilesRsp {
@@ -34,39 +31,20 @@ pub async fn handle(
         }));
     }
 
-    // 3. 解析为 LocalPath 并获取目录
-    let local_path_str = &local_paths[0];
-    let workspace_dir = if local_path_str.ends_with('/') || local_path_str.ends_with('\\') {
-        // 如果是目录路径
-        let local_dir = crv_core::path::basic::LocalDir::parse(local_path_str)
-            .map_err(|e| AppError::Raw(Status::invalid_argument(format!("Invalid path: {}", e))))?;
-        local_dir.into_workspace_dir(&request_body.workspace_name, &workspace_meta.config.root_dir)
-    } else {
-        // 如果是文件路径，取其父目录
-        let local_path = LocalPath::parse(local_path_str)
-            .map_err(|e| AppError::Raw(Status::invalid_argument(format!("Invalid path: {}", e))))?;
-        WorkspaceDir {
-            workspace_name: request_body.workspace_name.clone(),
-            dirs: local_path.into_workspace_path(&request_body.workspace_name, &workspace_meta.config.root_dir).dirs,
+    // 3. 展开为文件列表
+    let local_files = expand_to_mapped_files_in_fs(&local_paths, &path_engine);
+
+    // 4. 获取所有 active files
+    let mut active_files = vec![];
+    for file in local_files {
+        let action = state.db.get_active_file_action(&file.workspace_path)?;
+        if let Some(action) = action {
+            active_files.push(ActiveFileInfo {
+                path: file.workspace_path.to_custom_string(),
+                action: action.to_custom_string(),
+            })
         }
-    };
-
-    // 4. 获取该目录下的所有 active files
-    let active_files_data = state.db.get_active_file_under_dir(&workspace_dir)?;
-
-    // 5. 转换为响应格式
-    let active_files = active_files_data
-        .into_iter()
-        .map(|(workspace_path, action)| ActiveFileInfo {
-            path: workspace_path.to_string(),
-            action: match action {
-                Action::Add => "add".to_string(),
-                Action::Edit => "edit".to_string(),
-                Action::Delete => "delete".to_string(),
-            },
-        })
-        .collect();
+    }
 
     Ok(Response::new(ListActiveFilesRsp { active_files }))
 }
-

@@ -1,24 +1,32 @@
 use crate::daemon_server::config::RuntimeConfig;
-use crate::daemon_server::db::file::FileMeta;
+use crate::daemon_server::db::active_file::Action;
+use crate::daemon_server::db::file::{FileLocation, FileRevision};
 use crate::daemon_server::error::{AppError, AppResult};
-use crate::daemon_server::handlers::utils::{expand_paths_to_files, normalize_paths};
+use crate::daemon_server::handlers::utils::{
+    expand_to_mapped_files_in_edge_meta, normalize_paths_strict,
+};
 use crate::daemon_server::job::{
-    JobEvent, JobRetentionPolicy, JobStatus, MessageStoragePolicy, WorkerProtocol,
+    Job, JobEvent, JobRetentionPolicy, JobStatus, MessageStoragePolicy, WorkerProtocol,
 };
 use crate::daemon_server::state::AppState;
 use crate::hive_pb::{
-    file_tree_node::Node, hive_service_client::HiveServiceClient, GetFileTreeReq,
+    DownloadFileChunkReq, GetFileTreeReq, hive_service_client::HiveServiceClient,
 };
+use crate::pb::sync_progress::Payload::FileUpdate;
 use crate::pb::{SyncFileMetadata, SyncFileUpdate, SyncMetadata, SyncProgress, SyncReq};
-use crv_core::path::basic::{LocalPath, WorkspacePath};
+use crv_core::path::basic::DepotPath;
 use crv_core::path::engine::PathEngine;
 use prost::Message;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::ops::Sub;
 use std::pin::Pin;
 use std::sync::{Arc, Weak};
 use std::task::{Context, Poll};
+use tokio::fs;
+use tokio::io::AsyncWriteExt;
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::{Stream, StreamExt};
+use tonic::transport::Channel;
 use tonic::{Request, Response, Status};
 
 pub type SyncProgressStream =
@@ -26,7 +34,7 @@ pub type SyncProgressStream =
 
 struct JobCancelOnDropStream {
     stream: SyncProgressStream,
-    job: Weak<crate::daemon_server::job::Job>,
+    job: Weak<Job>,
 }
 
 impl Stream for JobCancelOnDropStream {
@@ -45,47 +53,14 @@ impl Drop for JobCancelOnDropStream {
     }
 }
 
-fn traverse_tree(
-    nodes: &[crate::hive_pb::FileTreeNode],
-    current_path: &str,
-    map: &mut HashMap<String, (String, i64)>,
-) {
-    for node in nodes {
-        if let Some(ref n) = node.node {
-            match n {
-                Node::File(file) => {
-                    let full_path = if current_path.is_empty() {
-                        format!("//{}", file.name)
-                    } else {
-                        format!("{}/{}", current_path, file.name)
-                    };
-                    // todo 从 File revisions 中得到 latest revision 的 revision id 和 file size
-                    let latest_revision = file
-                        .revisions
-                        .iter()
-                        .max_by_key(|x| x.1.changelist_id)
-                        .expect(&format!("Cannot get revision history of file {}", full_path));
-
-                    map.insert(
-                        full_path,
-                        (
-                            latest_revision.1.revision_id.clone(),
-                            latest_revision.1.size,
-                        ),
-                    );
-                }
-                Node::Directory(dir) => {
-                    let full_path = if current_path.is_empty() {
-                        format!("//{}", dir.name)
-                    } else {
-                        format!("{}/{}", current_path, dir.name)
-                    };
-                    traverse_tree(&dir.children, &full_path, map);
-                }
-            }
-        }
-    }
+struct FileToSync {
+    location: FileLocation,
+    action: Action,
+    latest_revision: Option<FileRevision>,
+    chunk_hashes: Vec<String>,
 }
+
+const FRAME_SIZE: usize = 64 * 1024; // 64KB，单个报文中的数据大小
 
 pub async fn handle(
     state: AppState,
@@ -109,36 +84,16 @@ pub async fn handle(
             request_body.workspace_name
         ))))?;
 
+    let path_engine = PathEngine::new(workspace_meta.config.clone(), &request_body.workspace_name);
+
     // 2. 规范化路径
-    let local_paths = normalize_paths(
-        &request_body.paths,
-        &request_body.workspace_name,
-        &workspace_meta.config,
-    )?;
+    let local_paths = normalize_paths_strict(&request_body.paths, &path_engine)?;
 
     // 3. 展开为文件列表
-    let local_files = expand_paths_to_files(&local_paths);
+    let edge_files =
+        expand_to_mapped_files_in_edge_meta(&local_paths, &path_engine, state.clone())?;
 
-    // 4. 转换为 depot paths
-    let path_engine = PathEngine::new(
-        workspace_meta.config.clone(),
-        &request_body.workspace_name,
-    );
-    let mut depot_paths = Vec::new();
-    let mut local_to_workspace: HashMap<String, WorkspacePath> = HashMap::new();
-
-    for file in &local_files {
-        let local_path = LocalPath::parse(file).unwrap();
-        let workspace_path = path_engine.local_path_to_workspace_path(&local_path);
-        let depot_path = path_engine.mapping_local_path(&local_path);
-
-        if let (Some(ws_path), Some(dp_path)) = (workspace_path, depot_path) {
-            depot_paths.push(dp_path);
-            local_to_workspace.insert(file.clone(), ws_path);
-        }
-    }
-
-    // 5. 获取 HiveClient 并调用 get_file_tree
+    // 4. 获取 hive files
     // 构建 depot wildcard (暂时获取所有文件，后续可以优化为只获取需要的)
     let depot_wildcard = "//...".to_string();
 
@@ -150,10 +105,102 @@ pub async fn handle(
         .await?
         .into_inner();
 
-    // 6. 构建 depot_path -> file info(revision id & file size) 的映射
-    let mut depot_file_map: HashMap<String, (String, i64)> = HashMap::new();
+    // 5. 构建 FileToSync 列表，此时无法保证文件是未 checkout 的状态
+    let mut file_to_sync = vec![];
+    let edge_files_map = edge_files
+        .iter()
+        .map(|x| (x.depot_path.to_custom_string(), x))
+        .collect::<HashMap<_, _>>();
 
-    traverse_tree(&file_tree_rsp.file_tree_root, "", &mut depot_file_map);
+    let hive_files_map = file_tree_rsp
+        .file_revisions
+        .iter()
+        .filter_map(|x| {
+            if x.generation == 0 && x.revision == 0 {
+                None
+            } else {
+                Some((x.path.clone(), x))
+            }
+        })
+        .collect::<HashMap<_, _>>();
+
+    let edge_files_set = edge_files_map.keys().cloned().collect::<HashSet<_>>();
+    let hive_files_set = hive_files_map.keys().cloned().collect::<HashSet<_>>();
+
+    let files_to_add = hive_files_set.sub(&edge_files_set);
+    let files_to_delete = edge_files_set.sub(&hive_files_set);
+    let mut files_to_edit = HashSet::new();
+    for (k, v) in edge_files_map.iter() {
+        if files_to_add.contains(k) || files_to_delete.contains(k) {
+            continue;
+        }
+        let file_meta = state.db.get_file_meta(&v.workspace_path)?;
+        if file_meta.is_none() {
+            continue;
+        }
+        let edge_file_meta = file_meta.unwrap();
+        let hive_file_meta = hive_files_map.get(k).unwrap();
+        if edge_file_meta.current_revision.generation == hive_file_meta.generation
+            && edge_file_meta.current_revision.revision == hive_file_meta.revision
+        {
+            continue;
+        }
+        files_to_edit.insert(k.clone());
+    }
+
+    // 从 hive file map 中获取元数据
+    for file in files_to_add.iter().chain(files_to_edit.iter()) {
+        let file_meta = hive_files_map.get(file).unwrap();
+        let depot_path = DepotPath::parse(&file_meta.path).unwrap();
+        let local_path = path_engine.mapping_depot_path(&depot_path);
+        if local_path.is_none() {
+            continue;
+        }
+        let local_path = local_path.unwrap();
+        let workspace_path = path_engine
+            .local_path_to_workspace_path(&local_path)
+            .unwrap();
+
+        let location = FileLocation {
+            local_path,
+            workspace_path,
+            depot_path,
+        };
+
+        if files_to_add.contains(file) {
+            file_to_sync.push(FileToSync {
+                location,
+                action: Action::Add,
+                latest_revision: Some(FileRevision {
+                    generation: file_meta.generation,
+                    revision: file_meta.revision,
+                }),
+                chunk_hashes: file_meta.binary_id.clone(),
+            });
+        } else {
+            file_to_sync.push(FileToSync {
+                location,
+                action: Action::Edit,
+                latest_revision: Some(FileRevision {
+                    generation: file_meta.generation,
+                    revision: file_meta.revision,
+                }),
+                chunk_hashes: file_meta.binary_id.clone(),
+            });
+        }
+    }
+
+    // 从 edge file map 中获取元数据
+    for file in files_to_delete {
+        let location = edge_files_map.get(&file).unwrap();
+
+        file_to_sync.push(FileToSync {
+            location: (*location).clone(),
+            action: Action::Delete,
+            latest_revision: None,
+            chunk_hashes: vec![],
+        });
+    }
 
     // 7. 创建 Job
     let job = state.job_manager.create_job(
@@ -162,102 +209,28 @@ pub async fn handle(
         WorkerProtocol::And,
         JobRetentionPolicy::Immediate,
     );
-
     let rx = job.tx.subscribe();
+
     let state_clone = state.clone();
-    let local_to_workspace_clone = local_to_workspace.clone();
-    let workspace_config = workspace_meta.config.clone();
-    let workspace_name = request_body.workspace_name.clone();
 
     // 8. 添加 Worker
     let job_ref = job.clone();
-    job.add_worker(async move {
-        // 发送元数据
-        let files = depot_paths
-            .iter()
-            .filter_map(|dp| depot_file_map.get(&dp.to_string()).map(|x| SyncFileMetadata{
-                path: dp.to_string(),
-                size: x.1,
-            }))
-            .collect::<Vec<_>>();
-
-        job_ref.report_payload(SyncProgress {
-            payload: Some(crate::pb::sync_progress::Payload::Metadata(SyncMetadata {
-                files,
-            })),
-        });
-
-        let mut bytes_completed = 0i64;
-
-        // 处理每个文件
-        for depot_path in depot_paths {
-            let depot_path_str = depot_path.to_string();
-
-            if let Some((revision_id, size)) = depot_file_map.get(&depot_path_str) {
-                // 找到对应的 workspace_path
-                if let Some(workspace_path) = local_to_workspace_clone
-                    .iter()
-                    .find(|(_, ws_path)| {
-                        // 通过比较 depot_path 来匹配
-                        let engine = PathEngine::new(workspace_config.clone(), &workspace_name);
-                        if let Some(ws_local) = engine.workspace_path_to_local_path(ws_path) {
-                            if let Some(ws_depot) = engine.mapping_local_path(&ws_local) {
-                                return ws_depot.to_string() == depot_path_str;
-                            }
-                        }
-                        false
-                    })
-                    .map(|(_, ws_path)| ws_path)
-                {
-                    // 保存到数据库
-                    let file_meta = FileMeta {
-                        latest_revision: revision_id.clone(),
-                    };
-
-                    if let Err(e) = state_clone
-                        .db
-                        .set_file_meta(workspace_path.clone(), file_meta)
-                    {
-                        return Err(format!("Failed to save file meta: {}", e));
-                    }
-
-                    bytes_completed += size;
-
-                    // 发送进度更新
-                    job_ref.report_payload(SyncProgress {
-                        payload: Some(crate::pb::sync_progress::Payload::FileUpdate(
-                            SyncFileUpdate {
-                                path: depot_path_str.clone(),
-                                bytes_completed_so_far: bytes_completed,
-                                info: "".to_string(),
-                                warning: "".to_string(),
-                            },
-                        )),
-                    });
-                }
-            }
-        }
-        Ok(())
-    });
+    job.add_worker(async move { sync_file(state_clone, file_to_sync, channel, job_ref).await });
 
     job.clone().start();
 
     // 9. 构建输出流
-    let output_stream = BroadcastStream::new(rx).filter_map(move |res| {
-        match res {
-            Ok(event) => match event {
-                JobEvent::Payload(any) => {
-                    SyncProgress::decode(&any.value[..]).ok().map(Ok)
-                }
-                JobEvent::Error(e) => Some(Err(Status::internal(e))),
-                JobEvent::StatusChange(JobStatus::Failed(e)) => Some(Err(Status::internal(e))),
-                JobEvent::StatusChange(JobStatus::Cancelled) => {
-                    Some(Err(Status::cancelled("Sync cancelled")))
-                }
-                _ => None,
-            },
-            Err(_) => Some(Err(Status::internal("Stream lagged"))),
-        }
+    let output_stream = BroadcastStream::new(rx).filter_map(move |res| match res {
+        Ok(event) => match event {
+            JobEvent::Payload(any) => SyncProgress::decode(&any.value[..]).ok().map(Ok),
+            JobEvent::Error(e) => Some(Err(Status::internal(e))),
+            JobEvent::StatusChange(JobStatus::Failed(e)) => Some(Err(Status::internal(e))),
+            JobEvent::StatusChange(JobStatus::Cancelled) => {
+                Some(Err(Status::cancelled("Sync cancelled")))
+            }
+            _ => None,
+        },
+        Err(_) => Some(Err(Status::internal("Stream lagged"))),
     });
 
     let wrapped_stream = JobCancelOnDropStream {
@@ -265,7 +238,88 @@ pub async fn handle(
         job: Arc::downgrade(&job),
     };
 
-    Ok(Response::new(
-        Box::pin(wrapped_stream) as SyncProgressStream
-    ))
+    Ok(Response::new(Box::pin(wrapped_stream) as SyncProgressStream))
+}
+
+async fn sync_file(
+    app_state: AppState,
+    files_to_sync: Vec<FileToSync>,
+    channel: Channel,
+    job: Arc<Job>,
+) -> Result<(), String> {
+    let mut hive_client = HiveServiceClient::new(channel.clone());
+    for file in files_to_sync {
+        // 对于本地 checkout 的文件，跳过该文件的拉新。
+        if app_state
+            .db
+            .get_active_file_action(&file.location.workspace_path)
+            .map_err(|x| format!("{x}"))?
+            .is_some()
+        {
+            println!(
+                "Already checkout file {}, skip sync.",
+                file.location.workspace_path.to_custom_string()
+            );
+            continue;
+        }
+
+        match file.action {
+            Action::Add | Action::Edit => {
+                let mut file_fs = fs::File::create(file.location.local_path.to_local_path_string())
+                    .await
+                    .map_err(|x| format!("{x}"))?;
+
+                let mut bytes_completed_so_far = 0;
+
+                for chunk_hash in file.chunk_hashes {
+                    let download_file_chunk_req = DownloadFileChunkReq {
+                        chunk_hashes: vec![chunk_hash],
+                        packet_size: FRAME_SIZE as i64,
+                    };
+                    let mut download_file_chunk_rsp_stream = hive_client
+                        .download_file_chunk(download_file_chunk_req)
+                        .await
+                        .map_err(|x| format!("{x}"))?
+                        .into_inner();
+
+                    while let Some(rsp) = download_file_chunk_rsp_stream
+                        .message()
+                        .await
+                        .map_err(|x| format!("{x}"))?
+                    {
+                        assert_eq!(rsp.compression, "none");
+                        file_fs.write_all(&rsp.content).await.unwrap();
+                        bytes_completed_so_far += rsp.content.len();
+                        job.report_payload(SyncProgress {
+                            payload: Some(FileUpdate(SyncFileUpdate {
+                                path: file.location.workspace_path.to_custom_string(),
+                                bytes_completed_so_far: bytes_completed_so_far as i64,
+                                info: "".to_string(),
+                                warning: "".to_string(),
+                            })),
+                        })
+                    }
+                }
+            }
+            Action::Delete => {
+                app_state
+                    .db
+                    .delete_file(&file.location.workspace_path)
+                    .map_err(|x| format!("{x}"))?;
+                fs::remove_file(file.location.local_path.to_local_path_string())
+                    .await
+                    .map_err(|x| format!("{x}"))?;
+                job.report_payload(SyncProgress {
+                    payload: Some(FileUpdate(SyncFileUpdate {
+                        path: file.location.workspace_path.to_custom_string(),
+                        bytes_completed_so_far: 0,
+                        info: "Delete successfully.".to_string(),
+                        warning: "".to_string(),
+                    })),
+                })
+            }
+        }
+    }
+
+    Ok(())
 }

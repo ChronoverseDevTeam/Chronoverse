@@ -1,10 +1,24 @@
 use crate::daemon_server::db::*;
 use bincode::{Decode, Encode};
-use crv_core::path::basic::{WorkspaceDir, WorkspacePath};
+use crv_core::path::basic::{DepotPath, LocalPath, WorkspaceDir, WorkspacePath};
+
+#[derive(Encode, Decode)]
+pub struct FileRevision {
+    pub generation: i64,
+    pub revision: i64,
+}
+
+#[derive(Encode, Decode, Clone)]
+pub struct FileLocation {
+    pub local_path: LocalPath,
+    pub workspace_path: WorkspacePath,
+    pub depot_path: DepotPath,
+}
 
 #[derive(Encode, Decode)]
 pub struct FileMeta {
-    pub latest_revision: String,
+    pub location: FileLocation,
+    pub current_revision: FileRevision,
 }
 
 impl DbManager {
@@ -14,7 +28,7 @@ impl DbManager {
             .cf_handle(Self::CF_FILE)
             .expect(&format!("cf {} must exist", Self::CF_FILE));
         let bytes = bincode::encode_to_vec(meta, bincode::config::standard())?;
-        self.inner.put_cf(cf, path.to_string(), bytes)?;
+        self.inner.put_cf(cf, path.to_custom_string(), bytes)?;
         Ok(())
     }
 
@@ -23,7 +37,7 @@ impl DbManager {
             .inner
             .cf_handle(Self::CF_FILE)
             .expect(&format!("cf {} must exist", Self::CF_FILE));
-        self.inner.delete_cf(cf, path.to_string())?;
+        self.inner.delete_cf(cf, path.to_custom_string())?;
         Ok(())
     }
 
@@ -32,7 +46,7 @@ impl DbManager {
             .inner
             .cf_handle(Self::CF_FILE)
             .expect(&format!("cf {} must exist", Self::CF_FILE));
-        match self.inner.get_cf(cf, path.to_string())? {
+        match self.inner.get_cf(cf, path.to_custom_string())? {
             Some(bytes) => {
                 let meta: FileMeta =
                     bincode::decode_from_slice(&bytes, bincode::config::standard())?.0;
@@ -50,7 +64,7 @@ impl DbManager {
             .inner
             .cf_handle(Self::CF_FILE)
             .expect(&format!("cf {} must exist", Self::CF_FILE));
-        let dir_string = dir.to_string();
+        let dir_string = dir.to_custom_string();
         let dir_bytes = dir_string.as_bytes();
         let iter = self.inner.iterator_cf(
             cf,
@@ -79,21 +93,20 @@ impl DbManager {
         return Ok(result);
     }
 
-    pub fn submit_file(&self, path: WorkspacePath, latest_revision: String) -> Result<(), DbError> {
+    pub fn submit_file(&self, path: WorkspacePath, file_meta: FileMeta) -> Result<(), DbError> {
         // 将文件从 active file 中移除
         let cf = self
             .inner
             .cf_handle(Self::CF_ACTIVE_FILE)
             .expect(&format!("cf {} must exist", Self::CF_ACTIVE_FILE));
-        self.inner.delete_cf(cf, path.to_string())?;
+        self.inner.delete_cf(cf, path.to_custom_string())?;
         // 写入最新 revision 信息
         let cf = self
             .inner
             .cf_handle(Self::CF_FILE)
             .expect(&format!("cf {} must exist", Self::CF_FILE));
-        let meta = FileMeta { latest_revision };
-        let bytes = bincode::encode_to_vec(meta, bincode::config::standard())?;
-        self.inner.put_cf(cf, path.to_string(), bytes)?;
+        let bytes = bincode::encode_to_vec(file_meta, bincode::config::standard())?;
+        self.inner.put_cf(cf, path.to_custom_string(), bytes)?;
         Ok(())
     }
 }

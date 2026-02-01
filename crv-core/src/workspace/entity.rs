@@ -307,8 +307,8 @@ impl WorkspaceConfig {
     ) -> String {
         format!(
             "{} and {} will both be mapped to the local path {}",
-            depot_path_1.to_string(),
-            depot_path_2.to_string(),
+            depot_path_1.to_custom_string(),
+            depot_path_2.to_custom_string(),
             local_path.to_unix_path_string()
         )
     }

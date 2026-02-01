@@ -31,7 +31,7 @@ impl PathCache {
         }
     }
 
-    pub fn get_or_compile(&self, pattern: &str) -> PathResult<Arc<regex::Regex>> {
+    pub fn get_or_compile(&self, pattern: &str) -> PathResult<Arc<Regex>> {
         let mut cache = self.regex_cache.lock().unwrap();
 
         // 尝试从缓存获取
@@ -42,7 +42,7 @@ impl PathCache {
         // 缓存未命中，编译新的 regex
         drop(cache); // 释放锁，避免长时间持有
 
-        let regex = Arc::new(regex::Regex::new(pattern)?);
+        let regex = Arc::new(Regex::new(pattern)?);
 
         // 重新获取锁并插入
         let mut cache = self.regex_cache.lock().unwrap();
@@ -81,14 +81,14 @@ impl PathEngine {
                     IncludeMapping::File(file_mapping) => {
                         if &file_mapping.local_file == local_path {
                             let mapping_back = self.mapping_depot_path(&file_mapping.depot_file);
-                            if mapping_back.is_some() && &mapping_back.unwrap() == local_path {
+                            return if mapping_back.is_some() && &mapping_back.unwrap() == local_path {
                                 // 如果还能映射回来，说明没有被排除掉
-                                return Some(file_mapping.depot_file.clone());
+                                Some(file_mapping.depot_file.clone())
                             } else {
                                 // 否则，说明被排除了。
                                 // 又因不考虑排除的时候，depot path 与 local path 不存在多对一关系，
                                 // 所以不用再向上遍历了
-                                return None;
+                                None
                             }
                         }
                     }
@@ -115,11 +115,11 @@ impl PathEngine {
                             file: local_path.file.clone(),
                         };
                         let mapping_back = self.mapping_depot_path(&depot_path_candidate);
-                        if mapping_back.is_some() && &mapping_back.unwrap() == local_path {
-                            return Some(depot_path_candidate);
+                        return if mapping_back.is_some() && &mapping_back.unwrap() == local_path {
+                            Some(depot_path_candidate)
                         } else {
                             // 同理，不用再向上遍历了
-                            return None;
+                            None
                         }
                     }
                 },
@@ -173,7 +173,7 @@ impl PathEngine {
                                 continue;
                             }
                             let pattern = pattern.unwrap();
-                            if pattern.is_match(&depot_path.to_string()) {
+                            if pattern.is_match(&depot_path.to_custom_string()) {
                                 return None;
                             }
                         }
@@ -186,13 +186,52 @@ impl PathEngine {
 
     /// 将一个本地路径转化为 workspace 路径，如果本地路径不在工作区内，返回 None
     pub fn local_path_to_workspace_path(&self, local_path: &LocalPath) -> Option<WorkspacePath> {
-        let result = local_path.into_workspace_path(&self.workspace_name, &self.workspace.root_dir);
-        Some(result)
+        let diff = self
+            .workspace
+            .root_dir
+            .match_and_get_diff(&local_path.dirs)?;
+        Some(WorkspacePath {
+            workspace_name: self.workspace_name.clone(),
+            dirs: diff.to_vec(),
+            file: local_path.file.clone(),
+        })
     }
+
     /// 将一个 workspace 路径转化为本地路径，如果 workspace 路径不在工作区内，返回 None
-    pub fn workspace_path_to_local_path(&self, workspace_path: &WorkspacePath) -> Option<LocalPath> {
-        let result = workspace_path.into_local_path(&self.workspace.root_dir);
-        Some(result)
+    pub fn workspace_path_to_local_path(
+        &self,
+        workspace_path: &WorkspacePath,
+    ) -> Option<LocalPath> {
+        if workspace_path.workspace_name != self.workspace_name {
+            return None;
+        }
+
+        let mut dirs = self.workspace.root_dir.0.clone();
+        dirs.extend_from_slice(&workspace_path.dirs);
+
+        Some(LocalPath {
+            dirs: LocalDir(dirs),
+            file: workspace_path.file.clone(),
+        })
+    }
+
+    /// 将一个本地文件夹转化为 workspace 文件夹，如果本地文件夹不在工作区内，返回 None
+    pub fn local_dir_to_workspace_dir(&self, local_dir: &LocalDir) -> Option<WorkspaceDir> {
+        let diff = self.workspace.root_dir.match_and_get_diff(local_dir)?;
+        Some(WorkspaceDir {
+            workspace_name: self.workspace_name.clone(),
+            dirs: diff.to_vec(),
+        })
+    }
+
+    /// 将一个 workspace 文件夹转化为本地文件夹，如果 workspace 文件夹不在工作区内，返回 None
+    pub fn workspace_dir_to_local_dir(&self, workspace_dir: &WorkspaceDir) -> Option<LocalDir> {
+        if workspace_dir.workspace_name != self.workspace_name {
+            return None;
+        }
+        let mut dirs = self.workspace.root_dir.0.clone();
+        dirs.extend_from_slice(&workspace_dir.dirs);
+        Some(LocalDir(dirs))
     }
 }
 

@@ -1,16 +1,20 @@
 use crate::daemon_server::config::RuntimeConfig;
 use crate::daemon_server::context::SessionContext;
-use crate::daemon_server::db::active_file;
+use crate::daemon_server::db::active_file::Action;
+use crate::daemon_server::db::file::{FileLocation, FileMeta, FileRevision};
 use crate::daemon_server::error::{AppError, AppResult};
-use crate::daemon_server::handlers::utils::{expand_paths_to_files, normalize_paths};
+use crate::daemon_server::handlers::utils::{
+    expand_to_mapped_files_active, normalize_paths_strict,
+};
 use crate::daemon_server::job::{
     JobEvent, JobRetentionPolicy, JobStatus, MessageStoragePolicy, WorkerProtocol,
 };
 use crate::daemon_server::state::AppState;
 use crate::hive_pb::hive_service_client::HiveServiceClient;
-use crate::hive_pb::{CheckChunksReq, FileChunks, FileToLock, LaunchSubmitReq, UploadFileChunkReq};
+use crate::hive_pb::{
+    CheckChunksReq, FileChunk, FileToLock, LaunchSubmitReq, UploadFileChunkReq, UploadFileChunkRsp,
+};
 use crate::pb::{SubmitProgress, SubmitReq};
-use crv_core::path::basic::{DepotPath, LocalPath, WorkspacePath};
 use crv_core::path::engine::PathEngine;
 use crv_core::repository::compute_chunk_hash;
 use prost::Message;
@@ -18,6 +22,7 @@ use std::pin::Pin;
 use std::sync::{Arc, Weak};
 use std::task::{Context, Poll};
 use tokio::sync::Mutex;
+use tokio::sync::mpsc::Sender;
 use tokio::{fs::File, io::AsyncReadExt};
 use tokio_stream::wrappers::{BroadcastStream, ReceiverStream};
 use tokio_stream::{Stream, StreamExt};
@@ -49,17 +54,14 @@ impl Drop for JobCancelOnDropStream {
 }
 
 struct FileToSubmit {
-    local_path: LocalPath,
-    workspace_path: WorkspacePath,
-    depot_path: DepotPath,
-    action: active_file::Action,
-    current_revision: Option<String>,
+    location: FileLocation,
+    action: Action,
+    current_revision: Option<FileRevision>,
 }
 
 const FRAME_SIZE: usize = 64 * 1024; // 64KB，单个报文中的数据大小
 const CHUNK_SIZE: usize = 4 * 1024 * 1024; // 4MB，内存中的处理窗口，也是一个 chunk 的大小
 const WORKER_COUNT: i32 = 8;
-const MAX_RETRY: i32 = 3; // 单个 chunk 的最大重试次数
 
 pub async fn handle(
     state: AppState,
@@ -75,46 +77,31 @@ pub async fn handle(
             request_body.workspace_name
         ))))?;
 
-    // 规范化路径
-    let local_paths = normalize_paths(
-        &request_body.paths,
-        &request_body.workspace_name,
-        &workspace_meta.config,
-    )?;
-
-    let local_files = expand_paths_to_files(&local_paths);
-
     let path_engine = PathEngine::new(workspace_meta.config.clone(), &request_body.workspace_name);
+
+    // 规范化路径
+    let local_paths = normalize_paths_strict(&request_body.paths, &path_engine)?;
+
+    let files = expand_to_mapped_files_active(&local_paths, &path_engine, state.clone())?;
 
     let mut files_to_submit: Vec<FileToSubmit> = Vec::new();
 
-    for file in &local_files {
-        // 进行路径转化与过滤，经过这一操作后，local_path 已经是该工作区下被映射了的文件
-        let local_path = LocalPath::parse(&file).unwrap();
-        let workspace_path = path_engine.local_path_to_workspace_path(&local_path);
-        let depot_path = path_engine.mapping_local_path(&local_path);
-        if workspace_path.is_none() || depot_path.is_none() {
-            continue;
-        }
-        let workspace_path = workspace_path.unwrap();
-        let depot_path = depot_path.unwrap();
-        // 判断文件是否被 checkout
-        let file_action = state.db.get_active_file_action(&workspace_path)?;
+    for file in &files {
+        // 虽然 expand_to_mapped_files_active 拿到的文件肯定 checkout 了，但是还是判断一下
+        let file_action = state.db.get_active_file_action(&file.workspace_path)?;
         if file_action.is_none() {
             continue;
         }
         let file_action = file_action.unwrap();
         // 获得文件当前 revision
-        let file_revision = if file_action == active_file::Action::Add {
+        let file_revision = if file_action == Action::Add {
             None
         } else {
-            let file_meta = state.db.get_file_meta(&workspace_path)?.unwrap();
-            Some(file_meta.latest_revision)
+            let file_meta = state.db.get_file_meta(&file.workspace_path)?.unwrap();
+            Some(file_meta.current_revision)
         };
         files_to_submit.push(FileToSubmit {
-            local_path,
-            workspace_path,
-            depot_path,
+            location: file.clone(),
             action: file_action,
             current_revision: file_revision,
         });
@@ -131,8 +118,9 @@ pub async fn handle(
     let mut files_to_lock = Vec::new();
     for file in &files_to_submit {
         files_to_lock.push(FileToLock {
-            path: file.depot_path.to_string(),
-            expected_file_revision: file.current_revision.clone().unwrap_or(String::new()),
+            path: file.location.depot_path.to_custom_string(),
+            expected_file_generation: file.current_revision.as_ref().map(|x| x.generation),
+            expected_file_revision: file.current_revision.as_ref().map(|x| x.revision),
         });
     }
 
@@ -151,6 +139,21 @@ pub async fn handle(
 
     let ticket = try_lock_file_response.ticket;
 
+    // 计算 chunks amount
+    let mut chunks_amount = 0;
+    for file in &files_to_submit {
+        if file.action != Action::Delete {
+            let file_size = File::open(file.location.local_path.to_local_path_string())
+                .await
+                .map_err(|x| AppError::Internal(format!("{x}")))?
+                .metadata()
+                .await
+                .map_err(|x| AppError::Internal(format!("{x}")))?
+                .len();
+            chunks_amount += file_size.div_ceil(CHUNK_SIZE as u64);
+        }
+    }
+
     // step 3. 创建 Job
     let job = state.job_manager.create_job(
         None,
@@ -166,10 +169,17 @@ pub async fn handle(
 
     let (marker_tx, marker_rx) = tokio::sync::mpsc::channel::<()>(1);
 
+    let (upload_chunk_tx, upload_chunk_rx) = tokio::sync::mpsc::channel(WORKER_COUNT as usize * 10);
+    let upload_rsp = hive_client
+        .upload_file_chunk(ReceiverStream::new(upload_chunk_rx))
+        .await?;
+    let upload_rsp_stream = upload_rsp.into_inner();
+
     for i in 0..WORKER_COUNT {
         let files = files_to_submit.clone();
         let file_chunks = file_chunks.clone();
         let channel_clone = channel.clone();
+        let upload_chunk_tx_clone = upload_chunk_tx.clone();
         let job_clone = job.clone();
         let ticket_clone = ticket.clone();
         let marker_clone = marker_tx.clone();
@@ -177,7 +187,9 @@ pub async fn handle(
             upload_task(
                 files,
                 file_chunks,
+                chunks_amount as i64,
                 channel_clone,
+                upload_chunk_tx_clone,
                 ticket_clone,
                 job_clone,
                 marker_clone,
@@ -199,6 +211,9 @@ pub async fn handle(
         )
         .await
     });
+    let job_clone = job.clone();
+    let marker_clone = marker_tx.clone();
+    job.add_worker(async move { response_task(upload_rsp_stream, job_clone, marker_clone).await });
 
     drop(marker_tx);
 
@@ -232,7 +247,7 @@ async fn submit_task(
     state: AppState,
     ticket: String,
     description: String,
-    file_chunks: Arc<Mutex<Vec<FileChunks>>>,
+    file_chunks: Arc<Mutex<Vec<FileChunk>>>,
     files_to_submit: Arc<Mutex<Vec<FileToSubmit>>>,
     channel: Channel,
     mut marker: tokio::sync::mpsc::Receiver<()>,
@@ -242,7 +257,7 @@ async fn submit_task(
     let submit_request = crate::hive_pb::SubmitReq {
         ticket,
         description,
-        files: file_chunks.lock().await.clone(),
+        file_chunks: file_chunks.lock().await.clone(),
     };
     let submit_response = hive_client
         .submit(submit_request)
@@ -259,22 +274,30 @@ async fn submit_task(
 
     // 更新数据库
     for file in files_to_submit.lock().await.iter() {
-        // 没有产生新版本说明提交失败了
-        if !submit_response
-            .latest_revision
-            .contains_key(&file.depot_path.to_string())
-        {
+        if file.action == Action::Delete {
+            state
+                .db
+                .delete_file(&file.location.workspace_path)
+                .map_err(|x| format!("{x}"))?;
             continue;
         }
         let latest_revision = submit_response
-            .latest_revision
-            .get(&file.depot_path.to_string())
-            .unwrap()
-            .revision_id
-            .clone();
+            .latest_revisions
+            .iter()
+            .find(|x| x.path == file.location.depot_path.to_custom_string())
+            .unwrap();
         state
             .db
-            .submit_file(file.workspace_path.clone(), latest_revision)
+            .submit_file(
+                file.location.workspace_path.clone(),
+                FileMeta {
+                    location: file.location.clone(),
+                    current_revision: FileRevision {
+                        generation: latest_revision.generation,
+                        revision: latest_revision.revision,
+                    },
+                },
+            )
             .map_err(|x| format!("{x}"))?;
     }
 
@@ -284,32 +307,34 @@ async fn submit_task(
 
 async fn upload_task(
     files: Arc<Mutex<Vec<FileToSubmit>>>,
-    file_chunks: Arc<Mutex<Vec<FileChunks>>>,
+    file_chunks: Arc<Mutex<Vec<FileChunk>>>,
+    chunks_amount: i64,
     channel: Channel,
+    upload_chunk_tx: Sender<UploadFileChunkReq>,
     ticket: String,
     job: Arc<crate::daemon_server::job::Job>,
-    marker: tokio::sync::mpsc::Sender<()>,
+    marker: Sender<()>,
     _worker_id: i32,
 ) -> Result<(), String> {
     loop {
         if let Some(file_info) = files.lock().await.pop() {
             // 如果是删除行为，则直接回报即可
-            if file_info.action == active_file::Action::Delete {
+            if file_info.action == Action::Delete {
                 job.report_payload(SubmitProgress {
-                    path: file_info.local_path.to_local_path_string(),
+                    path: file_info.location.local_path.to_local_path_string(),
                     bytes_completed_so_far: 0i64,
                     size: 0i64,
                     info: String::new(),
                     warning: String::new(),
                 });
-                let submit_file = FileChunks {
-                    path: file_info.depot_path.to_string(), // 使用服务器路径
-                    binary_id: vec![],                      // 块 Hash 列表
+                let submit_file = FileChunk {
+                    path: file_info.location.depot_path.to_custom_string(), // 使用服务器路径
+                    binary_id: vec![],                                      // 块 Hash 列表
                 };
                 file_chunks.lock().await.push(submit_file);
                 continue;
             }
-            let path_str = file_info.local_path.to_local_path_string();
+            let path_str = file_info.location.local_path.to_local_path_string();
             let mut file = File::open(&path_str)
                 .await
                 .map_err(|e| format!("Open error: {e}"))?;
@@ -317,12 +342,7 @@ async fn upload_task(
             let mut hive_client = HiveServiceClient::new(channel.clone());
             let mut chunk_hashes = vec![]; // 收集当前文件的所有块 hash
             let mut total_size = 0i64; // 当前已经传输的总大小
-            let file_size = file
-                .metadata()
-                .await
-                .map_err(|x| format!("{x}"))?
-                .len() as i64;
-            let mut success = false;
+            let file_size = file.metadata().await.map_err(|x| format!("{x}"))?.len() as i64;
 
             loop {
                 // 读取一个 chunk
@@ -331,8 +351,6 @@ async fn upload_task(
                     .read(&mut chunk_buffer)
                     .await
                     .map_err(|e| format!("Read error: {e}"))?;
-                // 更新进度
-                total_size += n as i64;
 
                 if n == 0 {
                     break;
@@ -352,109 +370,93 @@ async fn upload_task(
 
                 // 如果这个 chunk 已经传输完毕，则跳过
                 if check_res.missing_chunk_hashes.is_empty() {
+                    // 更新进度
+                    total_size += n as i64;
                     job.report_payload(SubmitProgress {
-                        path: file_info.local_path.to_local_path_string(),
+                        path: file_info.location.local_path.to_local_path_string(),
                         bytes_completed_so_far: total_size,
                         size: file_size,
-                        info: format!("Chunk already exists on hive."),
+                        info: "Chunk already exists on hive.".to_string(),
                         warning: String::new(),
                     });
                     continue;
                 }
 
-                // 4. 遍历切片并上传
-                success = false;
+                // 遍历切片并上传
                 let chunk = Arc::new(chunk_buffer);
-                for retry in 0..MAX_RETRY {
-                    let (tx, rx) = tokio::sync::mpsc::channel(10);
-                    let chunk_clone = chunk.clone();
-                    let chunk_hash_clone = chunk_hash.clone();
-                    let ticket_clone = ticket.clone();
-                    let task = tokio::spawn(async move {
-                        let mut offset = 0i64;
-                        let frames: Vec<&[u8]> = chunk_clone.chunks(FRAME_SIZE).collect();
-                        for (i, frame_data) in frames.iter().enumerate() {
-                            if tx
-                                .send(UploadFileChunkReq {
-                                    chunk_hash: chunk_hash_clone.clone(),
-                                    offset,
-                                    content: frame_data.to_vec(), // 这里必须这就得 clone 数据发送了
-                                    compression: "none".to_string(),
-                                    uncompressed_size: frame_data.len() as u32,
-                                    ticket: ticket_clone.clone(),
-                                    chunk_size: n as i64,
-                                })
-                                .await
-                                .is_err()
-                            {
-                                break;
-                            }
-
-                            // 更新进度
-                            offset += frame_data.len() as i64;
-                        }
-                    });
-
-                    let upload_rsp = hive_client
-                        .upload_file_chunk(ReceiverStream::new(rx))
+                let mut offset = 0i64;
+                let frames: Vec<&[u8]> = chunk.chunks(FRAME_SIZE).collect();
+                for (_, frame_data) in frames.iter().enumerate() {
+                    upload_chunk_tx
+                        .send(UploadFileChunkReq {
+                            chunk_hash: chunk_hash.clone(),
+                            offset,
+                            content: frame_data.to_vec(), // 这里必须这就得 clone 数据发送了
+                            compression: "none".to_string(),
+                            uncompressed_size: frame_data.len() as u32,
+                            ticket: ticket.clone(),
+                            chunk_size: n as i64,
+                            chunks_amount,
+                        })
                         .await
                         .map_err(|x| format!("{x}"))?;
-                    let mut upload_rsp_stream = upload_rsp.into_inner();
-                    let mut completed = true;
-                    while let Some(rsp) = upload_rsp_stream
-                        .message()
-                        .await
-                        .map_err(|x| format!("{x}"))?
-                    {
-                        if rsp.success {
-                            job.report_payload(SubmitProgress {
-                                path: file_info.local_path.to_local_path_string(),
-                                bytes_completed_so_far: total_size,
-                                size: file_size,
-                                info: format!("Upload chunk success."),
-                                warning: String::new(),
-                            });
-                        } else {
-                            job.report_payload(SubmitProgress {
-                                path: file_info.local_path.to_local_path_string(),
-                                bytes_completed_so_far: total_size,
-                                size: file_size,
-                                info: format!("retry [{}/{MAX_RETRY}]", retry + 1),
-                                warning: rsp.message,
-                            });
-                            completed = false;
-                            break;
-                        }
-                    }
-                    // 等待 chunk 上传任务完全结束
-                    task.await.unwrap();
-                    if !completed {
-                        continue;
-                    }
-                    success = true;
-                }
-                if !success {
-                    break;
+
+                    // 更新进度
+                    offset += frame_data.len() as i64;
+                    total_size += frame_data.len() as i64;
+                    job.report_payload(SubmitProgress {
+                        path: file_info.location.local_path.to_local_path_string(),
+                        bytes_completed_so_far: total_size,
+                        size: file_size,
+                        info: "Chunk sliced and transferring.".to_string(),
+                        warning: String::new(),
+                    });
                 }
             }
-            if !success {
-                return Err(format!(
-                    "Upload file {} failed.",
-                    file_info.depot_path.to_string()
-                ));
-            } else {
-                // --- 文件切块完成，收集文件 FileChunks 信息 ---
-                let submit_file = FileChunks {
-                    path: file_info.depot_path.to_string(), // 使用服务器路径
-                    binary_id: chunk_hashes,                // 块 Hash 列表
-                };
-                file_chunks.lock().await.push(submit_file);
-            }
+            // --- 文件切块完成，收集文件 FileChunks 信息 ---
+            let submit_file = FileChunk {
+                path: file_info.location.depot_path.to_custom_string(), // 使用服务器路径
+                binary_id: chunk_hashes,                                // 块 Hash 列表
+            };
+            file_chunks.lock().await.push(submit_file);
         } else {
             break;
         }
     }
 
+    drop(marker);
+    Ok(())
+}
+
+async fn response_task(
+    mut upload_rsp_stream: tonic::Streaming<UploadFileChunkRsp>,
+    job: Arc<crate::daemon_server::job::Job>,
+    marker: Sender<()>,
+) -> Result<(), String> {
+    while let Some(rsp) = upload_rsp_stream
+        .message()
+        .await
+        .map_err(|x| format!("{x}"))?
+    {
+        if rsp.success {
+            // todo 这个 submit progress 要有多种形态
+            job.report_payload(SubmitProgress {
+                path: String::new(),
+                bytes_completed_so_far: 0,
+                size: 0,
+                info: format!("Upload chunk {} success.", rsp.chunk_hash),
+                warning: String::new(),
+            });
+        } else {
+            job.report_payload(SubmitProgress {
+                path: String::new(),
+                bytes_completed_so_far: 0,
+                size: 0,
+                info: format!("Upload chunk {} failed.", rsp.chunk_hash),
+                warning: String::new(),
+            });
+        }
+    }
     drop(marker);
     Ok(())
 }

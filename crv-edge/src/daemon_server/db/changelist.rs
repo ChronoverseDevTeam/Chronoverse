@@ -113,7 +113,7 @@ impl DbManager {
                 if path.workspace_name != changelist_meta.workspace_name {
                     return Err(DbError::Invalid(format!(
                         "Workspace path {} not under the workspace of changelist {}",
-                        path.to_string(),
+                        path.to_custom_string(),
                         changelist_id
                     )));
                 }

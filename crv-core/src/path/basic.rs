@@ -48,7 +48,7 @@ pub enum FilenameWildcard {
 }
 
 impl FilenameWildcard {
-    fn to_string(&self) -> String {
+    fn to_custom_string(&self) -> String {
         match self {
             FilenameWildcard::Exact(s) => s.clone(),
             FilenameWildcard::Extension(s) => format!("~{}", &s[1..]),
@@ -78,16 +78,7 @@ impl WorkspacePath {
         parsers::path::workspace_path(path)
     }
 
-    pub fn into_local_path(&self, root_dir: &LocalDir) -> LocalPath {
-        let mut dirs = root_dir.0.clone();
-        dirs.extend_from_slice(&self.dirs);
-        LocalPath {
-            dirs: LocalDir(dirs),
-            file: self.file.clone(),
-        }
-    }
-
-    pub fn to_string(&self) -> String {
+    pub fn to_custom_string(&self) -> String {
         format!(
             "//{}/{}{}",
             self.workspace_name,
@@ -97,6 +88,16 @@ impl WorkspacePath {
                 .collect::<String>(),
             self.file
         )
+    }
+
+    pub fn to_local_path_uncheck(&self, root_dir: &LocalDir) -> LocalPath {
+        let mut dirs = root_dir.0.clone();
+        dirs.extend_from_slice(&self.dirs);
+
+        LocalPath {
+            dirs: LocalDir(dirs),
+            file: self.file.clone(),
+        }
     }
 }
 
@@ -112,19 +113,19 @@ impl WorkspaceDir {
         parsers::path::workspace_dir(path)
     }
 
-    pub fn into_local_dir(&self, root_dir: &LocalDir) -> LocalDir {
-        let mut dirs = root_dir.0.clone();
-        dirs.extend_from_slice(&self.dirs);
-        LocalDir(dirs)
-    }
-
-    pub fn to_string(&self) -> String {
+    pub fn to_custom_string(&self) -> String {
         let dir_string = self
             .dirs
             .iter()
             .map(|dir| format!("{}/", dir))
             .collect::<String>();
         format!("//{}/{}", self.workspace_name, dir_string)
+    }
+
+    pub fn to_local_dir_uncheck(&self, root_dir: &LocalDir) -> LocalDir {
+        let mut dirs = root_dir.0.clone();
+        dirs.extend_from_slice(&self.dirs);
+        LocalDir(dirs)
     }
 }
 
@@ -136,7 +137,7 @@ pub struct DepotPath {
 }
 
 impl DepotPath {
-    pub fn to_string(&self) -> String {
+    pub fn to_custom_string(&self) -> String {
         format!(
             "//{}{}",
             self.dirs
@@ -162,10 +163,10 @@ pub enum DepotPathWildcard {
 }
 
 impl DepotPathWildcard {
-    pub fn to_string(&self) -> String {
+    pub fn to_custom_string(&self) -> String {
         match self {
             DepotPathWildcard::Range(range_depot_wildcard) => {
-                let filename_wildcard_string = range_depot_wildcard.wildcard.to_string();
+                let filename_wildcard_string = range_depot_wildcard.wildcard.to_custom_string();
 
                 format!(
                     "//{}{}{}",
@@ -235,14 +236,6 @@ pub struct LocalDir(pub Vec<String>);
 impl LocalDir {
     pub fn parse(path: &str) -> PathResult<Self> {
         parsers::path::local_dir(path)
-    }
-
-    pub fn into_workspace_dir(&self, workspace_name: &str, root_dir: &LocalDir) -> WorkspaceDir {
-        let diff = root_dir.match_and_get_diff(self).unwrap();
-        WorkspaceDir {
-            workspace_name: workspace_name.to_string(),
-            dirs: diff.to_vec(),
-        }
     }
 
     /// 转化为使用 `/` 分割文件夹的路径
@@ -319,15 +312,6 @@ impl LocalPath {
         parsers::path::local_path(path)
     }
 
-    pub fn into_workspace_path(&self, workspace_name: &str, root_dir: &LocalDir) -> WorkspacePath {
-        let diff = root_dir.match_and_get_diff(&self.dirs).unwrap();
-        WorkspacePath {
-            workspace_name: workspace_name.to_string(),
-            dirs: diff.to_vec(),
-            file: self.file.clone(),
-        }
-    }
-
     /// 转化为使用 `/` 分割文件夹的路径
     pub fn to_unix_path_string(&self) -> String {
         let dir_string = self
@@ -394,8 +378,8 @@ pub struct LocalPathWildcard {
 }
 
 impl LocalPathWildcard {
-    pub fn to_string(&self) -> String {
-        let filename_wildcard_string = self.wildcard.to_string();
+    pub fn to_custom_string(&self) -> String {
+        let filename_wildcard_string = self.wildcard.to_custom_string();
 
         format!(
             "/{}{}{}",
@@ -436,13 +420,16 @@ mod test_depot_path {
         let depot_path = DepotPath::parse(path);
         assert!(depot_path.is_ok());
         let depot_path = depot_path.unwrap();
-        assert_eq!(depot_path.to_string(), "//crv/cli/src/build.rs");
+        assert_eq!(depot_path.to_custom_string(), "//crv/cli/src/build.rs");
 
         let path = "//crv/cli/src/新建文本文档.txt";
         let depot_path = DepotPath::parse(path);
         assert!(depot_path.is_ok());
         let depot_path = depot_path.unwrap();
-        assert_eq!(depot_path.to_string(), "//crv/cli/src/新建文本文档.txt");
+        assert_eq!(
+            depot_path.to_custom_string(),
+            "//crv/cli/src/新建文本文档.txt"
+        );
 
         // 2. 语法错误
         let path = "///crv/cli/src/build.rs";
@@ -520,32 +507,32 @@ mod test_depot_path {
         let depot_path = DepotPathWildcard::parse(path);
         assert!(depot_path.is_ok());
         let depot_path = depot_path.unwrap();
-        assert_eq!(depot_path.to_string(), "//crv/cli/src/build.rs");
+        assert_eq!(depot_path.to_custom_string(), "//crv/cli/src/build.rs");
 
         let path = "//crv/cli/src/";
         let depot_path = DepotPathWildcard::parse(path);
         assert!(depot_path.is_ok());
         let depot_path = depot_path.unwrap();
-        assert_eq!(depot_path.to_string(), "//crv/cli/src/");
+        assert_eq!(depot_path.to_custom_string(), "//crv/cli/src/");
 
         let path = "//crv/cli/src/...";
         let depot_path = DepotPathWildcard::parse(path);
         println!("{:?}", depot_path);
         assert!(depot_path.is_ok());
         let depot_path = depot_path.unwrap();
-        assert_eq!(depot_path.to_string(), "//crv/cli/src/...");
+        assert_eq!(depot_path.to_custom_string(), "//crv/cli/src/...");
 
         let path = "//crv/cli/src/...~txt.meta";
         let depot_path = DepotPathWildcard::parse(path);
         assert!(depot_path.is_ok());
         let depot_path = depot_path.unwrap();
-        assert_eq!(depot_path.to_string(), "//crv/cli/src/...~txt.meta");
+        assert_eq!(depot_path.to_custom_string(), "//crv/cli/src/...~txt.meta");
 
         let path = "//crv/cli/src/~.meta";
         let depot_path = DepotPathWildcard::parse(path);
         assert!(depot_path.is_ok());
         let depot_path = depot_path.unwrap();
-        assert_eq!(depot_path.to_string(), "//crv/cli/src/~.meta");
+        assert_eq!(depot_path.to_custom_string(), "//crv/cli/src/~.meta");
 
         // 2. 语法错误
         let path = "///crv/cli/src/build.rs";
@@ -609,25 +596,25 @@ mod test_depot_path {
         let depot_path = DepotPathWildcard::parse(path);
         assert!(depot_path.is_ok());
         let depot_path = depot_path.unwrap();
-        assert_eq!(depot_path.to_string(), r"r://\.rs$");
+        assert_eq!(depot_path.to_custom_string(), r"r://\.rs$");
 
         let path = r"r://^crv/cli/.*\.rs$";
         let depot_path = DepotPathWildcard::parse(path);
         assert!(depot_path.is_ok());
         let depot_path = depot_path.unwrap();
-        assert_eq!(depot_path.to_string(), r"r://^crv/cli/.*\.rs$");
+        assert_eq!(depot_path.to_custom_string(), r"r://^crv/cli/.*\.rs$");
 
         let path = "r:///crv/cli/src/build.rs"; // 正则表达式是 `/crv/cli/src/build.rs`，虽然什么都匹配不了，但是语法是对的
         let depot_path = DepotPathWildcard::parse(path);
         assert!(depot_path.is_ok());
         let depot_path = depot_path.unwrap();
-        assert_eq!(depot_path.to_string(), "r:///crv/cli/src/build.rs");
+        assert_eq!(depot_path.to_custom_string(), "r:///crv/cli/src/build.rs");
 
         let path = "r://crv/cli/src/build.rs "; // 正则表达式是 `crv/cli/src/build.rs `，虽然什么都匹配不了，但是语法是对的
         let depot_path = DepotPathWildcard::parse(path);
         assert!(depot_path.is_ok());
         let depot_path = depot_path.unwrap();
-        assert_eq!(depot_path.to_string(), "r://crv/cli/src/build.rs ");
+        assert_eq!(depot_path.to_custom_string(), "r://crv/cli/src/build.rs ");
 
         // 2. 语法错误
         let path = "regex://crv/cli/src/build.rs";
@@ -984,32 +971,32 @@ mod test_local_path {
         let depot_path = LocalPathWildcard::parse(path);
         assert!(depot_path.is_ok());
         let depot_path = depot_path.unwrap();
-        assert_eq!(depot_path.to_string(), "/crv/cli/src/build.rs");
+        assert_eq!(depot_path.to_custom_string(), "/crv/cli/src/build.rs");
 
         let path = "/crv/cli/src/";
         let depot_path = LocalPathWildcard::parse(path);
         assert!(depot_path.is_ok());
         let depot_path = depot_path.unwrap();
-        assert_eq!(depot_path.to_string(), "/crv/cli/src/");
+        assert_eq!(depot_path.to_custom_string(), "/crv/cli/src/");
 
         let path = "/crv/cli/src/...";
         let depot_path = LocalPathWildcard::parse(path);
         println!("{:?}", depot_path);
         assert!(depot_path.is_ok());
         let depot_path = depot_path.unwrap();
-        assert_eq!(depot_path.to_string(), "/crv/cli/src/...");
+        assert_eq!(depot_path.to_custom_string(), "/crv/cli/src/...");
 
         let path = "D:\\crv/cli/src\\...~txt.meta";
         let depot_path = LocalPathWildcard::parse(path);
         assert!(depot_path.is_ok());
         let depot_path = depot_path.unwrap();
-        assert_eq!(depot_path.to_string(), "/D/crv/cli/src/...~txt.meta");
+        assert_eq!(depot_path.to_custom_string(), "/D/crv/cli/src/...~txt.meta");
 
         let path = "/crv/cli/src/~.meta";
         let depot_path = LocalPathWildcard::parse(path);
         assert!(depot_path.is_ok());
         let depot_path = depot_path.unwrap();
-        assert_eq!(depot_path.to_string(), "/crv/cli/src/~.meta");
+        assert_eq!(depot_path.to_custom_string(), "/crv/cli/src/~.meta");
 
         // 2. 语法错误
         let path = "//crv/cli/src/build.rs";

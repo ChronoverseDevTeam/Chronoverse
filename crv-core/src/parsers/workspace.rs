@@ -25,7 +25,7 @@ fn workspace_mappings_parser<'src>(
             (
                 WorkspaceMapping::Include(IncludeMapping::File(FileMapping {
                     depot_file,
-                    local_file: workspace_file.into_local_path(root_dir),
+                    local_file: workspace_file.to_local_path_uncheck(root_dir),
                 })),
                 Some(workspace_file.workspace_name),
             )
@@ -37,7 +37,7 @@ fn workspace_mappings_parser<'src>(
             (
                 WorkspaceMapping::Include(IncludeMapping::Folder(FolderMapping {
                     depot_folder,
-                    local_folder: workspace_folder.into_local_dir(root_dir),
+                    local_folder: workspace_folder.to_local_dir_uncheck(root_dir),
                 })),
                 Some(workspace_folder.workspace_name),
             )
