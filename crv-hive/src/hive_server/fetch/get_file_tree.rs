@@ -112,7 +112,11 @@ mod tests {
 
         let cfg = test_pg_config();
         let _ = crate::config::holder::try_set_config(cfg);
-        database::init().await.expect("db init");
+        if let Err(e) = database::init().await {
+            if !e.to_string().contains("Database already initialized") {
+                panic!("db init: {e}");
+            }
+        }
     }
 
     async fn insert_revision(
