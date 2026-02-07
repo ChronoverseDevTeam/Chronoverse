@@ -161,14 +161,15 @@ message DownloadFileChunkReq {
     int64 packetSize = 2; // 每个 stream 包的大小，单位 byte
 }
 
+// 目前，下载文件 Chunk 时，会将 Chunk 拆分为至多 4MB 的块进行传输以方便 gRPC 进行网络优化
 message DownloadFileChunkResp {
     string chunk_hash = 1;
     int64 offset = 2;
     bytes content = 3;
     uint64 size = 4;
-    // 本块使用的压缩方式，可选，例如 "none" / "lz4"
+    // 本块使用的压缩方式，可选，例如 "none" / "lz4"，目前不支持压缩，所有 Chunk 都是 none
     string compression = 5;
-    // 解压后的原始大小（字节），用于校验
+    // 解压后的原始大小（字节），用于校验，目前不支持压缩，所以这个值应该和 size 一致
     uint32 uncompressed_size = 6;
 }
 
