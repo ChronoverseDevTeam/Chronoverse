@@ -756,72 +756,8 @@ impl SubmitService {
 mod tests {
     use super::*;
 
-    use std::sync::OnceLock;
-
     use crate::database;
     use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
-
-    static INIT_MUTEX: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
-
-    fn should_run_hive_db_tests() -> bool {
-        // 统一用环境变量控制：
-        // - 默认不跑（本地/CI 都一样），避免没有 Postgres 环境时误失败
-        // - `CRV_RUN_HIVE_DB_TESTS=1` => 允许运行（CI 可以显式开启，并配套启动 Postgres service）
-        // - `CRV_SKIP_HIVE_DB_TESTS=1` => 强制跳过（用于临时禁用）
-        if std::env::var("CRV_SKIP_HIVE_DB_TESTS").as_deref() == Ok("1") {
-            eprintln!("skip submit service db tests (CRV_SKIP_HIVE_DB_TESTS=1)");
-            return false;
-        }
-
-        if std::env::var("CRV_RUN_HIVE_DB_TESTS").as_deref() == Ok("1") {
-            return true;
-        }
-
-        eprintln!(
-            "skip submit service db tests (set CRV_RUN_HIVE_DB_TESTS=1 and run with --ignored)"
-        );
-        false
-    }
-
-    fn test_pg_config() -> crate::config::entity::ConfigEntity {
-        // 允许通过环境变量覆盖，避免改源码才能在不同机器上跑。
-        // 这些值只在 `CRV_RUN_HIVE_DB_TESTS=1` 时会被使用。
-        let host = std::env::var("CRV_HIVE_TEST_PG_HOST").unwrap_or_else(|_| "127.0.0.1".into());
-        let port = std::env::var("CRV_HIVE_TEST_PG_PORT")
-            .ok()
-            .and_then(|s| s.parse::<u16>().ok())
-            .unwrap_or(5432);
-        let db = std::env::var("CRV_HIVE_TEST_PG_DB").unwrap_or_else(|_| "chronoverse".into());
-        let user = std::env::var("CRV_HIVE_TEST_PG_USER").unwrap_or_else(|_| "postgres".into());
-        let pass = std::env::var("CRV_HIVE_TEST_PG_PASS").unwrap_or_else(|_| "postgres".into());
-
-        let mut cfg = crate::config::entity::ConfigEntity::default();
-        cfg.postgres_hostname = host;
-        cfg.postgres_port = port;
-        cfg.postgres_database = db;
-        cfg.postgres_username = user;
-        cfg.postgres_password = pass;
-        cfg
-    }
-
-    async fn ensure_db() {
-        if database::try_get().is_some() {
-            return;
-        }
-
-        let m = INIT_MUTEX.get_or_init(|| tokio::sync::Mutex::new(()));
-        let _guard = m.lock().await;
-
-        if database::try_get().is_some() {
-            return;
-        }
-
-        let cfg = test_pg_config();
-        let _ = crate::config::holder::try_set_config(cfg);
-
-        // migrations 是幂等的。
-        database::init().await.expect("db init");
-    }
 
     fn unique_depot_file(name: &str) -> String {
         format!(
@@ -837,65 +773,12 @@ mod tests {
         revision: i64,
         is_delete: bool,
     ) -> i64 {
-        ensure_db().await;
+        crate::test_support::ensure_hive_db().await;
         let db = database::get();
         let backend = DatabaseBackend::Postgres;
 
         // 1) changelist（外键依赖）
-        let has_changes = db
-            .query_one(Statement::from_sql_and_values(
-                backend,
-                r#"
-                SELECT 1
-                FROM information_schema.columns
-                WHERE table_schema = 'public'
-                  AND table_name = 'changelists'
-                  AND column_name = 'changes'
-                LIMIT 1
-                "#,
-                vec![],
-            ))
-            .await
-            .expect("check changelists schema")
-            .is_some();
-
-        let cl_row = if has_changes {
-            db.query_one(Statement::from_sql_and_values(
-                backend,
-                r#"
-                INSERT INTO changelists (author, description, changes, committed_at, metadata)
-                VALUES ($1, $2, '[]'::jsonb, $3, $4)
-                RETURNING id
-                "#,
-                vec![
-                    "test".into(),
-                    "test".into(),
-                    0i64.into(),
-                    serde_json::json!({}).into(),
-                ],
-            ))
-            .await
-            .expect("insert changelist")
-        } else {
-            db.query_one(Statement::from_sql_and_values(
-                backend,
-                r#"
-                INSERT INTO changelists (author, description, committed_at, metadata)
-                VALUES ($1, $2, $3, $4)
-                RETURNING id
-                "#,
-                vec![
-                    "test".into(),
-                    "test".into(),
-                    0i64.into(),
-                    serde_json::json!({}).into(),
-                ],
-            ))
-            .await
-            .expect("insert changelist")
-        };
-        let cl = cl_row.expect("changelist row");
-        let cl_id: i64 = cl.try_get("", "id").expect("get changelist id");
+        let cl_id = crate::test_support::insert_test_changelist(db).await;
 
         // 2) file + 3) revision
         //
@@ -939,7 +822,7 @@ mod tests {
     }
 
     async fn launch_submit_success_when_expected_none_and_no_db_record() {
-        ensure_db().await;
+        crate::test_support::ensure_hive_db().await;
 
         let depot_path = unique_depot_file("no_db_record");
         let p = DepotPath::new(&depot_path).unwrap();
@@ -959,7 +842,7 @@ mod tests {
     }
 
     async fn launch_submit_rejects_duplicated_paths_in_request() {
-        ensure_db().await;
+        crate::test_support::ensure_hive_db().await;
 
         let depot_path = unique_depot_file("duplicated_paths");
         let p = DepotPath::new(&depot_path).unwrap();
@@ -989,7 +872,7 @@ mod tests {
     }
 
     async fn launch_submit_conflicts_when_already_locked_in_memory() {
-        ensure_db().await;
+        crate::test_support::ensure_hive_db().await;
 
         let depot_path = unique_depot_file("mem_lock_conflict");
         let p = DepotPath::new(&depot_path).unwrap();
@@ -1016,7 +899,7 @@ mod tests {
     }
 
     async fn launch_submit_rolls_back_locks_when_db_version_mismatch() {
-        ensure_db().await;
+        crate::test_support::ensure_hive_db().await;
 
         let depot_path = unique_depot_file("db_version_mismatch");
         insert_revision(&depot_path, 1, 2, false).await;
@@ -1068,7 +951,7 @@ mod tests {
     }
 
     async fn launch_submit_treats_deleted_latest_as_nonexistent() {
-        ensure_db().await;
+        crate::test_support::ensure_hive_db().await;
 
         let depot_path = unique_depot_file("deleted_latest");
         insert_revision(&depot_path, 9, 9, true).await;
@@ -1096,17 +979,7 @@ mod tests {
     #[test]
     #[ignore = "requires external Postgres; enable with CRV_RUN_HIVE_DB_TESTS=1"]
     fn submit_service_tests_harness() {
-        if !should_run_hive_db_tests() {
-            return;
-        }
-
-        let rt = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .worker_threads(1)
-            .build()
-            .expect("build tokio runtime for submit service tests");
-
-        rt.block_on(async {
+        crate::test_support::run_hive_db_test(|| async {
             launch_submit_success_when_expected_none_and_no_db_record().await;
             launch_submit_rejects_duplicated_paths_in_request().await;
             launch_submit_conflicts_when_already_locked_in_memory().await;

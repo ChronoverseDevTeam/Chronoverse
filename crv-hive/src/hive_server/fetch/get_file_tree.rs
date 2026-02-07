@@ -61,63 +61,6 @@ mod tests {
     use super::*;
     use crate::database;
     use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
-    use std::sync::OnceLock;
-
-    static INIT_MUTEX: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
-
-    fn should_run_hive_db_tests() -> bool {
-        if std::env::var("CRV_SKIP_HIVE_DB_TESTS").as_deref() == Ok("1") {
-            eprintln!("skip get_file_tree db tests (CRV_SKIP_HIVE_DB_TESTS=1)");
-            return false;
-        }
-
-        if std::env::var("CRV_RUN_HIVE_DB_TESTS").as_deref() == Ok("1") {
-            return true;
-        }
-
-        eprintln!("skip get_file_tree db tests (set CRV_RUN_HIVE_DB_TESTS=1 and run with --ignored)");
-        false
-    }
-
-    fn test_pg_config() -> crate::config::entity::ConfigEntity {
-        let host = std::env::var("CRV_HIVE_TEST_PG_HOST").unwrap_or_else(|_| "127.0.0.1".into());
-        let port = std::env::var("CRV_HIVE_TEST_PG_PORT")
-            .ok()
-            .and_then(|s| s.parse::<u16>().ok())
-            .unwrap_or(5432);
-        let db = std::env::var("CRV_HIVE_TEST_PG_DB").unwrap_or_else(|_| "chronoverse".into());
-        let user = std::env::var("CRV_HIVE_TEST_PG_USER").unwrap_or_else(|_| "postgres".into());
-        let pass = std::env::var("CRV_HIVE_TEST_PG_PASS").unwrap_or_else(|_| "postgres".into());
-
-        let mut cfg = crate::config::entity::ConfigEntity::default();
-        cfg.postgres_hostname = host;
-        cfg.postgres_port = port;
-        cfg.postgres_database = db;
-        cfg.postgres_username = user;
-        cfg.postgres_password = pass;
-        cfg
-    }
-
-    async fn ensure_db() {
-        if database::try_get().is_some() {
-            return;
-        }
-
-        let m = INIT_MUTEX.get_or_init(|| tokio::sync::Mutex::new(()));
-        let _guard = m.lock().await;
-
-        if database::try_get().is_some() {
-            return;
-        }
-
-        let cfg = test_pg_config();
-        let _ = crate::config::holder::try_set_config(cfg);
-        if let Err(e) = database::init().await {
-            if !e.to_string().contains("Database already initialized") {
-                panic!("db init: {e}");
-            }
-        }
-    }
 
     async fn insert_revision(
         depot_path: &str,
@@ -125,64 +68,11 @@ mod tests {
         revision: i64,
         is_delete: bool,
     ) -> i64 {
-        ensure_db().await;
+        crate::test_support::ensure_hive_db().await;
         let db = database::get();
         let backend = DatabaseBackend::Postgres;
 
-        let has_changes = db
-            .query_one(Statement::from_sql_and_values(
-                backend,
-                r#"
-                SELECT 1
-                FROM information_schema.columns
-                WHERE table_schema = 'public'
-                  AND table_name = 'changelists'
-                  AND column_name = 'changes'
-                LIMIT 1
-                "#,
-                vec![],
-            ))
-            .await
-            .expect("check changelists schema")
-            .is_some();
-
-        let cl_row = if has_changes {
-            db.query_one(Statement::from_sql_and_values(
-                backend,
-                r#"
-                INSERT INTO changelists (author, description, changes, committed_at, metadata)
-                VALUES ($1, $2, '[]'::jsonb, $3, $4)
-                RETURNING id
-                "#,
-                vec![
-                    "test".into(),
-                    "test".into(),
-                    0i64.into(),
-                    serde_json::json!({}).into(),
-                ],
-            ))
-            .await
-            .expect("insert changelist")
-        } else {
-            db.query_one(Statement::from_sql_and_values(
-                backend,
-                r#"
-                INSERT INTO changelists (author, description, committed_at, metadata)
-                VALUES ($1, $2, $3, $4)
-                RETURNING id
-                "#,
-                vec![
-                    "test".into(),
-                    "test".into(),
-                    0i64.into(),
-                    serde_json::json!({}).into(),
-                ],
-            ))
-            .await
-            .expect("insert changelist")
-        };
-        let cl = cl_row.expect("changelist row");
-        let cl_id: i64 = cl.try_get("", "id").expect("get changelist id");
+        let cl_id = crate::test_support::insert_test_changelist(db).await;
 
         let key = crate::database::ltree_key::depot_path_str_to_ltree_key(depot_path)
             .expect("encode depot path to ltree key");
@@ -314,17 +204,7 @@ mod tests {
     #[test]
     #[ignore = "requires external Postgres; enable with CRV_RUN_HIVE_DB_TESTS=1"]
     fn get_file_tree_tests_harness() {
-        if !should_run_hive_db_tests() {
-            return;
-        }
-
-        let rt = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .worker_threads(1)
-            .build()
-            .expect("build tokio runtime for get_file_tree tests");
-
-        rt.block_on(async {
+        crate::test_support::run_hive_db_test(|| async {
             file_tree_file_with_changelist_cutoff().await;
             file_tree_directory_and_wildcard().await;
         });
