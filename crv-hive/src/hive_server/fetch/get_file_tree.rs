@@ -125,8 +125,25 @@ mod tests {
         let db = database::get();
         let backend = DatabaseBackend::Postgres;
 
-        let cl_row = db
+        let has_changes = db
             .query_one(Statement::from_sql_and_values(
+                backend,
+                r#"
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = 'changelists'
+                  AND column_name = 'changes'
+                LIMIT 1
+                "#,
+                vec![],
+            ))
+            .await
+            .expect("check changelists schema")
+            .is_some();
+
+        let cl_row = if has_changes {
+            db.query_one(Statement::from_sql_and_values(
                 backend,
                 r#"
                 INSERT INTO changelists (author, description, changes, committed_at, metadata)
@@ -141,7 +158,25 @@ mod tests {
                 ],
             ))
             .await
-            .expect("insert changelist");
+            .expect("insert changelist")
+        } else {
+            db.query_one(Statement::from_sql_and_values(
+                backend,
+                r#"
+                INSERT INTO changelists (author, description, committed_at, metadata)
+                VALUES ($1, $2, $3, $4)
+                RETURNING id
+                "#,
+                vec![
+                    "test".into(),
+                    "test".into(),
+                    0i64.into(),
+                    serde_json::json!({}).into(),
+                ],
+            ))
+            .await
+            .expect("insert changelist")
+        };
         let cl = cl_row.expect("changelist row");
         let cl_id: i64 = cl.try_get("", "id").expect("get changelist id");
 

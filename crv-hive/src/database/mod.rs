@@ -7,7 +7,7 @@ pub mod service;
 use anyhow::Result;
 use once_cell::sync::OnceCell;
 use urlencoding::encode;
-use sea_orm::{Database, DatabaseConnection};
+use sea_orm::{ConnectionTrait, Database, DatabaseConnection};
 use sea_orm_migration::MigratorTrait;
 
 use crate::config::{entity::ConfigEntity, holder::get_or_init_config};
@@ -32,8 +32,25 @@ pub async fn init() -> Result<()> {
     let config = get_or_init_config();
     let conn = Database::connect(&postgres_connection_url(config)).await?;
 
+    // 使用 advisory lock 串行化 migration，避免多进程并发导致扩展/类型冲突
+    let _ = conn
+        .execute(sea_orm::Statement::from_string(
+            sea_orm::DatabaseBackend::Postgres,
+            "SELECT pg_advisory_lock(248031657)".to_string(),
+        ))
+        .await;
+
     // migrations (idempotent)
-    migration::Migrator::up(&conn, None).await?;
+    let migrate_result = migration::Migrator::up(&conn, None).await;
+
+    let _ = conn
+        .execute(sea_orm::Statement::from_string(
+            sea_orm::DatabaseBackend::Postgres,
+            "SELECT pg_advisory_unlock(248031657)".to_string(),
+        ))
+        .await;
+
+    migrate_result?;
 
     DB_CONN
         .set(conn)

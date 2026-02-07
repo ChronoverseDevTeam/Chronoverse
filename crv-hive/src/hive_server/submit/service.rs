@@ -759,8 +759,7 @@ mod tests {
     use std::sync::OnceLock;
 
     use crate::database;
-    use crate::database::entities;
-    use sea_orm::{ActiveModelTrait, ConnectionTrait, DatabaseBackend, Set, Statement};
+    use sea_orm::{ConnectionTrait, DatabaseBackend, Statement};
 
     static INIT_MUTEX: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
 
@@ -843,16 +842,60 @@ mod tests {
         let backend = DatabaseBackend::Postgres;
 
         // 1) changelist（外键依赖）
-        let cl = entities::changelists::ActiveModel {
-            author: Set("test".to_string()),
-            description: Set("test".to_string()),
-            committed_at: Set(0),
-            metadata: Set(serde_json::json!({})),
-            ..Default::default()
-        }
-        .insert(db)
-        .await
-        .expect("insert changelist");
+        let has_changes = db
+            .query_one(Statement::from_sql_and_values(
+                backend,
+                r#"
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = 'changelists'
+                  AND column_name = 'changes'
+                LIMIT 1
+                "#,
+                vec![],
+            ))
+            .await
+            .expect("check changelists schema")
+            .is_some();
+
+        let cl_row = if has_changes {
+            db.query_one(Statement::from_sql_and_values(
+                backend,
+                r#"
+                INSERT INTO changelists (author, description, changes, committed_at, metadata)
+                VALUES ($1, $2, '[]'::jsonb, $3, $4)
+                RETURNING id
+                "#,
+                vec![
+                    "test".into(),
+                    "test".into(),
+                    0i64.into(),
+                    serde_json::json!({}).into(),
+                ],
+            ))
+            .await
+            .expect("insert changelist")
+        } else {
+            db.query_one(Statement::from_sql_and_values(
+                backend,
+                r#"
+                INSERT INTO changelists (author, description, committed_at, metadata)
+                VALUES ($1, $2, $3, $4)
+                RETURNING id
+                "#,
+                vec![
+                    "test".into(),
+                    "test".into(),
+                    0i64.into(),
+                    serde_json::json!({}).into(),
+                ],
+            ))
+            .await
+            .expect("insert changelist")
+        };
+        let cl = cl_row.expect("changelist row");
+        let cl_id: i64 = cl.try_get("", "id").expect("get changelist id");
 
         // 2) file + 3) revision
         //
@@ -885,14 +928,14 @@ mod tests {
                 key.into(),
                 generation.into(),
                 revision.into(),
-                cl.id.into(),
+                cl_id.into(),
                 is_delete.into(),
             ],
         ))
         .await
         .expect("insert file revision");
 
-        cl.id
+        cl_id
     }
 
     async fn launch_submit_success_when_expected_none_and_no_db_record() {
