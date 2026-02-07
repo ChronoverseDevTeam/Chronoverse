@@ -297,14 +297,16 @@ impl HiveService for CrvHiveService {
 
     async fn get_file_tree(
         &self,
-        _request: Request<GetFileTreeReq>,
+        request: Request<GetFileTreeReq>,
     ) -> Result<Response<GetFileTreeRsp>, Status> {
-        let log = HiveLog::from_request("GetFileTree", &_request);
+        let log = HiveLog::from_request("GetFileTree", &request);
         let _g = log.enter();
         log.info("rpc start");
-        let rsp = GetFileTreeRsp::default();
-        let out = Ok(Response::new(rsp));
-        log.finish_ok();
+        let out = fetch::get_file_tree::get_file_tree(log.clone(), request).await;
+        match &out {
+            Ok(_) => log.finish_ok(),
+            Err(e) => log.finish_err(e),
+        }
         out
     }
 }

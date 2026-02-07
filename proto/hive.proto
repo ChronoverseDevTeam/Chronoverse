@@ -136,23 +136,39 @@ message SubmitRsp {
 // Submit End
 
 message FileRevision {
+    // 该文件的 depot path
     string path = 1;
+    // 该文件的代数
+    // 代数是指文件被删除又创建的次数
+    // 例如，文件是第一次被创建则是第一代
+    // 如果被删除后又创建那么这个文件就是第二代
     int64 generation = 2;
+    // 该文件在当前代数下是第几个版本，注意：每次文件删除后重建这个 revision 会从 1 开始重新计数
     int64 revision = 3;
+    // 该文件属于哪个 changelist
     int64 changelist_id = 4;
     // 目前还未支持压缩算法，后续这里可能会变复杂，会变成一个对象同时描述这个块的压缩算法，但是现在默认所有块都无压缩
     // 如果 binary_id 为空，则表示该 Revision 用于表示文件被删除。
     repeated string binary_id = 5;
+    // 该文件的总大小（所有 chunk 大小之和）
     int64 size = 6;
+    // 该文件 revision 的创建时间
     int64 revision_created_at = 7;
 }
 
 message GetFileTreeReq {
+    // 获取目标位置的 depot tree 信息，常见的格式如下：
+    // //a/b/c/... 获取这个目录下的所有文件信息
+    // //a/b/c.txt 获取这个文件的信息
+    // 目前先只支持上述操作
     string depot_wildcard = 1;
+    // 获取到的目标位置的 depot tree 信息截止到哪个 changelist 前
     int64 changelist_id = 2;
 }
 
 message GetFileTreeRsp {
+    // 获取得到的目标 depot tree 下的所有文件 Revision 信息
+    // 值得注意的是，应该返回最接近请求中 changelist 的 revision
     repeated FileRevision file_revisions = 1;
 }
 

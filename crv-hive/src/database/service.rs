@@ -1,6 +1,13 @@
 use crate::common::depot_path::DepotPath;
-use crate::database::{dao::DaoError, entities::{changelists, file_revisions}, ltree_key};
-use sea_orm::{ColumnTrait, DbErr, EntityTrait, ModelTrait, QueryFilter, QueryOrder};
+use crate::database::{
+    dao::DaoError,
+    entities::{changelists, file_revisions},
+    ltree_key,
+};
+use sea_orm::{
+    ColumnTrait, DatabaseBackend, DbErr, EntityTrait, ModelTrait, QueryFilter, QueryOrder,
+    Statement, TransactionTrait,
+};
 use std::collections::HashMap;
 
 
@@ -96,4 +103,127 @@ pub async fn get_latest_revisions_by_depot_paths(
     }
 
     Ok(out)
+}
+
+fn depot_dir_or_wildcard_to_ltree_prefix(path: &str) -> Result<String, DaoError> {
+    let mut base = path.trim().to_string();
+    if base.ends_with("...") {
+        base.truncate(base.len() - 3);
+    }
+    if !base.ends_with('/') {
+        base.push('/');
+    }
+
+    let dummy_path = format!("{base}__ltree_prefix__");
+    let encoded = ltree_key::depot_path_str_to_ltree_key(&dummy_path)?;
+    let (prefix, _) = encoded
+        .rsplit_once('.')
+        .ok_or_else(|| ltree_key::LtreeKeyError::InvalidLtreeKey(encoded.clone()))?;
+    Ok(prefix.to_string())
+}
+
+fn ltree_depth(prefix: &str) -> i64 {
+    if prefix.is_empty() {
+        0
+    } else {
+        prefix.split('.').count() as i64
+    }
+}
+
+/// 获取指定 depot path 的文件树（按 changelist_id 截止）。
+///
+/// - 文件路径：返回该文件最新 revision（若存在）。
+/// - 目录路径：仅返回该目录“直接子级文件”的最新 revision。
+/// - 通配路径（`//a/b/...`）：返回目录下所有后代文件的最新 revision。
+pub async fn get_file_tree_revisions(
+    depot: &DepotPath,
+    changelist_id: i64,
+) -> Result<Vec<file_revisions::Model>, DaoError> {
+    let txn = db()?.begin().await?;
+
+    let changelist_id_value = changelist_id;
+    let models = if depot.is_file() {
+        let key = ltree_key::depot_path_str_to_ltree_key(&depot.to_string())?;
+        let stmt = Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            r#"
+            SELECT DISTINCT ON (path)
+                path::text AS path,
+                generation,
+                revision,
+                changelist_id,
+                binary_id,
+                size,
+                is_delete,
+                created_at,
+                metadata
+            FROM file_revisions
+            WHERE path = $1::ltree
+              AND ($2::bigint <= 0 OR changelist_id <= $2)
+            ORDER BY path, generation DESC, revision DESC, changelist_id DESC
+            "#,
+            [key.into(), changelist_id_value.into()].to_vec(),
+        );
+        file_revisions::Entity::find()
+            .from_raw_sql(stmt)
+            .all(&txn)
+            .await?
+    } else if depot.is_directory() {
+        let prefix = depot_dir_or_wildcard_to_ltree_prefix(&depot.to_string())?;
+        let depth = ltree_depth(&prefix) + 1;
+        let stmt = Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            r#"
+            SELECT DISTINCT ON (path)
+                path::text AS path,
+                generation,
+                revision,
+                changelist_id,
+                binary_id,
+                size,
+                is_delete,
+                created_at,
+                metadata
+            FROM file_revisions
+            WHERE path <@ $1::ltree
+              AND ($2::bigint <= 0 OR changelist_id <= $2)
+              AND nlevel(path) = $3
+            ORDER BY path, generation DESC, revision DESC, changelist_id DESC
+            "#,
+            [prefix.into(), changelist_id_value.into(), depth.into()].to_vec(),
+        );
+        file_revisions::Entity::find()
+            .from_raw_sql(stmt)
+            .all(&txn)
+            .await?
+    } else {
+        let prefix = depot_dir_or_wildcard_to_ltree_prefix(&depot.to_string())?;
+        let stmt = Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            r#"
+            SELECT DISTINCT ON (path)
+                path::text AS path,
+                generation,
+                revision,
+                changelist_id,
+                binary_id,
+                size,
+                is_delete,
+                created_at,
+                metadata
+            FROM file_revisions
+            WHERE path <@ $1::ltree
+              AND ($2::bigint <= 0 OR changelist_id <= $2)
+            ORDER BY path, generation DESC, revision DESC, changelist_id DESC
+            "#,
+            [prefix.into(), changelist_id_value.into()].to_vec(),
+        );
+        file_revisions::Entity::find()
+            .from_raw_sql(stmt)
+            .all(&txn)
+            .await?
+    };
+
+    txn.commit().await?;
+    Ok(models)
 }
