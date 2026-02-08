@@ -212,8 +212,7 @@ pub async fn handle(
         .await
     });
     let job_clone = job.clone();
-    let marker_clone = marker_tx.clone();
-    job.add_worker(async move { response_task(upload_rsp_stream, job_clone, marker_clone).await });
+    job.add_worker(async move { response_task(upload_rsp_stream, job_clone).await });
 
     drop(marker_tx);
 
@@ -431,7 +430,6 @@ async fn upload_task(
 async fn response_task(
     mut upload_rsp_stream: tonic::Streaming<UploadFileChunkRsp>,
     job: Arc<crate::daemon_server::job::Job>,
-    marker: Sender<()>,
 ) -> Result<(), String> {
     while let Some(rsp) = upload_rsp_stream
         .message()
@@ -457,6 +455,5 @@ async fn response_task(
             });
         }
     }
-    drop(marker);
     Ok(())
 }
