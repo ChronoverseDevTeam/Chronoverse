@@ -6,3 +6,4 @@ pub mod user;
 pub mod workspace;
 pub mod repository;
 pub mod tree;
+pub mod logger;
