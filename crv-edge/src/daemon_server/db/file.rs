@@ -2,7 +2,7 @@ use crate::daemon_server::db::*;
 use bincode::{Decode, Encode};
 use crv_core::path::basic::{DepotPath, LocalPath, WorkspaceDir, WorkspacePath};
 
-#[derive(Encode, Decode)]
+#[derive(Encode, Decode, Clone)]
 pub struct FileRevision {
     pub generation: i64,
     pub revision: i64,

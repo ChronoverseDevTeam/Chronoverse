@@ -25,6 +25,7 @@ impl Cli {
             match command {
                 Commands::Edge(edge_cli) => edge_cli.handle(channel).await,
                 Commands::Add(add_cli) => add_cli.handle(channel).await,
+                Commands::Checkout(checkout_cli) => checkout_cli.handle(channel).await,
                 Commands::Delete(delete_cli) => delete_cli.handle(channel).await,
                 Commands::ListActiveFiles(list_cli) => list_cli.handle(channel).await,
                 Commands::Sync(sync_cli) => sync_cli.handle(channel).await,
@@ -45,6 +46,7 @@ impl Cli {
 pub enum Commands {
     Edge(edge::EdgeCli),
     Add(file::AddCli),
+    Checkout(file::CheckoutCli),
     Delete(file::DeleteCli),
     #[command(name = "showactive")]
     ListActiveFiles(file::ListActiveFilesCli),

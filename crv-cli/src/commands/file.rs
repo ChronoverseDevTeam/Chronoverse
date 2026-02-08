@@ -3,10 +3,7 @@ use std::process;
 use anyhow::Result;
 use clap::Parser;
 use console::style;
-use crv_edge::pb::{
-    AddReq, DeleteReq, ListActiveFilesReq, SubmitReq, SyncReq,
-    file_service_client::FileServiceClient,
-};
+use crv_edge::pb::{AddReq, DeleteReq, ListActiveFilesReq, SubmitReq, SyncReq, file_service_client::FileServiceClient, CheckoutReq};
 use dialoguer::{Input, theme::ColorfulTheme};
 use tokio::signal;
 use tokio_stream::StreamExt;
@@ -48,6 +45,44 @@ impl AddCli {
         Ok(())
     }
 }
+
+#[derive(Parser)]
+pub struct CheckoutCli {
+    /// Workspace name
+    #[arg(short, long)]
+    pub workspace: String,
+
+    /// Paths to checkout (can be local paths, workspace paths, or depot paths)
+    #[arg(required = true)]
+    pub paths: Vec<String>,
+}
+
+impl CheckoutCli {
+    pub async fn handle(&self, channel: &Channel) -> Result<()> {
+        let mut client = FileServiceClient::new(channel.clone());
+
+        println!("{}", style("Checkout files...").cyan());
+
+        let request = CheckoutReq {
+            workspace_name: self.workspace.clone(),
+            paths: self.paths.clone(),
+        };
+
+        let response = client.checkout(request).await?.into_inner();
+
+        let count = response.checkouted_paths.len();
+        for path in response.checkouted_paths {
+            println!("  {} {}", style("✓").green(), path);
+        }
+
+        println!(
+            "{}",
+            style(format!("Checkout {} file(s) successfully!", count)).green()
+        );
+        Ok(())
+    }
+}
+
 
 #[derive(Parser)]
 pub struct SubmitCli {

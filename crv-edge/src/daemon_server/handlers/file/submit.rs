@@ -53,6 +53,7 @@ impl Drop for JobCancelOnDropStream {
     }
 }
 
+#[derive(Clone)]
 struct FileToSubmit {
     location: FileLocation,
     action: Action,
@@ -106,6 +107,9 @@ pub async fn handle(
             current_revision: file_revision,
         });
     }
+
+    // make a replica for submit task to use
+    let files_to_submit_replica = files_to_submit.clone();
 
     let runtime_config = RuntimeConfig::from_req(&req)?;
     let channel = state
@@ -205,15 +209,14 @@ pub async fn handle(
             ticket,
             description,
             file_chunks,
-            files_to_submit,
+            files_to_submit_replica,
             channel,
             marker_rx,
         )
         .await
     });
     let job_clone = job.clone();
-    let marker_clone = marker_tx.clone();
-    job.add_worker(async move { response_task(upload_rsp_stream, job_clone, marker_clone).await });
+    job.add_worker(async move { response_task(upload_rsp_stream, job_clone).await });
 
     drop(marker_tx);
 
@@ -248,7 +251,7 @@ async fn submit_task(
     ticket: String,
     description: String,
     file_chunks: Arc<Mutex<Vec<FileChunk>>>,
-    files_to_submit: Arc<Mutex<Vec<FileToSubmit>>>,
+    files_to_submit: Vec<FileToSubmit>,
     channel: Channel,
     mut marker: tokio::sync::mpsc::Receiver<()>,
 ) -> Result<(), String> {
@@ -273,7 +276,7 @@ async fn submit_task(
     }
 
     // 更新数据库
-    for file in files_to_submit.lock().await.iter() {
+    for file in files_to_submit.iter() {
         if file.action == Action::Delete {
             state
                 .db
@@ -431,7 +434,6 @@ async fn upload_task(
 async fn response_task(
     mut upload_rsp_stream: tonic::Streaming<UploadFileChunkRsp>,
     job: Arc<crate::daemon_server::job::Job>,
-    marker: Sender<()>,
 ) -> Result<(), String> {
     while let Some(rsp) = upload_rsp_stream
         .message()
@@ -457,6 +459,5 @@ async fn response_task(
             });
         }
     }
-    drop(marker);
     Ok(())
 }
