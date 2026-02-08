@@ -113,13 +113,7 @@ fn depot_dir_or_wildcard_to_ltree_prefix(path: &str) -> Result<String, DaoError>
     if !base.ends_with('/') {
         base.push('/');
     }
-
-    let dummy_path = format!("{base}__ltree_prefix__");
-    let encoded = ltree_key::depot_path_str_to_ltree_key(&dummy_path)?;
-    let (prefix, _) = encoded
-        .rsplit_once('.')
-        .ok_or_else(|| ltree_key::LtreeKeyError::InvalidLtreeKey(encoded.clone()))?;
-    Ok(prefix.to_string())
+    ltree_key::depot_dir_or_wildcard_to_ltree_prefix(&base).map_err(Into::into)
 }
 
 fn ltree_depth(prefix: &str) -> i64 {
@@ -198,6 +192,33 @@ pub async fn get_file_tree_revisions(
             .await?
     } else {
         let prefix = depot_dir_or_wildcard_to_ltree_prefix(&depot.to_string())?;
+        if prefix.is_empty() {
+            let stmt = Statement::from_sql_and_values(
+                DatabaseBackend::Postgres,
+                r#"
+                SELECT DISTINCT ON (path)
+                    path::text AS path,
+                    generation,
+                    revision,
+                    changelist_id,
+                    binary_id,
+                    size,
+                    is_delete,
+                    created_at,
+                    metadata
+                FROM file_revisions
+                WHERE ($1::bigint <= 0 OR changelist_id <= $1)
+                ORDER BY path, generation DESC, revision DESC, changelist_id DESC
+                "#,
+                [changelist_id_value.into()].to_vec(),
+            );
+            let models = file_revisions::Entity::find()
+                .from_raw_sql(stmt)
+                .all(&txn)
+                .await?;
+            txn.commit().await?;
+            return Ok(models);
+        }
         let stmt = Statement::from_sql_and_values(
             DatabaseBackend::Postgres,
             r#"

@@ -49,6 +49,43 @@ pub fn depot_path_to_ltree_key(depot: &DepotPath) -> Result<String, LtreeKeyErro
     Ok(labels.join("."))
 }
 
+/// 将目录或通配路径（`//a/b/` 或 `//a/b/...` 或 `//...`）编码为 ltree 前缀。
+///
+/// - 返回空字符串表示根前缀（`//...`）。
+pub fn depot_dir_or_wildcard_to_ltree_prefix(path: &str) -> Result<String, LtreeKeyError> {
+    let mut raw = path.trim();
+    if !raw.starts_with("//") {
+        return Err(LtreeKeyError::InvalidDepotPath("must start with '//'".to_string()));
+    }
+
+    if raw.ends_with("...") {
+        raw = raw.trim_end_matches("...");
+    }
+    raw = raw.trim_end_matches('/');
+
+    let rest = raw.trim_start_matches("//");
+    if rest.is_empty() {
+        return Ok(String::new());
+    }
+
+    let mut labels = Vec::new();
+    for seg in rest.split('/') {
+        if seg.is_empty() {
+            return Err(LtreeKeyError::InvalidDepotPath("empty depot path".to_string()));
+        }
+        let encoded = hex_lower(seg.as_bytes());
+        if encoded.len() > 256 {
+            return Err(LtreeKeyError::SegmentTooLong {
+                segment: seg.to_string(),
+                encoded_len: encoded.len(),
+            });
+        }
+        labels.push(encoded);
+    }
+
+    Ok(labels.join("."))
+}
+
 /// 将 `ltree` key 还原成 depot path 字符串（形如 `//a/b/c.txt`）。
 pub fn ltree_key_to_depot_path_str(key: &str) -> Result<String, LtreeKeyError> {
     if key.trim().is_empty() {

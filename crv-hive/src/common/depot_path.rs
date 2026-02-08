@@ -275,10 +275,6 @@ impl DepotPath {
                     "only `//a/b/...` wildcard is supported in hive".to_string(),
                 ));
             }
-            if range.dirs.is_empty() {
-                return Err(DepotPathError::Invalid("empty depot path".to_string()));
-            }
-
             let segments = DepotPathManager::global().intern_segments(&range.dirs);
             return Ok(DepotPath {
                 kind: DepotPathKind::Wildcard,

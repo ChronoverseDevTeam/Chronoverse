@@ -362,16 +362,29 @@ async fn insert_changelist_on<C: ConnectionTrait>(
     committed_at: i64,
     metadata: serde_json::Value,
 ) -> DaoResult<i64> {
-    let am = entities::changelists::ActiveModel {
-        author: Set(author.to_string()),
-        description: Set(description.to_string()),
-        committed_at: Set(committed_at),
-        metadata: Set(metadata),
-        ..Default::default()
-    };
+    let row = conn
+        .query_one(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            r#"
+            INSERT INTO changelists (author, description, committed_at, metadata)
+            VALUES ($1, $2, $3, $4::jsonb)
+            RETURNING id
+            "#,
+            vec![
+                author.to_string().into(),
+                description.to_string().into(),
+                committed_at.into(),
+                metadata.to_string().into(),
+            ],
+        ))
+        .await?;
 
-    let model = am.insert(conn).await?;
-    Ok(model.id)
+    let row = row.ok_or_else(|| {
+        DaoError::Db(DbErr::RecordNotFound(
+            "failed to insert changelist".to_string(),
+        ))
+    })?;
+    Ok(row.try_get("", "id")?)
 }
 
 async fn ensure_file_exists_on<C: ConnectionTrait>(

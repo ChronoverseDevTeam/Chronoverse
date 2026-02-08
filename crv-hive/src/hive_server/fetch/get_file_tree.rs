@@ -18,6 +18,11 @@ pub async fn get_file_tree(
             req.depot_wildcard, e
         ))
     })?;
+    if depot.is_directory() {
+        return Err(Status::invalid_argument(
+            "directory path is not supported; use //... or //a/b/c/... for wildcard",
+        ));
+    }
 
     log.info(&format!(
         "get_file_tree: path={}, changelist_id={}",
@@ -147,7 +152,7 @@ mod tests {
         assert_eq!(out.file_revisions[0].revision, 2);
     }
 
-    async fn file_tree_directory_and_wildcard() {
+    async fn file_tree_wildcard_descendants() {
         let base = unique_depot_dir("dir");
         let file_a = format!("{base}a.txt");
         let file_b = format!("{base}b.txt");
@@ -157,26 +162,11 @@ mod tests {
         insert_revision(&file_b, 1, 1, false).await;
         insert_revision(&nested, 1, 1, false).await;
 
-        let dir_req = GetFileTreeReq {
-            depot_wildcard: base.clone(),
-            changelist_id: 0,
-        };
-        let log = HiveLog::new("GetFileTree(test_dir)");
-        let resp = get_file_tree(log, Request::new(dir_req))
-            .await
-            .expect("get_file_tree");
-        let out = resp.into_inner();
-        let paths: std::collections::HashSet<String> =
-            out.file_revisions.into_iter().map(|r| r.path).collect();
-        assert!(paths.contains(&file_a));
-        assert!(paths.contains(&file_b));
-        assert!(!paths.contains(&nested));
-
         let wildcard_req = GetFileTreeReq {
             depot_wildcard: format!("{}...", base),
             changelist_id: 0,
         };
-        let log = HiveLog::new("GetFileTree(test_wildcard)");
+        let log = HiveLog::new("GetFileTree(test_wildcard_descendants)");
         let resp = get_file_tree(log, Request::new(wildcard_req))
             .await
             .expect("get_file_tree");
@@ -186,6 +176,32 @@ mod tests {
         assert!(paths.contains(&file_a));
         assert!(paths.contains(&file_b));
         assert!(paths.contains(&nested));
+    }
+
+    async fn file_tree_root_wildcard_lists_all() {
+        let base = unique_depot_dir("root_all");
+        let file_a = format!("{base}a.txt");
+        let file_b = format!("{base}b.txt");
+        let other = format!("//tests/get_file_tree/{}/x.txt", uuid::Uuid::new_v4());
+
+        insert_revision(&file_a, 1, 1, false).await;
+        insert_revision(&file_b, 1, 1, false).await;
+        insert_revision(&other, 1, 1, false).await;
+
+        let req = GetFileTreeReq {
+            depot_wildcard: "//...".to_string(),
+            changelist_id: 0,
+        };
+        let log = HiveLog::new("GetFileTree(test_root_wildcard)");
+        let resp = get_file_tree(log, Request::new(req))
+            .await
+            .expect("get_file_tree");
+        let out = resp.into_inner();
+        let paths: std::collections::HashSet<String> =
+            out.file_revisions.into_iter().map(|r| r.path).collect();
+        assert!(paths.contains(&file_a));
+        assert!(paths.contains(&file_b));
+        assert!(paths.contains(&other));
     }
 
     #[tokio::test]
@@ -201,12 +217,26 @@ mod tests {
         assert_eq!(err.code(), tonic::Code::InvalidArgument);
     }
 
+    #[tokio::test]
+    async fn test_directory_path_rejected() {
+        let req = GetFileTreeReq {
+            depot_wildcard: "//a/b/".to_string(),
+            changelist_id: 0,
+        };
+        let log = HiveLog::new("GetFileTree(test_dir_reject)");
+        let err = get_file_tree(log, Request::new(req))
+            .await
+            .expect_err("should reject directory path");
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+    }
+
     #[test]
     #[ignore = "requires external Postgres; enable with CRV_RUN_HIVE_DB_TESTS=1"]
     fn get_file_tree_tests_harness() {
         crate::test_support::run_hive_db_test(|| async {
             file_tree_file_with_changelist_cutoff().await;
-            file_tree_directory_and_wildcard().await;
+            file_tree_wildcard_descendants().await;
+            file_tree_root_wildcard_lists_all().await;
         });
     }
 }

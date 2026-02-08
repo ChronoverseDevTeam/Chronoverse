@@ -62,47 +62,10 @@ pub async fn ensure_hive_db() {
 }
 
 #[cfg(test)]
-async fn changelists_has_changes_column(db: &DatabaseConnection) -> bool {
-    db.query_one(Statement::from_sql_and_values(
-        DatabaseBackend::Postgres,
-        r#"
-        SELECT 1
-        FROM information_schema.columns
-        WHERE table_schema = 'public'
-          AND table_name = 'changelists'
-          AND column_name = 'changes'
-        LIMIT 1
-        "#,
-        vec![],
-    ))
-    .await
-    .expect("check changelists schema")
-    .is_some()
-}
-
-#[cfg(test)]
 pub async fn insert_test_changelist(db: &DatabaseConnection) -> i64 {
-    let has_changes = changelists_has_changes_column(db).await;
     let backend = DatabaseBackend::Postgres;
-    let row = if has_changes {
-        db.query_one(Statement::from_sql_and_values(
-            backend,
-            r#"
-            INSERT INTO changelists (author, description, changes, committed_at, metadata)
-            VALUES ($1, $2, '[]'::jsonb, $3, $4)
-            RETURNING id
-            "#,
-            vec![
-                "test".into(),
-                "test".into(),
-                0i64.into(),
-                serde_json::json!({}).into(),
-            ],
-        ))
-        .await
-        .expect("insert changelist")
-    } else {
-        db.query_one(Statement::from_sql_and_values(
+    let row = db
+        .query_one(Statement::from_sql_and_values(
             backend,
             r#"
             INSERT INTO changelists (author, description, committed_at, metadata)
@@ -117,8 +80,7 @@ pub async fn insert_test_changelist(db: &DatabaseConnection) -> i64 {
             ],
         ))
         .await
-        .expect("insert changelist")
-    };
+        .expect("insert changelist");
 
     let row = row.expect("changelist row");
     row.try_get("", "id").expect("get changelist id")
