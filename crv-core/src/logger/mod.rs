@@ -1,7 +1,6 @@
 mod config;
 mod writer;
 mod macros;
-pub mod example;
 pub mod rotation;
 pub mod reader;
 pub mod recovery;
@@ -9,12 +8,15 @@ pub mod test;
 
 pub use config::{LogConfig, LogFormat, LogLevel, LogOutput};
 pub use writer::LogWriter;
-pub use rotation::LineBasedRotation;
+pub use rotation::{RotationWriter, LogRotation, RotationStats};
 pub use reader::LogReader;
 pub use recovery::{RecoveryLog, RecoveryState, LogEntry};
 
 pub use tracing;
-pub use tracing::{trace, debug, info, warn, error, instrument, span, event};
+pub use tracing::{instrument, span, event};
+
+#[doc(inline)]
+pub use crate::{log_trace, log_debug, log_info, log_warn, log_error, log_span};
 
 use std::path::PathBuf;
 use tracing_subscriber::{
@@ -220,29 +222,9 @@ impl Logger {
         &self,
         path: &PathBuf,
         rotation: &LogRotation,
-    ) -> Result<tracing_appender::rolling::RollingFileAppender, LogError> {
-        let dir = path.parent().ok_or_else(|| {
-            LogError::InvalidPath(format!("Invalid log path: {}", path.display()))
-        })?;
-
-        let file_name = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("chronoverse.log");
-
-        let appender = match rotation {
-            LogRotation::Hourly => tracing_appender::rolling::hourly(dir, file_name),
-            LogRotation::Daily => tracing_appender::rolling::daily(dir, file_name),
-            LogRotation::Never => tracing_appender::rolling::never(dir, file_name),
-            LogRotation::SizeBased { max_size_mb } => {
-                return Err(LogError::UnsupportedRotation(format!(
-                    "Size-based rotation ({}MB) not yet implemented",
-                    max_size_mb
-                )));
-            }
-        };
-
-        Ok(appender)
+    ) -> Result<rotation::TracingRotationWriter, LogError> {
+        let writer = rotation::RotationWriter::new(path.clone(), rotation.clone())?;
+        Ok(rotation::TracingRotationWriter::new(std::sync::Arc::new(writer)))
     }
 }
 
@@ -292,14 +274,6 @@ impl LoggerBuilder {
             output: self.output.unwrap_or(LogOutput::Stdout),
         })
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LogRotation {
-    Hourly,
-    Daily,
-    Never,
-    SizeBased { max_size_mb: u64 },
 }
 
 #[derive(Debug, thiserror::Error)]
