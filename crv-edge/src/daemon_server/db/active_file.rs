@@ -4,7 +4,7 @@ use crate::daemon_server::db::*;
 use bincode::{Decode, Encode};
 use crv_core::path::basic::{WorkspaceDir, WorkspacePath};
 
-#[derive(Encode, Decode, PartialEq, Eq)]
+#[derive(Encode, Decode, PartialEq, Eq, Clone)]
 pub enum Action {
     Add,
     Delete,

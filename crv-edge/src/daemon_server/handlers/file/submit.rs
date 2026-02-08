@@ -53,6 +53,7 @@ impl Drop for JobCancelOnDropStream {
     }
 }
 
+#[derive(Clone)]
 struct FileToSubmit {
     location: FileLocation,
     action: Action,
@@ -106,6 +107,9 @@ pub async fn handle(
             current_revision: file_revision,
         });
     }
+
+    // make a replica for submit task to use
+    let files_to_submit_replica = files_to_submit.clone();
 
     let runtime_config = RuntimeConfig::from_req(&req)?;
     let channel = state
@@ -205,7 +209,7 @@ pub async fn handle(
             ticket,
             description,
             file_chunks,
-            files_to_submit,
+            files_to_submit_replica,
             channel,
             marker_rx,
         )
@@ -247,7 +251,7 @@ async fn submit_task(
     ticket: String,
     description: String,
     file_chunks: Arc<Mutex<Vec<FileChunk>>>,
-    files_to_submit: Arc<Mutex<Vec<FileToSubmit>>>,
+    files_to_submit: Vec<FileToSubmit>,
     channel: Channel,
     mut marker: tokio::sync::mpsc::Receiver<()>,
 ) -> Result<(), String> {
@@ -272,7 +276,7 @@ async fn submit_task(
     }
 
     // 更新数据库
-    for file in files_to_submit.lock().await.iter() {
+    for file in files_to_submit.iter() {
         if file.action == Action::Delete {
             state
                 .db
