@@ -1,6 +1,6 @@
 use crate::daemon_server::config::RuntimeConfig;
 use crate::daemon_server::db::active_file::Action;
-use crate::daemon_server::db::file::{FileLocation, FileRevision};
+use crate::daemon_server::db::file::{FileLocation, FileMeta, FileRevision};
 use crate::daemon_server::error::{AppError, AppResult};
 use crate::daemon_server::handlers::utils::{
     expand_to_mapped_files_in_edge_meta, normalize_paths_strict,
@@ -56,6 +56,7 @@ impl Drop for JobCancelOnDropStream {
 struct FileToSync {
     location: FileLocation,
     action: Action,
+    // None only when action is Delete
     latest_revision: Option<FileRevision>,
     chunk_hashes: Vec<String>,
 }
@@ -112,6 +113,7 @@ pub async fn handle(
         .map(|x| (x.depot_path.to_custom_string(), x))
         .collect::<HashMap<_, _>>();
 
+    // 这个过程获取到的文件不一定都在参数指定的文件范围（local_paths）内，比如排除文件没办法静态计算
     let hive_files_map = file_tree_rsp
         .file_revisions
         .iter()
@@ -123,6 +125,8 @@ pub async fn handle(
             }
         })
         .collect::<HashMap<_, _>>();
+
+    // todo 因此，这里需要过滤一下
 
     let edge_files_set = edge_files_map.keys().cloned().collect::<HashSet<_>>();
     let hive_files_set = hive_files_map.keys().cloned().collect::<HashSet<_>>();
@@ -300,6 +304,14 @@ async fn sync_file(
                         })
                     }
                 }
+                let file_meta = FileMeta {
+                    location: file.location,
+                    current_revision: file.latest_revision.unwrap(),
+                };
+                app_state
+                    .db
+                    .set_file_meta(file_meta.location.workspace_path.clone(), file_meta)
+                    .map_err(|x| format!("{x}"))?;
             }
             Action::Delete => {
                 app_state
