@@ -17,6 +17,7 @@ use crate::hive_pb::{
 use crate::pb::{SubmitProgress, SubmitReq};
 use crv_core::path::engine::PathEngine;
 use crv_core::repository::compute_chunk_hash;
+use crv_core::{log_debug, log_error, log_info, log_warn};
 use prost::Message;
 use std::pin::Pin;
 use std::sync::{Arc, Weak};
@@ -69,13 +70,23 @@ pub async fn handle(
 ) -> AppResult<Response<SubmitProgressStream>> {
     let _ctx = SessionContext::from_req(&req)?;
     let request_body = req.get_ref();
+
+    log_debug!(
+        workspace = %request_body.workspace_name,
+        path_count = request_body.paths.len(),
+        "file::submit handler invoked"
+    );
+
     let workspace_meta = state
         .db
         .get_confirmed_workspace_meta(&request_body.workspace_name)?
-        .ok_or(AppError::Raw(Status::not_found(format!(
-            "Workspace {} not found.",
-            request_body.workspace_name
-        ))))?;
+        .ok_or_else(|| {
+            log_warn!(workspace = %request_body.workspace_name, "file::submit: workspace not found");
+            AppError::Raw(Status::not_found(format!(
+                "Workspace {} not found.",
+                request_body.workspace_name
+            )))
+        })?;
 
     let path_engine = PathEngine::new(workspace_meta.config.clone(), &request_body.workspace_name);
 
@@ -160,6 +171,14 @@ pub async fn handle(
         MessageStoragePolicy::None,
         WorkerProtocol::And,
         JobRetentionPolicy::Immediate,
+    );
+    let job_id = job.data.read().unwrap().id.clone();
+
+    log_info!(
+        workspace = %request_body.workspace_name,
+        file_count = files_to_submit.len(),
+        job_id = %job_id,
+        "file::submit starting job"
     );
 
     let rx = job.tx.subscribe();
@@ -251,26 +270,32 @@ async fn submit_task(
     channel: Channel,
     mut marker: tokio::sync::mpsc::Receiver<()>,
 ) -> Result<(), String> {
+    log_debug!("submit_task: waiting for all upload workers to finish");
     while let Some(_) = marker.recv().await {}
     let mut hive_client = HiveServiceClient::new(channel.clone());
     let submit_request = crate::hive_pb::SubmitReq {
-        ticket,
+        ticket: ticket.clone(),
         description,
         file_chunks: file_chunks.lock().await.clone(),
     };
+    log_debug!(ticket = %ticket, "submit_task: sending submit request to hive");
     let submit_response = hive_client
         .submit(submit_request)
         .await
-        .map_err(|x| format!("{x}"))?
+        .map_err(|x| {
+            let msg = format!("{x}");
+            log_error!(error = %msg, "submit_task: hive submit RPC failed");
+            msg
+        })?
         .into_inner();
 
     if !submit_response.success {
-        return Err(format!(
-            "SubmitReq failed with error: {}",
-            submit_response.message
-        ));
+        let msg = format!("SubmitReq failed with error: {}", submit_response.message);
+        log_error!(ticket = %ticket, error = %submit_response.message, "submit_task: hive rejected submit");
+        return Err(msg);
     }
 
+    log_info!(ticket = %ticket, "submit_task: hive accepted submit, updating local db");
     // 更新数据库
     for file in files_to_submit.lock().await.iter() {
         if file.action == Action::Delete {
@@ -278,6 +303,7 @@ async fn submit_task(
                 .db
                 .delete_file(&file.location.workspace_path)
                 .map_err(|x| format!("{x}"))?;
+            log_debug!(path = %file.location.workspace_path.to_custom_string(), "submit_task: db delete file");
             continue;
         }
         let latest_revision = submit_response
@@ -298,6 +324,12 @@ async fn submit_task(
                 },
             )
             .map_err(|x| format!("{x}"))?;
+        log_debug!(
+            path = %file.location.workspace_path.to_custom_string(),
+            generation = latest_revision.generation,
+            revision = latest_revision.revision,
+            "submit_task: db updated file revision"
+        );
     }
 
     // todo 这里可以回报一个最终的提交结果给请求方

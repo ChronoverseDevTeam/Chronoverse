@@ -16,6 +16,7 @@ use crate::pb::sync_progress::Payload::FileUpdate;
 use crate::pb::{SyncFileMetadata, SyncFileUpdate, SyncMetadata, SyncProgress, SyncReq};
 use crv_core::path::basic::DepotPath;
 use crv_core::path::engine::PathEngine;
+use crv_core::{log_debug, log_error, log_info, log_warn};
 use prost::Message;
 use std::collections::{HashMap, HashSet};
 use std::ops::Sub;
@@ -68,6 +69,12 @@ pub async fn handle(
 ) -> AppResult<Response<SyncProgressStream>> {
     let runtime_config = RuntimeConfig::from_req(&req)?;
     let request_body = req.into_inner();
+
+    log_debug!(
+        workspace = %request_body.workspace_name,
+        path_count = request_body.paths.len(),
+        "file::sync handler invoked"
+    );
 
     let channel = state
         .hive_channel
@@ -148,6 +155,10 @@ pub async fn handle(
         files_to_edit.insert(k.clone());
     }
 
+    let to_add_count = files_to_add.len();
+    let to_delete_count = files_to_delete.len();
+    let to_edit_count = files_to_edit.len();
+
     // 从 hive file map 中获取元数据
     for file in files_to_add.iter().chain(files_to_edit.iter()) {
         let file_meta = hive_files_map.get(file).unwrap();
@@ -202,12 +213,26 @@ pub async fn handle(
         });
     }
 
+    log_info!(
+        workspace = %request_body.workspace_name,
+        to_add = to_add_count,
+        to_delete = to_delete_count,
+        to_edit = to_edit_count,
+        "file::sync: computed diff"
+    );
+
     // 7. 创建 Job
     let job = state.job_manager.create_job(
         None,
         MessageStoragePolicy::None,
         WorkerProtocol::And,
         JobRetentionPolicy::Immediate,
+    );
+    let job_id = job.data.read().unwrap().id.clone();
+    log_info!(
+        workspace = %request_body.workspace_name,
+        job_id = %job_id,
+        "file::sync: starting sync job"
     );
     let rx = job.tx.subscribe();
 
@@ -256,9 +281,9 @@ async fn sync_file(
             .map_err(|x| format!("{x}"))?
             .is_some()
         {
-            println!(
-                "Already checkout file {}, skip sync.",
-                file.location.workspace_path.to_custom_string()
+            log_info!(
+                path = %file.location.workspace_path.to_custom_string(),
+                "file::sync: skipping checked-out file"
             );
             continue;
         }

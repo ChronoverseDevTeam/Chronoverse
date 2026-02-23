@@ -4,6 +4,7 @@ use crate::daemon_server::job::{
 };
 use crate::daemon_server::state::AppState;
 use crate::pb::{TransferBlueprintReq, TransferBlueprintRsp};
+use crv_core::{log_debug, log_info, log_warn};
 use prost::Message;
 use rand::Rng;
 use std::pin::Pin;
@@ -49,6 +50,12 @@ pub async fn handle(
         WorkerProtocol::And,
         JobRetentionPolicy::Immediate,
     );
+    let job_id = job.data.read().unwrap().id.clone();
+    log_debug!(
+        job_id = %job_id,
+        worker_count = req.worker_count,
+        "debug::transfer_blueprint handler invoked"
+    );
     // 订阅消息队列
     let rx = job.tx.subscribe();
 
@@ -60,6 +67,7 @@ pub async fn handle(
     }
 
     job.clone().start();
+    log_info!(job_id = %job_id, worker_count = worker_count, "debug::transfer_blueprint job started");
 
     let output_stream = BroadcastStream::new(rx).filter_map(move |res| {
         match res {
@@ -95,6 +103,7 @@ async fn worker_task(
     worker_id: i32,
 ) -> Result<(), String> {
     let total_chunks = 10;
+    log_debug!(worker_id = worker_id, total_chunks = total_chunks, "debug::transfer_blueprint worker started");
 
     for i in 0..total_chunks {
         // Simulate work
@@ -108,8 +117,10 @@ async fn worker_task(
             retry += 1;
             if retry > 3 {
                 // Fail after 3 retries
+                log_warn!(worker_id = worker_id, retry = retry, "debug::transfer_blueprint worker: network timeout, giving up");
                 return Err("Network timeout after 3 retries".to_string());
             }
+            log_warn!(worker_id = worker_id, retry = retry, "debug::transfer_blueprint worker: network unstable, retrying");
             job.report_payload(TransferBlueprintRsp {
                 worker_id: worker_id.to_string(),
                 r#type: "warning".to_string(),
@@ -128,5 +139,6 @@ async fn worker_task(
         });
     }
 
+    log_debug!(worker_id = worker_id, "debug::transfer_blueprint worker completed");
     Ok(())
 }

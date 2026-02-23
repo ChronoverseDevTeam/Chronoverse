@@ -1,3 +1,4 @@
+use crv_core::{log_debug, log_error, log_info, log_warn};
 use futures::future::BoxFuture;
 use prost::Message;
 use serde::{Deserialize, Serialize};
@@ -91,6 +92,13 @@ impl Job {
             }
         };
 
+        log_debug!(
+            job_id = %id,
+            protocol = ?protocol,
+            retention_policy = ?retention_policy,
+            "Job created"
+        );
+
         Self {
             data: RwLock::new(JobData {
                 id,
@@ -127,13 +135,22 @@ impl Job {
         drop(data);
 
         let workers = std::mem::take(&mut *self.pending_workers.lock().unwrap());
+        let worker_count = workers.len();
         let protocol = self.protocol;
+        let job_id = self.data.read().unwrap().id.clone();
         let job_ref = self.clone();
         let cancel_notify = self.cancel_notify.clone();
 
+        log_info!(
+            job_id = %job_id,
+            worker_count = worker_count,
+            protocol = ?protocol,
+            "Job started"
+        );
+
         tokio::spawn(async move {
             let mut set = JoinSet::new();
-            let total_workers = workers.len();
+            let total_workers = worker_count;
             for w in workers {
                 set.spawn(w);
             }
@@ -144,7 +161,7 @@ impl Job {
                 tokio::select! {
                     _ = cancel_notify.notified() => {
                         set.abort_all();
-                        println!("[JobManager] All workers are aborted because of job canceled.");
+                        log_info!(job_id = %job_id, "All workers aborted due to job cancellation");
                         // Status update is handled in cancel()
                         return;
                     }
@@ -156,11 +173,13 @@ impl Job {
                                         match result {
                                             Ok(Ok(_)) => {},
                                             Ok(Err(e)) => {
+                                                log_error!(job_id = %job_id, error = %e, "Worker returned error (And protocol), failing job");
                                                 job_ref.fail(format!("Worker failed: {}", e));
                                                 set.abort_all();
                                                 return;
                                             }
                                             Err(e) => {
+                                                log_error!(job_id = %job_id, panic = %e, "Worker panicked (And protocol), failing job");
                                                 job_ref.fail(format!("Worker panic: {}", e));
                                                 set.abort_all();
                                                 return;
@@ -170,8 +189,14 @@ impl Job {
                                     WorkerProtocol::Or => {
                                         match result {
                                             Ok(Ok(_)) => {},
-                                            Ok(Err(_)) => failures += 1,
-                                            Err(_) => failures += 1,
+                                            Ok(Err(e)) => {
+                                                log_warn!(job_id = %job_id, error = %e, "Worker returned error (Or protocol)");
+                                                failures += 1;
+                                            }
+                                            Err(e) => {
+                                                log_warn!(job_id = %job_id, panic = %e, "Worker panicked (Or protocol)");
+                                                failures += 1;
+                                            }
                                         }
                                     }
                                 }
@@ -200,7 +225,9 @@ impl Job {
     }
 
     pub fn cancel(&self) {
+        let job_id = self.data.read().unwrap().id.clone();
         if self.transition_to_terminal(JobStatus::Cancelled) {
+            log_info!(job_id = %job_id, "Job cancelled");
             self.broadcast(JobEvent::StatusChange(JobStatus::Cancelled));
             self.cancel_notify.notify_waiters();
             self.trigger_cleanup();
@@ -208,14 +235,18 @@ impl Job {
     }
 
     pub fn complete(&self) {
+        let job_id = self.data.read().unwrap().id.clone();
         if self.transition_to_terminal(JobStatus::Completed) {
+            log_info!(job_id = %job_id, "Job completed successfully");
             self.broadcast(JobEvent::StatusChange(JobStatus::Completed));
             self.trigger_cleanup();
         }
     }
 
     pub fn fail(&self, error: String) {
+        let job_id = self.data.read().unwrap().id.clone();
         if self.transition_to_terminal(JobStatus::Failed(error.clone())) {
+            log_error!(job_id = %job_id, error = %error, "Job failed");
             self.broadcast(JobEvent::Error(error.clone()));
             self.broadcast(JobEvent::StatusChange(JobStatus::Failed(error)));
             self.trigger_cleanup();
