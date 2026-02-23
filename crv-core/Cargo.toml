@@ -21,6 +21,11 @@ blake3 = "1.8"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
 bson = { version = "2", features = ["chrono-0_4"] }
 
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt"] }
+tracing-appender = "0.2"
+
 # Shards Repository Related
 crc32fast = "1.5.0"
 lz4_flex = { version = "0.12.0", default-features = false, features = ["std"] }

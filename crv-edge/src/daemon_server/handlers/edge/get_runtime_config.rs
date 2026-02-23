@@ -2,6 +2,7 @@ use crate::daemon_server::config::RuntimeConfig;
 use crate::daemon_server::error::AppResult;
 use crate::daemon_server::state::AppState;
 use crate::pb::{GetRuntimeConfigReq, GetRuntimeConfigRsp, RuntimeConfigItem};
+use crv_core::log_debug;
 use tonic::{Request, Response};
 
 pub async fn handle(
@@ -9,6 +10,11 @@ pub async fn handle(
     req: Request<GetRuntimeConfigReq>,
 ) -> AppResult<Response<GetRuntimeConfigRsp>> {
     let runtime_config = RuntimeConfig::from_req(&req)?;
+    log_debug!(
+        remote_addr = %runtime_config.remote_addr.value,
+        user = %runtime_config.user.value,
+        "edge::get_runtime_config handler invoked"
+    );
 
     let response = GetRuntimeConfigRsp {
         remote_addr: Some(runtime_config.remote_addr.into()),
