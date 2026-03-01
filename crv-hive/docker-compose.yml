@@ -1,0 +1,57 @@
+services:
+  postgres:
+    image: postgres:18.1
+    container_name: crv-hive-postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: chronoverse
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d chronoverse"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - crv_hive_postgres_data:/var/lib/postgresql
+
+  crv-hive:
+    image: crv-hive:latest
+    container_name: crv-hive
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      CRV_HIVE_CONFIG_PATH: /app/config/hive.toml
+    ports:
+      - "34560:34560"
+    volumes:
+      - crv_hive_data:/var/lib/crv-hive
+      - crv_hive_config:/app/config
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        mkdir -p /app/config /var/lib/crv-hive/repository /var/lib/crv-hive/upload-cache
+        if [ ! -f /app/config/hive.toml ]; then
+          printf '%s\n' \
+            'postgres_hostname = "postgres"' \
+            'postgres_database = "chronoverse"' \
+            'postgres_username = "postgres"' \
+            'postgres_password = "postgres"' \
+            'postgres_port = 5432' \
+            'hive_address = "0.0.0.0:34560"' \
+            'repository_path = "/var/lib/crv-hive/repository"' \
+            'upload_cache_path = "/var/lib/crv-hive/upload-cache"' \
+            'jwt_secret = "dev-secret"' \
+            > /app/config/hive.toml
+        fi
+        exec /usr/local/bin/crv-hive
+
+volumes:
+  crv_hive_postgres_data:
+  crv_hive_data:
+  crv_hive_config:
