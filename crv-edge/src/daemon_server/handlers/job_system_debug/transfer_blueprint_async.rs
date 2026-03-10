@@ -7,6 +7,7 @@ use crate::pb::{
     TransferBlueprintAsyncCheckReq, TransferBlueprintAsyncCheckRsp, TransferBlueprintAsyncStartReq,
     TransferBlueprintAsyncStartRsp, TransferBlueprintRsp,
 };
+use crv_core::{log_debug, log_info, log_warn};
 use prost::Message;
 use rand::Rng;
 use std::sync::Arc;
@@ -18,6 +19,7 @@ pub async fn start(
     req: Request<TransferBlueprintAsyncStartReq>,
 ) -> AppResult<Response<TransferBlueprintAsyncStartRsp>> {
     let req = req.into_inner();
+    log_debug!(worker_count = req.worker_count, "debug::transfer_blueprint_async::start handler invoked");
     // Enable RingBuffer with capacity 100
     // Retain job for 60 seconds after completion
     let job = state.job_manager.create_job(
@@ -36,6 +38,7 @@ pub async fn start(
     }
 
     job.start();
+    log_info!(job_id = %job_id, worker_count = worker_count, "debug::transfer_blueprint_async: async job started");
 
     Ok(Response::new(TransferBlueprintAsyncStartRsp { job_id }))
 }
@@ -45,6 +48,7 @@ pub async fn check(
     req: Request<TransferBlueprintAsyncCheckReq>,
 ) -> AppResult<Response<TransferBlueprintAsyncCheckRsp>> {
     let req = req.into_inner();
+    log_debug!(job_id = %req.job_id, "debug::transfer_blueprint_async::check handler invoked");
     let job = state
         .job_manager
         .get_job(&req.job_id)
@@ -64,6 +68,8 @@ pub async fn check(
             JobStatus::Cancelled => return Err(AppError::Raw(Status::cancelled("Job Cancelled"))),
         }
     };
+
+    log_debug!(job_id = %req.job_id, status = %status, "debug::transfer_blueprint_async::check returned status");
 
     let events = job.consume_buffered_events();
     let messages: Vec<TransferBlueprintRsp> = events
@@ -86,6 +92,7 @@ async fn worker_task(
     worker_id: i32,
 ) -> Result<(), String> {
     let total_chunks = 10;
+    log_debug!(worker_id = worker_id, "debug::transfer_blueprint_async worker started");
 
     for i in 0..total_chunks {
         let delay = rand::thread_rng().gen_range(100..500);
@@ -97,8 +104,10 @@ async fn worker_task(
             retry += 1;
             if retry > 3 {
                 // Fail after 3 retries
+                log_warn!(worker_id = worker_id, retry = retry, "debug::transfer_blueprint_async worker: giving up after 3 retries");
                 return Err("Network timeout after 3 retries".to_string());
             }
+            log_warn!(worker_id = worker_id, retry = retry, "debug::transfer_blueprint_async worker: network unstable, retrying");
             job.report_payload(TransferBlueprintRsp {
                 worker_id: worker_id.to_string(),
                 r#type: "warning".to_string(),
@@ -117,5 +126,6 @@ async fn worker_task(
         });
     }
 
+    log_debug!(worker_id = worker_id, "debug::transfer_blueprint_async worker completed");
     Ok(())
 }

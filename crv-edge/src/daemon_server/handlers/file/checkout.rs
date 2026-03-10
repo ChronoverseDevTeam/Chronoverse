@@ -5,6 +5,7 @@ use crate::daemon_server::state::AppState;
 use crate::pb::{CheckoutReq, CheckoutRsp};
 use crv_core::path::basic::LocalPath;
 use crv_core::path::engine::PathEngine;
+use crv_core::{log_debug, log_info, log_warn};
 use tonic::{Request, Response, Status};
 
 pub async fn handle(
@@ -13,14 +14,23 @@ pub async fn handle(
 ) -> AppResult<Response<CheckoutRsp>> {
     let request_body = req.into_inner();
 
+    log_debug!(
+        workspace = %request_body.workspace_name,
+        path_count = request_body.paths.len(),
+        "file::checkout handler invoked"
+    );
+
     // 1. 获取 workspace 信息
     let workspace_meta = state
         .db
         .get_confirmed_workspace_meta(&request_body.workspace_name)?
-        .ok_or(AppError::Raw(Status::not_found(format!(
-            "Workspace {} not found.",
-            request_body.workspace_name
-        ))))?;
+        .ok_or_else(|| {
+            log_warn!(workspace = %request_body.workspace_name, "file::checkout: workspace not found");
+            AppError::Raw(Status::not_found(format!(
+                "Workspace {} not found.",
+                request_body.workspace_name
+            )))
+        })?;
 
     let path_engine = PathEngine::new(workspace_meta.config.clone(), &request_body.workspace_name);
 
@@ -56,5 +66,10 @@ pub async fn handle(
         checkout_paths.push(file.workspace_path.to_custom_string());
     }
 
+    log_info!(
+        workspace = %request_body.workspace_name,
+        checked_out_count = checkout_paths.len(),
+        "file::checkout handler ok"
+    );
     Ok(Response::new(CheckoutRsp { checkouted_paths: checkout_paths }))
 }
