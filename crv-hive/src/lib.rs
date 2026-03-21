@@ -10,6 +10,7 @@ pub mod database;
 pub mod caching;
 pub mod common;
 pub mod logging;
+pub mod crv2;
 
 #[cfg(test)]
 pub mod test_support;
