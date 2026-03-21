@@ -24,3 +24,9 @@ bson = { version = "2", features = ["chrono-0_4"] }
 # Shards Repository Related
 crc32fast = "1.5.0"
 lz4_flex = { version = "0.12.0", default-features = false, features = ["std"] }
+
+# CAS Store
+iroh-blobs = "0.99.0"
+bytes = "1"
+futures-core = "0.3"
+futures-lite = "2"
