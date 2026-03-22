@@ -1,43 +1,60 @@
-use crv_hive::{config, hive_server, database};
-use std::net::SocketAddr;
-use tokio::signal;
+use std::sync::Arc;
+
+use crv_hive::{crv2::{
+    iroh::{
+        captive_portal::CaptivePortalServer,
+        iroh_client::{IrohClient, IrohClientConfig},
+        relay::RelayServer,
+        service::IrohService,
+    },
+    ChronoverseApp,
+}, logging};
+
+const RELAY_ADDR: &str = "0.0.0.0:3340";
+const RELAY_URL: &str = "http://127.0.0.1:3340";
+// iroh's captive-portal probe always targets port 80 on the relay host.
+// We bind a lightweight responder there so the probe succeeds immediately.
+const CAPTIVE_PORTAL_ADDR: &str = "0.0.0.0:80";
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    crv_hive::logging::init_logging();
+    logging::init_logging();
+    let logger = logging::HiveLog::new("main");
+    // ── 1. Start the embedded iroh relay ────────────────────────────────────
+    let relay = RelayServer::start(RELAY_ADDR.parse()?).await?;
+    logger.info(&format!("iroh relay  : {:?}", relay.http_addr()));
 
-    config::holder::load_config().await?;
+    // ── 2. Start the captive-portal responder (port 80) ──────────────────────
+    let captive = CaptivePortalServer::start(CAPTIVE_PORTAL_ADDR.parse()?).await?;
+    logger.info(&format!("captive-portal responder: {}", captive.addr()));
 
-    database::init().await?;
+    // ── 3. Start the crv-hive iroh endpoint ─────────────────────────────────
+    let iroh = IrohClient::start(IrohClientConfig {
+        relay_url: Some(RELAY_URL.parse()?),
+        secret_key: None,
+    })
+    .await?;
+    logger.info(&format!("hive node id: {}", iroh.id()));
+    logger.info(&format!("hive addr   : {:?}", iroh.addr()));
 
-    let addr_str = config::holder::get_config()
-        .unwrap()
-        .hive_address
-        .clone()
-        .unwrap_or_else(|| "0.0.0.0:34560".to_string());
-    let addr: SocketAddr = addr_str
-        .parse()
-        .expect(&format!("unable to parse addr `{}`", addr_str));
+    // Publish the ticket so GET /crv/node-ticket is served immediately.
+    let ticket = iroh.ticket().to_string();
+    logger.info(&format!("node ticket : {ticket}"));
+    captive.set_ticket(ticket);
 
-    println!("Hive gRPC / gRPC-Web service is available at {}", addr);
+    // ── 4. Wrap iroh client in the service (handles register_user etc.) ──────
+    let app = Arc::new(ChronoverseApp::new());
+    let service = IrohService::new(iroh, app);
 
-    // Ctrl+C to shutdown gracefully
-    let shutdown = async {
-        signal::ctrl_c()
-            .await
-            .expect("Failed to install CTRL+C signal handler");
-        println!("\nReceived CTRL+C signal, shutting down gracefully...");
-
-        // Flush config and close database handles
-        if let Err(e) = config::holder::shutdown_config().await {
-            eprintln!("failed to save config on shutdown: {}", e);
+    // ── 5. Run until Ctrl-C ──────────────────────────────────────────────────
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {
+            logger.info("Shutting down...");
         }
+        _ = service.serve() => {}
+    }
+    captive.shutdown();
+    relay.shutdown().await?;
 
-        if let Err(e) = database::shutdown().await {
-            eprintln!("failed to shutdown database: {e}");
-        }
-    };
-
-    // Launching
-    hive_server::start_server_with_shutdown(addr, shutdown).await
+    Ok(())
 }

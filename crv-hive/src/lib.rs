@@ -3,14 +3,5 @@ pub mod pb {
     include!(concat!(env!("OUT_DIR"), "/hive_proto.rs"));
 }
 
-pub mod config;
-pub mod auth;
-pub mod hive_server;
-pub mod database;
-pub mod caching;
-pub mod common;
 pub mod logging;
 pub mod crv2;
-
-#[cfg(test)]
-pub mod test_support;

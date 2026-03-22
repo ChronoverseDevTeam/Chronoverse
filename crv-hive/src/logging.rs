@@ -12,7 +12,12 @@ pub fn init_logging() {
     use tracing_subscriber::EnvFilter;
 
     let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info"));
+        .unwrap_or_else(|_| {
+            EnvFilter::new("info")
+                // iroh's captive-portal probe always times out on
+                // private/offline deployments; suppress the noise.
+                // .add_directive("iroh::net_report=error".parse().unwrap())
+        });
 
     // 多次调用时避免 panic（测试/多入口场景）
     let _ = tracing_subscriber::fmt()
