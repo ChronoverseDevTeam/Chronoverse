@@ -377,6 +377,32 @@ TODO
 
 ## 3.15 crv login
 
+登录到 Hive。密码仅支持交互式输入，不提供 `--password/-p` 参数（避免密码出现在命令行与进程列表中）。
+
+用法：
+
+- `crv login`
+- `crv login --username <username>`
+
+说明：
+
+- 需要 `crv-hive` 已启动且 `crv-edge` 的 `remote_addr` 配置指向可达的 Hive 地址。
+- 登录成功后 token 会由 `crv-edge` 持久化保存；可用 `crv whoami` 查看当前登录状态。
+
 ## 3.16 crv logout
 
-## 3.17 crv perm
+退出登录（清理本地 token）。
+
+用法：
+
+- `crv logout`
+
+## 3.17 crv whoami
+
+查看当前用户与登录状态。
+
+用法：
+
+- `crv whoami`
+
+## 3.18 crv perm

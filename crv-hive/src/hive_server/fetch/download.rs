@@ -2,6 +2,7 @@ use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
 
+use crate::auth::require_user;
 use crate::hive_server::repository_manager;
 use crate::logging::HiveLog;
 use crate::pb::{DownloadFileChunkReq, DownloadFileChunkResp};
@@ -14,6 +15,7 @@ pub async fn handle_download_file_chunk(
     request: Request<DownloadFileChunkReq>,
 ) -> Result<Response<DownloadFileChunkStream>, Status> {
     let _g = log.enter();
+    let _user = require_user(&request)?;
     let req = request.into_inner();
     let log_spawn = log.clone();
 

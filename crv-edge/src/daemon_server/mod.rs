@@ -3,6 +3,7 @@ pub mod context;
 pub mod db;
 pub mod error;
 pub mod handlers;
+pub mod hive_grpc;
 pub mod job;
 pub mod middleware;
 pub mod service;

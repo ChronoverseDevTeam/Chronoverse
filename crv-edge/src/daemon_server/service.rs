@@ -208,6 +208,27 @@ impl SystemService for SystemServiceImpl {
             .await
             .map_err(|e| e.into())
     }
+
+    async fn login(&self, request: Request<LoginReq>) -> Result<Response<LoginRsp>, Status> {
+        handlers::edge::login::handle(self.state.clone(), request)
+            .await
+            .map_err(|e| e.into())
+    }
+
+    async fn logout(&self, request: Request<LogoutReq>) -> Result<Response<LogoutRsp>, Status> {
+        handlers::edge::logout::handle(self.state.clone(), request)
+            .await
+            .map_err(|e| e.into())
+    }
+
+    async fn get_auth_status(
+        &self,
+        request: Request<GetAuthStatusReq>,
+    ) -> Result<Response<GetAuthStatusRsp>, Status> {
+        handlers::edge::get_auth_status::handle(self.state.clone(), request)
+            .await
+            .map_err(|e| e.into())
+    }
 }
 
 pub struct WorkspaceServiceImpl {

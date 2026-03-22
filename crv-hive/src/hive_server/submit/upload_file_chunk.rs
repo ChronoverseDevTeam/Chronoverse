@@ -1,6 +1,7 @@
 use tonic::{Request, Response, Status};
 
 use crate::{
+    auth::require_user,
     hive_server::submit::{submit_service, cache_service, submit::UploadFileChunkStream},
     logging::HiveLog,
     pb::{UploadFileChunkReq, UploadFileChunkRsp},
@@ -196,6 +197,7 @@ pub fn upload_file_chunk(
     log: HiveLog,
     r: Request<tonic::Streaming<UploadFileChunkReq>>,
 ) -> Result<Response<UploadFileChunkStream>, Status> {
+    let _user = require_user(&r)?;
     let req = r.into_inner();
     Ok(Response::new(spawn_upload_file_chunk_handler(log, req)))
 }

@@ -1,3 +1,4 @@
+mod auth;
 mod changelist;
 mod debug;
 mod edge;
@@ -35,6 +36,9 @@ impl Cli {
                 Commands::Workspace(workspace_cli) => workspace_cli.handle(channel).await,
                 Commands::Changelist(changelist_cli) => changelist_cli.handle(channel).await,
                 Commands::Debug(debug_cli) => debug_cli.handle(channel).await,
+                Commands::Login(login_cli) => login_cli.handle(channel).await,
+                Commands::Logout(logout_cli) => logout_cli.handle(channel).await,
+                Commands::Whoami(whoami_cli) => whoami_cli.handle(channel).await,
             }
         } else {
             Ok(())
@@ -57,4 +61,7 @@ pub enum Commands {
     Workspace(workspace::WorkspaceCli),
     Changelist(changelist::ChangelistCli),
     Debug(debug::DebugCli),
+    Login(auth::LoginCli),
+    Logout(auth::LogoutCli),
+    Whoami(auth::WhoAmICli),
 }

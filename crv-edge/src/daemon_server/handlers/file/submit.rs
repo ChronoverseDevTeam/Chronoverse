@@ -6,11 +6,11 @@ use crate::daemon_server::error::{AppError, AppResult};
 use crate::daemon_server::handlers::utils::{
     expand_to_mapped_files_active, normalize_paths_strict,
 };
+use crate::daemon_server::hive_grpc::hive_service_client_with_bearer;
 use crate::daemon_server::job::{
     JobEvent, JobRetentionPolicy, JobStatus, MessageStoragePolicy, WorkerProtocol,
 };
 use crate::daemon_server::state::AppState;
-use crate::hive_pb::hive_service_client::HiveServiceClient;
 use crate::hive_pb::{
     CheckChunksReq, FileChunk, FileToLock, LaunchSubmitReq, UploadFileChunkReq, UploadFileChunkRsp,
 };
@@ -68,7 +68,7 @@ pub async fn handle(
     state: AppState,
     req: Request<SubmitReq>,
 ) -> AppResult<Response<SubmitProgressStream>> {
-    let _ctx = SessionContext::from_req(&req)?;
+    let ctx = SessionContext::from_req(&req)?;
     let request_body = req.get_ref();
     let workspace_meta = state
         .db
@@ -116,7 +116,7 @@ pub async fn handle(
         .hive_channel
         .get_channel(&runtime_config.remote_addr.value)?;
 
-    let mut hive_client = HiveServiceClient::new(channel.clone());
+    let mut hive_client = hive_service_client_with_bearer(channel.clone(), ctx.token.clone());
 
     // step 2. TryLockFiles：锁定所有待提交文件
     let mut files_to_lock = Vec::new();
@@ -183,6 +183,7 @@ pub async fn handle(
         let files = files_to_submit.clone();
         let file_chunks = file_chunks.clone();
         let channel_clone = channel.clone();
+        let token_clone = ctx.token.clone();
         let upload_chunk_tx_clone = upload_chunk_tx.clone();
         let job_clone = job.clone();
         let ticket_clone = ticket.clone();
@@ -193,6 +194,7 @@ pub async fn handle(
                 file_chunks,
                 chunks_amount as i64,
                 channel_clone,
+                token_clone,
                 upload_chunk_tx_clone,
                 ticket_clone,
                 job_clone,
@@ -211,6 +213,7 @@ pub async fn handle(
             file_chunks,
             files_to_submit_replica,
             channel,
+            ctx.token.clone(),
             marker_rx,
         )
         .await
@@ -253,10 +256,11 @@ async fn submit_task(
     file_chunks: Arc<Mutex<Vec<FileChunk>>>,
     files_to_submit: Vec<FileToSubmit>,
     channel: Channel,
+    token: String,
     mut marker: tokio::sync::mpsc::Receiver<()>,
 ) -> Result<(), String> {
     while let Some(_) = marker.recv().await {}
-    let mut hive_client = HiveServiceClient::new(channel.clone());
+    let mut hive_client = hive_service_client_with_bearer(channel.clone(), token);
     let submit_request = crate::hive_pb::SubmitReq {
         ticket,
         description,
@@ -313,6 +317,7 @@ async fn upload_task(
     file_chunks: Arc<Mutex<Vec<FileChunk>>>,
     chunks_amount: i64,
     channel: Channel,
+    token: String,
     upload_chunk_tx: Sender<UploadFileChunkReq>,
     ticket: String,
     job: Arc<crate::daemon_server::job::Job>,
@@ -342,7 +347,9 @@ async fn upload_task(
                 .await
                 .map_err(|e| format!("Open error: {e}"))?;
 
-            let mut hive_client = HiveServiceClient::new(channel.clone());
+            let token_for_rpc = token.clone();
+            let mut hive_client =
+                hive_service_client_with_bearer(channel.clone(), token_for_rpc);
             let mut chunk_hashes = vec![]; // 收集当前文件的所有块 hash
             let mut total_size = 0i64; // 当前已经传输的总大小
             let file_size = file.metadata().await.map_err(|x| format!("{x}"))?.len() as i64;

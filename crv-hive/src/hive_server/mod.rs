@@ -1,4 +1,4 @@
-use crate::auth::{AuthInterceptor, AuthService};
+use crate::auth::{AuthInterceptor, AuthService, require_user};
 use crate::hive_server::fetch::download;
 use crate::logging::HiveLog;
 use crate::pb::{
@@ -256,6 +256,7 @@ impl HiveService for CrvHiveService {
         let log = HiveLog::from_request("CheckChunks", &request);
         let _g = log.enter();
         log.info("rpc start");
+        let _user = require_user(&request)?;
         let _req = request.into_inner();
         let rsp = CheckChunksRsp {
             missing_chunk_hashes: _req.chunk_hashes,

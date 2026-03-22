@@ -1,7 +1,7 @@
 use crate::daemon_server::config::RuntimeConfig;
 use crate::daemon_server::error::AppResult;
 use crate::daemon_server::state::AppState;
-use crate::pb::{GetRuntimeConfigReq, GetRuntimeConfigRsp, RuntimeConfigItem};
+use crate::pb::{GetRuntimeConfigReq, GetRuntimeConfigRsp};
 use tonic::{Request, Response};
 
 pub async fn handle(

@@ -60,6 +60,8 @@ pub struct RuntimeConfig {
     pub editor: RuntimeConfigItem,
     /// 当前用户
     pub user: RuntimeConfigItem,
+    /// 登录 token（仅用于 edge->hive 调用，不对外暴露）
+    pub auth_token: RuntimeConfigItem,
 }
 
 #[derive(Clone)]
@@ -97,6 +99,9 @@ impl RuntimeConfig {
         if let Some(value) = other.user {
             self.user = RuntimeConfigItem { value, source };
         }
+        if let Some(value) = other.auth_token {
+            self.auth_token = RuntimeConfigItem { value, source };
+        }
     }
 }
 
@@ -104,7 +109,7 @@ impl Default for RuntimeConfig {
     fn default() -> Self {
         Self {
             remote_addr: RuntimeConfigItem {
-                value: "http://10.12.80.159:34560".to_string(),
+                value: "http://127.0.0.1:34560".to_string(),
                 source: RuntimeConfigSource::Default,
             },
             editor: RuntimeConfigItem {
@@ -113,6 +118,10 @@ impl Default for RuntimeConfig {
             },
             user: RuntimeConfigItem {
                 value: "default".to_string(),
+                source: RuntimeConfigSource::Default,
+            },
+            auth_token: RuntimeConfigItem {
+                value: "".to_string(),
                 source: RuntimeConfigSource::Default,
             },
         }
@@ -134,4 +143,5 @@ pub struct RuntimeConfigOverride {
     pub remote_addr: Option<String>,
     pub editor: Option<String>,
     pub user: Option<String>,
+    pub auth_token: Option<String>,
 }

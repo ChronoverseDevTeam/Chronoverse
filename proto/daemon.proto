@@ -24,10 +24,33 @@ message RuntimeConfigItem {
   string source = 2;
 }
 
+message LoginReq {
+  string username = 1;
+  string password = 2;
+}
+
+message LoginRsp {
+  int64 expires_at = 1;
+}
+
+message LogoutReq {}
+
+message LogoutRsp {}
+
+message GetAuthStatusReq {}
+
+message GetAuthStatusRsp {
+  string current_user = 1;
+  bool logged_in = 2;
+}
+
 service SystemService {
   rpc Bonjour(BonjourReq) returns (BonjourRsp);
   rpc BonjourHive(BonjourReq) returns (BonjourRsp);
   rpc GetRuntimeConfig(GetRuntimeConfigReq) returns (GetRuntimeConfigRsp);
+  rpc Login(LoginReq) returns (LoginRsp);
+  rpc Logout(LogoutReq) returns (LogoutRsp);
+  rpc GetAuthStatus(GetAuthStatusReq) returns (GetAuthStatusRsp);
 }
 
 // Workspace management

@@ -1,16 +1,18 @@
 use crate::daemon_server::config::RuntimeConfig;
+use crate::daemon_server::context::SessionContext;
 use crate::daemon_server::db::active_file::Action;
 use crate::daemon_server::db::file::{FileLocation, FileMeta, FileRevision};
 use crate::daemon_server::error::{AppError, AppResult};
 use crate::daemon_server::handlers::utils::{
     expand_to_mapped_files_in_edge_meta, normalize_paths_strict,
 };
+use crate::daemon_server::hive_grpc::hive_service_client_with_bearer;
 use crate::daemon_server::job::{
     Job, JobEvent, JobRetentionPolicy, JobStatus, MessageStoragePolicy, WorkerProtocol,
 };
 use crate::daemon_server::state::AppState;
 use crate::hive_pb::{
-    DownloadFileChunkReq, GetFileTreeReq, hive_service_client::HiveServiceClient,
+    DownloadFileChunkReq, GetFileTreeReq,
 };
 use crate::pb::sync_progress::Payload::FileUpdate;
 use crate::pb::{SyncFileMetadata, SyncFileUpdate, SyncMetadata, SyncProgress, SyncReq};
@@ -67,6 +69,7 @@ pub async fn handle(
     state: AppState,
     req: Request<SyncReq>,
 ) -> AppResult<Response<SyncProgressStream>> {
+    let ctx = SessionContext::from_req(&req)?;
     let runtime_config = RuntimeConfig::from_req(&req)?;
     let request_body = req.into_inner();
 
@@ -74,7 +77,7 @@ pub async fn handle(
         .hive_channel
         .get_channel(&runtime_config.remote_addr.value)?;
 
-    let mut hive_client = HiveServiceClient::new(channel.clone());
+    let mut hive_client = hive_service_client_with_bearer(channel.clone(), ctx.token.clone());
 
     // 1. 获取 workspace 信息
     let workspace_meta = state
@@ -216,10 +219,13 @@ pub async fn handle(
     let rx = job.tx.subscribe();
 
     let state_clone = state.clone();
+    let token_for_worker = ctx.token.clone();
 
     // 8. 添加 Worker
     let job_ref = job.clone();
-    job.add_worker(async move { sync_file(state_clone, file_to_sync, channel, job_ref).await });
+    job.add_worker(async move {
+        sync_file(state_clone, file_to_sync, channel, token_for_worker, job_ref).await
+    });
 
     job.clone().start();
 
@@ -249,9 +255,10 @@ async fn sync_file(
     app_state: AppState,
     files_to_sync: Vec<FileToSync>,
     channel: Channel,
+    token: String,
     job: Arc<Job>,
 ) -> Result<(), String> {
-    let mut hive_client = HiveServiceClient::new(channel.clone());
+    let mut hive_client = hive_service_client_with_bearer(channel.clone(), token);
     for file in files_to_sync {
         // 对于本地 checkout 的文件，跳过该文件的拉新。
         if app_state
