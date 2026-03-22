@@ -5,11 +5,24 @@ impl DbManager {
         let remote_addr = self.get_config("remote-addr")?;
         let editor = self.get_config("editor")?;
         let user = self.get_config("user")?;
+        // Per-user token storage:
+        // 1) try auth-token:<username>
+        // 2) fallback to legacy auth-token for backward compatibility
+        let auth_token = if let Some(username) = user.as_ref() {
+            let per_user_key = format!("auth-token:{}", username);
+            match self.get_config(&per_user_key)? {
+                Some(token) => Some(token),
+                None => self.get_config("auth-token")?,
+            }
+        } else {
+            self.get_config("auth-token")?
+        };
 
         Ok(RuntimeConfigOverride {
             remote_addr,
             editor,
             user,
+            auth_token,
         })
     }
 

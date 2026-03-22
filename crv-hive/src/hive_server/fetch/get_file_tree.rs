@@ -1,5 +1,6 @@
 use tonic::{Request, Response, Status};
 
+use crate::auth::require_user;
 use crate::common::depot_path::DepotPath;
 use crate::database::service as db_service;
 use crate::logging::HiveLog;
@@ -10,6 +11,7 @@ pub async fn get_file_tree(
     request: Request<GetFileTreeReq>,
 ) -> Result<Response<GetFileTreeRsp>, Status> {
     let _g = log.enter();
+    let _user = require_user(&request)?;
     let req = request.into_inner();
 
     let depot = DepotPath::parse(&req.depot_wildcard).map_err(|e| {
