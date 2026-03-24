@@ -6,7 +6,3 @@
 5. P1：upload 阶段不做超时/清理触发——过期锁释放依赖“有人来 submit/launch”。
 6. 把 cache 按 ticket 隔离（目录或命名空间），或做引用计数/TTL，而不是全局按 hash 共享并在解锁时直接删除。
 
-## gRPC-Web 支持
-- `hive_address` 指定的端口现同时支持 gRPC 与 gRPC-Web（HTTP/1.1）
-- 默认开启宽松 CORS，便于浏览器前端（如 http://localhost:5173）直接调用
-- 客户端可使用 grpc-web / connect-web，目标地址示例：`http://<hive_host>:<port>`

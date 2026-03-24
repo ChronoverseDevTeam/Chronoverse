@@ -1,6 +1,5 @@
 use std::time::Instant;
 
-use tonic::{Request, Status};
 use tracing::Span;
 
 /// 初始化统一日志系统（全局）。
@@ -51,11 +50,6 @@ impl HiveLog {
         }
     }
 
-    /// 从 tonic Request 创建日志对象（当前只取 method；其余信息在 handler 中补充）。
-    pub fn from_request<T>(method: &'static str, _req: &Request<T>) -> Self {
-        Self::new(method)
-    }
-
     /// 在认证后补充 username 字段。
     pub fn with_user(self, username: impl Into<String>) -> Self {
         let username = username.into();
@@ -90,13 +84,12 @@ impl HiveLog {
         tracing::info!(parent: &self.span, elapsed_ms = ms, "rpc finished: ok");
     }
 
-    pub fn finish_err(&self, status: &Status) {
+    pub fn finish_err(&self, error: impl std::fmt::Display) {
         let ms = self.started_at.elapsed().as_millis();
         tracing::warn!(
             parent: &self.span,
             elapsed_ms = ms,
-            grpc_code = ?status.code(),
-            grpc_message = status.message(),
+            error = %error,
             "rpc finished: err"
         );
     }

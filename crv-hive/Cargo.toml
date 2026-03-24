@@ -15,21 +15,9 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "serd
 blake3 = "1.8.2"
 crc32fast = "1.5.0"
 lz4_flex = { version = "0.12.0", default-features = false, features = ["std"] }
-tokio-stream = "0.1"
 serde_json = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-
-# Protocol Buffer
-prost = "0.14.1"
-prost-types = "0.14.1"
-
-tonic = "0.14.2"
-tonic-prost = "0.14.2"
-tonic-web = "0.14.2"
-http = "1.4.0"
-tower-http = { version = "0.6.8", features = ["cors"] }
-futures = { version = "0.3", default-features = false, features = ["std"] }
 
 jsonwebtoken = "9"
 argon2 = "0.5"
@@ -52,7 +40,3 @@ iroh-tickets = "0.4.0"
 
 [dev-dependencies]
 tempfile = "3.23.0"
-
-[build-dependencies]
-tonic-prost-build = "0.14.2"
-protoc-bin-vendored = "3"
