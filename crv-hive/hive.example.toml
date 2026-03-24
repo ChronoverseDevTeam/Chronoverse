@@ -1,0 +1,7 @@
+[database]
+url = "postgres://crv:crv@127.0.0.1:55432/chronoverse_dev"
+test_url = "postgres://crv:crv@127.0.0.1:55432/chronoverse_test"
+max_connections = 10
+
+[logging]
+rust_log = "info"

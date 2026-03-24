@@ -1,57 +1,27 @@
 services:
   postgres:
-    image: postgres:18.1
+    image: postgres:16
     container_name: crv-hive-postgres
     restart: unless-stopped
-    ports:
-      - "5432:5432"
     environment:
-      POSTGRES_DB: chronoverse
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_USER: ${POSTGRES_USER:-crv}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-crv}
+      POSTGRES_DB: ${POSTGRES_DB:-chronoverse_dev}
+    ports:
+      - "${POSTGRES_PORT:-55432}:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d chronoverse"]
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-crv} -d ${POSTGRES_DB:-chronoverse_dev}",
+        ]
       interval: 5s
-      timeout: 3s
+      timeout: 5s
       retries: 20
+      start_period: 5s
     volumes:
-      - crv_hive_postgres_data:/var/lib/postgresql
-
-  crv-hive:
-    image: crv-hive:latest
-    container_name: crv-hive
-    restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
-    environment:
-      CRV_HIVE_CONFIG_PATH: /app/config/hive.toml
-    ports:
-      - "34560:34560"
-    volumes:
-      - crv_hive_data:/var/lib/crv-hive
-      - crv_hive_config:/app/config
-    command:
-      - /bin/sh
-      - -ec
-      - |
-        mkdir -p /app/config /var/lib/crv-hive/repository /var/lib/crv-hive/upload-cache
-        if [ ! -f /app/config/hive.toml ]; then
-          printf '%s\n' \
-            'postgres_hostname = "postgres"' \
-            'postgres_database = "chronoverse"' \
-            'postgres_username = "postgres"' \
-            'postgres_password = "postgres"' \
-            'postgres_port = 5432' \
-            'hive_address = "0.0.0.0:34560"' \
-            'repository_path = "/var/lib/crv-hive/repository"' \
-            'upload_cache_path = "/var/lib/crv-hive/upload-cache"' \
-            'jwt_secret = "dev-secret"' \
-            > /app/config/hive.toml
-        fi
-        exec /usr/local/bin/crv-hive
+      - crv-hive-postgres-data:/var/lib/postgresql/data
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
 
 volumes:
-  crv_hive_postgres_data:
-  crv_hive_data:
-  crv_hive_config:
+  crv-hive-postgres-data:

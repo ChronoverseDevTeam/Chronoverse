@@ -1287,17 +1287,12 @@ dependencies = [
  "chrono",
  "crc32fast",
  "crv-core",
- "futures",
- "http",
  "iroh",
  "iroh-relay",
  "iroh-tickets",
  "jsonwebtoken",
  "lz4_flex",
  "once_cell",
- "prost",
- "prost-types",
- "protoc-bin-vendored",
  "rand 0.8.5",
  "rcgen",
  "rustls",
@@ -1308,13 +1303,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.17",
  "tokio",
- "tokio-stream",
  "toml 0.8.2",
- "tonic",
- "tonic-prost",
- "tonic-prost-build",
- "tonic-web",
- "tower-http",
  "tracing",
  "tracing-subscriber",
  "urlencoding",
@@ -7137,24 +7126,6 @@ dependencies = [
  "syn 2.0.106",
  "tempfile",
  "tonic-build",
-]
-
-[[package]]
-name = "tonic-web"
-version = "0.14.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "75214f6b6bd28c19aa752ac09fdf0eea546095670906c21fe3940e180a4c43f2"
-dependencies = [
- "base64",
- "bytes",
- "http",
- "http-body",
- "pin-project",
- "tokio-stream",
- "tonic",
- "tower-layer",
- "tower-service",
- "tracing",
 ]
 
 [[package]]
