@@ -1,6 +1,6 @@
 use crate::daemon_server::db::active_file::Action;
 use crate::daemon_server::error::{AppError, AppResult};
-use crate::daemon_server::handlers::utils::{expand_to_mapped_files_in_fs, normalize_paths_strict};
+use crate::daemon_server::handlers::utils::{expand_to_mapped_files_in_fs, normalize_path};
 use crate::daemon_server::state::AppState;
 use crate::pb::{AddReq, AddRsp};
 use crv_core::path::engine::PathEngine;
@@ -20,21 +20,20 @@ pub async fn handle(state: AppState, req: Request<AddReq>) -> AppResult<Response
 
     let path_engine = PathEngine::new(workspace_meta.config.clone(), &request_body.workspace_name);
 
-    // 2. 规范化路径
-    let local_paths = normalize_paths_strict(&request_body.paths, &path_engine)?;
-
-    // 3. 展开为文件列表
-    let local_files = expand_to_mapped_files_in_fs(&local_paths, &path_engine);
-
-    // 4. 转换为 workspace paths 并标记为 Add
     let mut added_paths = Vec::new();
 
-    for file in &local_files {
-        // 设置为 active file，action 为 Add
-        state
-            .db
-            .set_active_file_action(file.workspace_path.clone(), Action::Add)?;
-        added_paths.push(file.workspace_path.to_custom_string());
+    for path in &request_body.paths {
+        let location_union = normalize_path(&path, &path_engine)?;
+
+        let local_files = expand_to_mapped_files_in_fs(&location_union, &path_engine);
+
+        let guard = state.db.prepare_add_file(&local_files)?;
+
+        for file in &guard.paths {
+            // 设置为 active file，action 为 Add
+            state.db.set_active_file_action(file.clone(), Action::Add)?;
+            added_paths.push(file.to_custom_string());
+        }
     }
 
     Ok(Response::new(AddRsp { added_paths }))

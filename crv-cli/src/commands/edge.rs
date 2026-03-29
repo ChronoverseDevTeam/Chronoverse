@@ -20,6 +20,7 @@ impl EdgeCli {
     pub async fn handle(&self, channel: &Channel) -> Result<()> {
         match &self.edge_commands {
             EdgeCommands::Bonjour(bonjour) => bonjour.handle(channel).await,
+            EdgeCommands::BonjourHive(bonjour) => bonjour.handle(channel).await,
             EdgeCommands::BootstrapConfig(bootstrap_config) => bootstrap_config.handle().await,
             EdgeCommands::RuntimeConfig(runtime_config) => runtime_config.handle(channel).await,
         }
@@ -29,6 +30,7 @@ impl EdgeCli {
 #[derive(Subcommand)]
 pub enum EdgeCommands {
     Bonjour(BonjourCli),
+    BonjourHive(BonjourHiveCli),
     BootstrapConfig(BootstrapConfigCli),
     RuntimeConfig(RuntimeConfigCli),
 }
@@ -40,6 +42,18 @@ impl BonjourCli {
     pub async fn handle(&self, channel: &Channel) -> Result<()> {
         let mut system_client = SystemServiceClient::new(channel.clone());
         let response = system_client.bonjour(BonjourReq {}).await?;
+        println!("{:?}", response.into_inner());
+        Ok(())
+    }
+}
+
+#[derive(Parser)]
+pub struct BonjourHiveCli;
+
+impl BonjourHiveCli {
+    pub async fn handle(&self, channel: &Channel) -> Result<()> {
+        let mut system_client = SystemServiceClient::new(channel.clone());
+        let response = system_client.bonjour_hive(BonjourReq {}).await?;
         println!("{:?}", response.into_inner());
         Ok(())
     }

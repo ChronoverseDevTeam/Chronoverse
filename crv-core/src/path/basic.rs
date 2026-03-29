@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 /// 求两个切片的公共前缀的结束索引，如果返回 0 则代表没有公共前缀
-fn common_prefix_end_index(slice_a: &[String], slice_b: &[String]) -> usize {
+pub fn common_prefix_end_index(slice_a: &[String], slice_b: &[String]) -> usize {
     for (i, (a, b)) in slice_a.iter().zip(slice_b.iter()).enumerate() {
         if a != b {
             return i;
@@ -90,6 +90,7 @@ impl WorkspacePath {
         )
     }
 
+    /// 转化为本地路径，不检查 workspace name 是否匹配
     pub fn to_local_path_uncheck(&self, root_dir: &LocalDir) -> LocalPath {
         let mut dirs = root_dir.0.clone();
         dirs.extend_from_slice(&self.dirs);
@@ -122,10 +123,50 @@ impl WorkspaceDir {
         format!("//{}/{}", self.workspace_name, dir_string)
     }
 
+    /// 转化为本地目录，不检查 workspace name 是否匹配
     pub fn to_local_dir_uncheck(&self, root_dir: &LocalDir) -> LocalDir {
         let mut dirs = root_dir.0.clone();
         dirs.extend_from_slice(&self.dirs);
         LocalDir(dirs)
+    }
+}
+
+/// 范围索引 Workspace Path
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Encode, Decode)]
+pub struct WorkspacePathWildcard {
+    pub workspace_name: String,
+    /// 目录部分
+    pub dirs: Vec<String>,
+    /// 是否包含递归通配符 ...
+    pub recursive: bool,
+    /// 文件通配符
+    pub wildcard: FilenameWildcard,
+}
+
+impl WorkspacePathWildcard {
+    /// 判断一个 workspace path 是否被该 wildcard 匹配，如果匹配则返回 workspace path 独有的目录部分，否则返回 None
+    pub fn match_and_get_diff<'a>(
+        &self,
+        workspace_path: &'a WorkspacePath,
+    ) -> Option<&'a [String]> {
+        if self.workspace_name != workspace_path.workspace_name {
+            return None;
+        }
+        let common_prefix_end = common_prefix_end_index(&self.dirs, &workspace_path.dirs);
+        if common_prefix_end != self.dirs.len() {
+            return None;
+        }
+        if !self.recursive && common_prefix_end != workspace_path.dirs.len() {
+            return None;
+        }
+        if !self.wildcard.check_match(&workspace_path.file) {
+            return None;
+        }
+        Some(&workspace_path.dirs[common_prefix_end..])
+    }
+
+    pub fn parse(wildcard: &str) -> PathResult<Self> {
+        parsers::path::workspace_path_wildcard(wildcard)
     }
 }
 
@@ -152,6 +193,30 @@ impl DepotPath {
         parsers::path::depot_path(path)
     }
 }
+
+// --------------------------------
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DepotDir {
+    pub dirs: Vec<String>,
+}
+
+impl DepotDir {
+    pub fn parse(path: &str) -> PathResult<Self> {
+        parsers::path::depot_dir(path)
+    }
+
+    pub fn to_custom_string(&self) -> String {
+        let dir_string = self
+            .dirs
+            .iter()
+            .map(|dir| format!("{}/", dir))
+            .collect::<String>();
+        format!("//{}", dir_string)
+    }
+}
+
+// --------------------------------
 
 /// 通配 Depot Path
 #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
@@ -219,6 +284,10 @@ impl RangeDepotWildcard {
             return None;
         }
         Some(&depot_path.dirs[common_prefix_end..])
+    }
+
+    pub fn parse(path: &str) -> PathResult<Self> {
+        parsers::path::range_depot_wildcard(path)
     }
 }
 

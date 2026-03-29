@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 /// 路径引擎核心结构
 pub struct PathEngine {
     workspace: Arc<WorkspaceConfig>,
-    workspace_name: String,
+    pub workspace_name: String,
     // 缓存编译的正则表达式
     cache: PathCache,
 }
@@ -81,7 +81,8 @@ impl PathEngine {
                     IncludeMapping::File(file_mapping) => {
                         if &file_mapping.local_file == local_path {
                             let mapping_back = self.mapping_depot_path(&file_mapping.depot_file);
-                            return if mapping_back.is_some() && &mapping_back.unwrap() == local_path {
+                            return if mapping_back.is_some() && &mapping_back.unwrap() == local_path
+                            {
                                 // 如果还能映射回来，说明没有被排除掉
                                 Some(file_mapping.depot_file.clone())
                             } else {
@@ -89,7 +90,7 @@ impl PathEngine {
                                 // 又因不考虑排除的时候，depot path 与 local path 不存在多对一关系，
                                 // 所以不用再向上遍历了
                                 None
-                            }
+                            };
                         }
                     }
                     IncludeMapping::Folder(folder_mapping) => {
@@ -120,7 +121,7 @@ impl PathEngine {
                         } else {
                             // 同理，不用再向上遍历了
                             None
-                        }
+                        };
                     }
                 },
                 WorkspaceMapping::Exclude(_) => continue,
@@ -232,6 +233,127 @@ impl PathEngine {
         let mut dirs = self.workspace.root_dir.0.clone();
         dirs.extend_from_slice(&workspace_dir.dirs);
         Some(LocalDir(dirs))
+    }
+
+    /// 将 RangeDepotWildcard 展开为所有可能的 LocalPathWildcard，
+    /// 即只有这些 LocalPathWildcard 匹配的内容映射回 depot 后才可能被传入的 RangeDepotWildcard 匹配。
+    ///
+    /// 当前实现不能保证返回值中的任意一个 Wildcard 匹配的内容中都存在可以映射回 depot 的文件。
+    pub fn depot_wildcard_to_local_candidate(
+        &self,
+        depot_wildcard: &RangeDepotWildcard,
+    ) -> Vec<LocalPathWildcard> {
+        let mut result = vec![];
+        for mapping in self.workspace.mappings.iter().rev() {
+            match mapping {
+                WorkspaceMapping::Include(include_mapping) => match include_mapping {
+                    IncludeMapping::File(file_mapping) => {
+                        if let Some(_) = depot_wildcard.match_and_get_diff(&file_mapping.depot_file)
+                        {
+                            result.push(LocalPathWildcard {
+                                dirs: file_mapping.local_file.dirs.clone(),
+                                recursive: false,
+                                wildcard: FilenameWildcard::Exact(
+                                    file_mapping.local_file.file.clone(),
+                                ),
+                            })
+                        }
+                    }
+                    IncludeMapping::Folder(folder_mapping) => {
+                        let common_prefix = common_prefix_end_index(
+                            &depot_wildcard.dirs,
+                            &folder_mapping.depot_folder.dirs,
+                        );
+                        if common_prefix == 0 {
+                            continue;
+                        }
+                        if common_prefix == depot_wildcard.dirs.len() {
+                            result.push(LocalPathWildcard {
+                                dirs: folder_mapping.local_folder.clone(),
+                                recursive: depot_wildcard.recursive
+                                    && folder_mapping.depot_folder.recursive,
+                                wildcard: depot_wildcard.wildcard.clone(),
+                            })
+                        } else {
+                            let diff_folder = &depot_wildcard.dirs[common_prefix..];
+                            let mut dirs = folder_mapping.local_folder.0.clone();
+                            dirs.append(&mut diff_folder.to_vec());
+                            result.push(LocalPathWildcard {
+                                dirs: LocalDir(dirs),
+                                recursive: depot_wildcard.recursive
+                                    && folder_mapping.depot_folder.recursive,
+                                wildcard: depot_wildcard.wildcard.clone(),
+                            })
+                        }
+                    }
+                },
+                WorkspaceMapping::Exclude(_) => {
+                    // we don't care exclude mapping currently
+                }
+            }
+        }
+        result
+    }
+
+    /// 将 LocalPathWildcard 展开为所有可能的 RangeDepotWildcard，
+    /// 即只有这些 RangeDepotWildcard 匹配的内容映射到 workspace 后才可能被传入的 LocalPathWildcard 匹配。
+    ///
+    /// 当前实现不能保证返回值中的任意一个 Wildcard 匹配的内容中都存在可以映射到 workspace 的文件。
+    pub fn local_wildcard_to_depot_candidate(
+        &self,
+        local_path_wildcard: &LocalPathWildcard,
+    ) -> Vec<RangeDepotWildcard> {
+        let mut result = vec![];
+        for mapping in self.workspace.mappings.iter() {
+            match mapping {
+                WorkspaceMapping::Include(include_mapping) => match include_mapping {
+                    IncludeMapping::File(file_mapping) => {
+                        if let Some(_) =
+                            local_path_wildcard.match_and_get_diff(&file_mapping.local_file)
+                        {
+                            result.push(RangeDepotWildcard {
+                                dirs: file_mapping.depot_file.dirs.clone(),
+                                recursive: false,
+                                wildcard: FilenameWildcard::Exact(
+                                    file_mapping.depot_file.file.clone(),
+                                ),
+                            })
+                        }
+                    }
+                    IncludeMapping::Folder(folder_mapping) => {
+                        let common_prefix = common_prefix_end_index(
+                            &local_path_wildcard.dirs.0,
+                            &folder_mapping.local_folder.0,
+                        );
+                        if common_prefix == 0 {
+                            continue;
+                        }
+                        if common_prefix == local_path_wildcard.dirs.0.len() {
+                            result.push(RangeDepotWildcard {
+                                dirs: folder_mapping.depot_folder.dirs.clone(),
+                                recursive: local_path_wildcard.recursive
+                                    && folder_mapping.depot_folder.recursive,
+                                wildcard: local_path_wildcard.wildcard.clone(),
+                            })
+                        } else {
+                            let diff_folder = &local_path_wildcard.dirs.0[common_prefix..];
+                            let mut dirs = folder_mapping.depot_folder.dirs.clone();
+                            dirs.append(&mut diff_folder.to_vec());
+                            result.push(RangeDepotWildcard {
+                                dirs,
+                                recursive: local_path_wildcard.recursive
+                                    && folder_mapping.depot_folder.recursive,
+                                wildcard: local_path_wildcard.wildcard.clone(),
+                            })
+                        }
+                    }
+                },
+                WorkspaceMapping::Exclude(_) => {
+                    // we don't care exclude mapping currently
+                }
+            }
+        }
+        result
     }
 }
 

@@ -1,11 +1,9 @@
 use crate::daemon_server::config::RuntimeConfig;
 use crate::daemon_server::context::SessionContext;
 use crate::daemon_server::db::active_file::Action;
-use crate::daemon_server::db::file::{FileLocation, FileMeta, FileRevision};
+use crate::daemon_server::db::file::{FileGuard, FileLocation, FileMeta, FileRevision};
 use crate::daemon_server::error::{AppError, AppResult};
-use crate::daemon_server::handlers::utils::{
-    expand_to_mapped_files_active, normalize_paths_strict,
-};
+use crate::daemon_server::handlers::utils::{expand_to_mapped_files_active, normalize_path};
 use crate::daemon_server::job::{
     JobEvent, JobRetentionPolicy, JobStatus, MessageStoragePolicy, WorkerProtocol,
 };
@@ -18,6 +16,7 @@ use crate::pb::{SubmitProgress, SubmitReq};
 use crv_core::path::engine::PathEngine;
 use crv_core::repository::compute_chunk_hash;
 use prost::Message;
+use std::collections::HashSet;
 use std::pin::Pin;
 use std::sync::{Arc, Weak};
 use std::task::{Context, Poll};
@@ -81,16 +80,30 @@ pub async fn handle(
     let path_engine = PathEngine::new(workspace_meta.config.clone(), &request_body.workspace_name);
 
     // 规范化路径
-    let local_paths = normalize_paths_strict(&request_body.paths, &path_engine)?;
+    let mut files = vec![];
+    for path in &request_body.paths {
+        let location_union = normalize_path(path, &path_engine)?;
+        files.extend(expand_to_mapped_files_active(
+            &location_union,
+            &path_engine,
+            state.clone(),
+        )?);
+    }
 
-    let files = expand_to_mapped_files_active(&local_paths, &path_engine, state.clone())?;
+    // 由于 request_body.paths 可能有重叠的路径范围，这里还要做一次去重
+    let mut seen = HashSet::new();
+    files.retain(|x| seen.insert(x.workspace_path.to_custom_string()));
+
+    let file_guard = state.db.prepare_command(&files)?;
 
     let mut files_to_submit: Vec<FileToSubmit> = Vec::new();
 
     for file in &files {
-        // 虽然 expand_to_mapped_files_active 拿到的文件肯定 checkout 了，但是还是判断一下
+        // 虽然 expand_to_mapped_files_active 拿到的文件大概率是 checkout 了的，
+        // 但是由于调用 expand_to_mapped_files_active 的时候还没有加锁，所以必须再判断一下
         let file_action = state.db.get_active_file_action(&file.workspace_path)?;
         if file_action.is_none() {
+            file_guard.release(&file.workspace_path);
             continue;
         }
         let file_action = file_action.unwrap();
@@ -203,14 +216,16 @@ pub async fn handle(
         });
     }
 
+    let state_clone = state.clone();
     job.add_worker(async move {
         submit_task(
-            state.clone(),
+            state_clone,
             ticket,
             description,
             file_chunks,
             files_to_submit_replica,
             channel,
+            file_guard,
             marker_rx,
         )
         .await
@@ -253,6 +268,7 @@ async fn submit_task(
     file_chunks: Arc<Mutex<Vec<FileChunk>>>,
     files_to_submit: Vec<FileToSubmit>,
     channel: Channel,
+    _file_guard: FileGuard,
     mut marker: tokio::sync::mpsc::Receiver<()>,
 ) -> Result<(), String> {
     while let Some(_) = marker.recv().await {}
@@ -280,7 +296,7 @@ async fn submit_task(
         if file.action == Action::Delete {
             state
                 .db
-                .delete_file(&file.location.workspace_path)
+                .delete_file_meta(&file.location.workspace_path)
                 .map_err(|x| format!("{x}"))?;
             continue;
         }
@@ -299,6 +315,7 @@ async fn submit_task(
                         generation: latest_revision.generation,
                         revision: latest_revision.revision,
                     },
+                    busy: false, // 写回之后文件相当于已经提交成功了，就可以释放锁了
                 },
             )
             .map_err(|x| format!("{x}"))?;

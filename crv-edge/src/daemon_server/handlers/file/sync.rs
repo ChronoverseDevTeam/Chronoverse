@@ -1,9 +1,9 @@
 use crate::daemon_server::config::RuntimeConfig;
 use crate::daemon_server::db::active_file::Action;
-use crate::daemon_server::db::file::{FileLocation, FileMeta, FileRevision};
+use crate::daemon_server::db::file::{FileGuard, FileLocation, FileMeta, FileRevision};
 use crate::daemon_server::error::{AppError, AppResult};
 use crate::daemon_server::handlers::utils::{
-    expand_to_mapped_files_in_edge_meta, normalize_paths_strict,
+    expand_to_mapped_files_in_edge_meta, filter_depot_paths, normalize_path,
 };
 use crate::daemon_server::job::{
     Job, JobEvent, JobRetentionPolicy, JobStatus, MessageStoragePolicy, WorkerProtocol,
@@ -87,12 +87,20 @@ pub async fn handle(
 
     let path_engine = PathEngine::new(workspace_meta.config.clone(), &request_body.workspace_name);
 
-    // 2. 规范化路径
-    let local_paths = normalize_paths_strict(&request_body.paths, &path_engine)?;
+    // 规范化路径
+    let mut edge_files = vec![];
+    let mut location_unions = vec![];
+    for path in &request_body.paths {
+        let location_union = normalize_path(path, &path_engine)?;
+        edge_files.extend(expand_to_mapped_files_in_edge_meta(
+            &location_union,
+            &path_engine,
+            state.clone(),
+        )?);
+        location_unions.push(location_union);
+    }
 
-    // 3. 展开为文件列表
-    let edge_files =
-        expand_to_mapped_files_in_edge_meta(&local_paths, &path_engine, state.clone())?;
+    let file_guard = state.db.prepare_command(&edge_files)?;
 
     // 4. 获取 hive files
     // 构建 depot wildcard (暂时获取所有文件，后续可以优化为只获取需要的)
@@ -113,7 +121,7 @@ pub async fn handle(
         .map(|x| (x.depot_path.to_custom_string(), x))
         .collect::<HashMap<_, _>>();
 
-    // 这个过程获取到的文件不一定都在参数指定的文件范围（local_paths）内，比如排除文件没办法静态计算
+    // 这个过程获取到的文件不一定都在参数指定的文件范围内，比如排除文件没办法静态计算
     let hive_files_map = file_tree_rsp
         .file_revisions
         .iter()
@@ -126,10 +134,26 @@ pub async fn handle(
         })
         .collect::<HashMap<_, _>>();
 
-    // todo 因此，这里需要过滤一下
+    // 因此，这里需要过滤一下
+    let hive_depot_paths_candidates = hive_files_map
+        .keys()
+        .map(|x| DepotPath::parse(x).unwrap())
+        .collect::<Vec<_>>();
+    let mut hive_depot_paths = vec![];
 
+    for location_union in &location_unions {
+        hive_depot_paths.append(&mut filter_depot_paths(
+            location_union,
+            &hive_depot_paths_candidates,
+            &path_engine,
+        ));
+    }
+
+    let hive_files_set = hive_depot_paths
+        .iter()
+        .map(|x| x.depot_path.to_custom_string())
+        .collect::<HashSet<_>>();
     let edge_files_set = edge_files_map.keys().cloned().collect::<HashSet<_>>();
-    let hive_files_set = hive_files_map.keys().cloned().collect::<HashSet<_>>();
 
     let files_to_add = hive_files_set.sub(&edge_files_set);
     let files_to_delete = edge_files_set.sub(&hive_files_set);
@@ -150,6 +174,19 @@ pub async fn handle(
             continue;
         }
         files_to_edit.insert(k.clone());
+    }
+
+    // 至此，files_to_add、files_to_edit 和 files_to_delete 才确切可用
+    let mut files_to_sync = HashSet::new();
+    files_to_sync.extend(&files_to_add);
+    files_to_sync.extend(&files_to_edit);
+    files_to_sync.extend(&files_to_delete);
+    // 指令参数选中的范围内可能有文件是无需拉新的，因此需要在实际拉新前释放掉这些文件的锁
+    for locked_file in &edge_files {
+        let locked_file_path = locked_file.workspace_path.to_custom_string();
+        if !files_to_sync.contains(&locked_file_path) {
+            file_guard.release(&locked_file.workspace_path);
+        }
     }
 
     // 从 hive file map 中获取元数据
@@ -219,7 +256,9 @@ pub async fn handle(
 
     // 8. 添加 Worker
     let job_ref = job.clone();
-    job.add_worker(async move { sync_file(state_clone, file_to_sync, channel, job_ref).await });
+    job.add_worker(async move {
+        sync_file(state_clone, file_to_sync, channel, file_guard, job_ref).await
+    });
 
     job.clone().start();
 
@@ -249,6 +288,7 @@ async fn sync_file(
     app_state: AppState,
     files_to_sync: Vec<FileToSync>,
     channel: Channel,
+    _file_guard: FileGuard,
     job: Arc<Job>,
 ) -> Result<(), String> {
     let mut hive_client = HiveServiceClient::new(channel.clone());
@@ -307,6 +347,7 @@ async fn sync_file(
                 let file_meta = FileMeta {
                     location: file.location,
                     current_revision: file.latest_revision.unwrap(),
+                    busy: true, // 因为 sync 操作还没有完成，像 sync 这样的操作最好还是完全完成后再解锁
                 };
                 app_state
                     .db
@@ -316,7 +357,7 @@ async fn sync_file(
             Action::Delete => {
                 app_state
                     .db
-                    .delete_file(&file.location.workspace_path)
+                    .delete_file_meta(&file.location.workspace_path)
                     .map_err(|x| format!("{x}"))?;
                 fs::remove_file(file.location.local_path.to_local_path_string())
                     .await

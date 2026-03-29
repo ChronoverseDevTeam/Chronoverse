@@ -3,7 +3,10 @@ use std::process;
 use anyhow::Result;
 use clap::Parser;
 use console::style;
-use crv_edge::pb::{AddReq, DeleteReq, ListActiveFilesReq, SubmitReq, SyncReq, file_service_client::FileServiceClient, CheckoutReq};
+use crv_edge::pb::{
+    AddReq, CheckoutReq, DeleteReq, ListActiveFilesReq, SubmitReq, SyncReq,
+    file_service_client::FileServiceClient,
+};
 use dialoguer::{Input, theme::ColorfulTheme};
 use tokio::signal;
 use tokio_stream::StreamExt;
@@ -82,7 +85,6 @@ impl CheckoutCli {
         Ok(())
     }
 }
-
 
 #[derive(Parser)]
 pub struct SubmitCli {
@@ -309,9 +311,9 @@ pub struct ListActiveFilesCli {
     #[arg(short, long)]
     pub workspace: String,
 
-    /// Directory path to list active files from (default: workspace root)
-    #[arg(short, long, default_value = ".")]
-    pub path: String,
+    /// Path to list active files (can be local paths, workspace paths, or depot paths)
+    #[arg(required = true)]
+    pub paths: Vec<String>,
 }
 
 impl ListActiveFilesCli {
@@ -320,7 +322,7 @@ impl ListActiveFilesCli {
 
         let request = ListActiveFilesReq {
             workspace_name: self.workspace.clone(),
-            path: self.path.clone(),
+            paths: self.paths.clone(),
         };
 
         let response = client.list_active_files(request).await?.into_inner();

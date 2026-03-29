@@ -40,6 +40,42 @@ pub fn depot_path(input: &str) -> PathResult<DepotPath> {
     Ok(result)
 }
 
+// ----------------------------------
+
+pub fn depot_dir_parser<'src>()
+-> impl Parser<'src, &'src str, DepotDir, extra::Err<Rich<'src, char>>> {
+    just("//")
+        .labelled("depot path prefix '//'")
+        .then(
+            path_segment_parser()
+                .then_ignore(just("/"))
+                .repeated()
+                .collect::<Vec<&str>>()
+                .labelled("path segments"),
+        )
+        .then_ignore(path_segment_parser().not().rewind())
+        .map(|(_, segments)| {
+            let dirs: Vec<String> = segments.iter().map(|s| s.to_string()).collect();
+
+            DepotDir { dirs }
+        })
+}
+
+pub fn depot_dir(input: &str) -> PathResult<DepotDir> {
+    let result = depot_dir_parser()
+        .then_ignore(end().labelled("end of depot dir"))
+        .parse(input)
+        .into_result()
+        .map_err(|errors| {
+            let error = errors.into_iter().next().unwrap();
+            PathError::SyntaxError(format!("{}", error))
+        })?;
+
+    Ok(result)
+}
+
+// ----------------------------------
+
 pub fn range_depot_wildcard_parser<'src>()
 -> impl Parser<'src, &'src str, RangeDepotWildcard, extra::Err<Rich<'src, char>>> {
     just("//")
@@ -62,6 +98,20 @@ pub fn range_depot_wildcard_parser<'src>()
                 wildcard: filename,
             }
         })
+}
+
+pub fn range_depot_wildcard(input: &str) -> PathResult<RangeDepotWildcard> {
+    // 使用 chumsky parser 解析基本结构
+    let result = range_depot_wildcard_parser()
+        .then_ignore(end().labelled("end of range depot wildcard"))
+        .parse(input)
+        .into_result()
+        .map_err(|errors| {
+            let error = errors.into_iter().next().unwrap();
+            PathError::SyntaxError(format!("{}", error))
+        })?;
+
+    Ok(result)
 }
 
 fn path_segment_parser<'src>()
@@ -137,14 +187,14 @@ fn local_dir_parser<'src>() -> impl Parser<'src, &'src str, LocalDir, extra::Err
     let path_separator = one_of("/\\").labelled("path separator");
 
     // 解析盘符
-    let dirve_letter = any()
+    let drive_letter = any()
         .filter(|c: &char| c.is_ascii_alphabetic())
         .then_ignore(just(":"))
         .then_ignore(path_separator)
         .labelled("drive letter");
 
     choice((
-        dirve_letter.map(|c| Some(c.to_string())),
+        drive_letter.map(|c| Some(c.to_string())),
         just("/").map(|_| None),
     ))
     .then(
@@ -155,9 +205,9 @@ fn local_dir_parser<'src>() -> impl Parser<'src, &'src str, LocalDir, extra::Err
             .labelled("path segments"),
     )
     .then_ignore(path_segment_parser().not().rewind())
-    .map(|(dirve_letter, segments)| {
-        let mut dirs = if let Some(dirve_letter) = dirve_letter {
-            vec![dirve_letter.to_string()]
+    .map(|(drive_letter, segments)| {
+        let mut dirs = if let Some(drive_letter) = drive_letter {
+            vec![drive_letter.to_string()]
         } else {
             vec![]
         };
@@ -186,14 +236,14 @@ fn local_path_parser<'src>() -> impl Parser<'src, &'src str, LocalPath, extra::E
     let path_separator = one_of("/\\").labelled("path separator");
 
     // 解析盘符
-    let dirve_letter = any()
+    let drive_letter = any()
         .filter(|c: &char| c.is_ascii_alphabetic())
         .then_ignore(just(":"))
         .then_ignore(path_separator)
         .labelled("drive letter");
 
     choice((
-        dirve_letter.map(|c| Some(c.to_string())),
+        drive_letter.map(|c| Some(c.to_string())),
         just("/").map(|_| None),
     ))
     .then(
@@ -204,9 +254,9 @@ fn local_path_parser<'src>() -> impl Parser<'src, &'src str, LocalPath, extra::E
             .labelled("path segments"),
     )
     .then_ignore(path_separator.not().rewind())
-    .map(|(dirve_letter, segments)| {
-        let mut dirs = if let Some(dirve_letter) = dirve_letter {
-            vec![dirve_letter.to_string()]
+    .map(|(drive_letter, segments)| {
+        let mut dirs = if let Some(drive_letter) = drive_letter {
+            vec![drive_letter.to_string()]
         } else {
             vec![]
         };
@@ -250,14 +300,14 @@ fn local_path_wildcard_parser<'src>()
     let path_separator = one_of("/\\").labelled("path separator");
 
     // 解析盘符
-    let dirve_letter = any()
+    let drive_letter = any()
         .filter(|c: &char| c.is_ascii_alphabetic())
         .then_ignore(just(":"))
         .then_ignore(path_separator)
         .labelled("drive letter");
 
     choice((
-        dirve_letter.map(|c| Some(c.to_string())),
+        drive_letter.map(|c| Some(c.to_string())),
         just("/").map(|_| None),
     ))
     .then(
@@ -269,9 +319,9 @@ fn local_path_wildcard_parser<'src>()
     )
     .then(just("...").or_not())
     .then(filename_wildcard)
-    .map(|(((dirve_letter, segments), recursive_dir), filename)| {
-        let mut dirs = if let Some(dirve_letter) = dirve_letter {
-            vec![dirve_letter.to_string()]
+    .map(|(((drive_letter, segments), recursive_dir), filename)| {
+        let mut dirs = if let Some(drive_letter) = drive_letter {
+            vec![drive_letter.to_string()]
         } else {
             vec![]
         };
@@ -289,6 +339,46 @@ pub fn local_path_wildcard(input: &str) -> PathResult<LocalPathWildcard> {
     // 使用 chumsky parser 解析基本结构
     let result = local_path_wildcard_parser()
         .then_ignore(end().labelled("end of local path wildcard"))
+        .parse(input)
+        .into_result()
+        .map_err(|errors| {
+            let error = errors.into_iter().next().unwrap();
+            PathError::SyntaxError(format!("{}", error))
+        })?;
+
+    Ok(result)
+}
+
+pub fn workspace_path_wildcard_parser<'src>()
+-> impl Parser<'src, &'src str, WorkspacePathWildcard, extra::Err<Rich<'src, char>>> {
+    just("//")
+        .labelled("workspace wildcard prefix")
+        .then(
+            path_segment_parser()
+                .then_ignore(just("/"))
+                .repeated()
+                .at_least(1) // at least 1 because of workspace name
+                .collect::<Vec<&str>>()
+                .labelled("path segments"),
+        )
+        .then(just("...").or_not())
+        .then(filename_wildcard_parser())
+        .map(|(((_, segments), recursive_dir), filename)| {
+            let dirs: Vec<String> = segments.iter().map(|s| s.to_string()).collect();
+
+            WorkspacePathWildcard {
+                workspace_name: dirs[0].clone(),
+                dirs: dirs[1..].to_vec(),
+                recursive: recursive_dir.is_some(),
+                wildcard: filename,
+            }
+        })
+}
+
+pub fn workspace_path_wildcard(input: &str) -> PathResult<WorkspacePathWildcard> {
+    // 使用 chumsky parser 解析基本结构
+    let result = workspace_path_wildcard_parser()
+        .then_ignore(end().labelled("end of workspace path wildcard"))
         .parse(input)
         .into_result()
         .map_err(|errors| {

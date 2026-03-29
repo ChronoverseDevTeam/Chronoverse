@@ -104,7 +104,7 @@ impl Default for RuntimeConfig {
     fn default() -> Self {
         Self {
             remote_addr: RuntimeConfigItem {
-                value: "http://10.12.80.159:34560".to_string(),
+                value: "http://127.0.0.1:34560".to_string(),
                 source: RuntimeConfigSource::Default,
             },
             editor: RuntimeConfigItem {

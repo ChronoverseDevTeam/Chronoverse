@@ -174,7 +174,7 @@ message SubmitProgress {
 
 message ListActiveFilesReq {
   string workspace_name = 1;
-  string path = 2; // 目录路径，可以是本地路径、工作区路径、或者 depot 路径
+  repeated string paths = 2; // 目录路径，可以是本地路径、工作区路径、或者 depot 路径
 }
 
 message ActiveFileInfo {

@@ -1,11 +1,10 @@
 use crate::daemon_server::db::active_file::Action;
 use crate::daemon_server::error::{AppError, AppResult};
-use crate::daemon_server::handlers::utils::{
-    expand_to_mapped_files_in_edge_meta, normalize_paths_strict,
-};
+use crate::daemon_server::handlers::utils::{expand_to_mapped_files_in_edge_meta, normalize_path};
 use crate::daemon_server::state::AppState;
 use crate::pb::{DeleteReq, DeleteRsp};
 use crv_core::path::engine::PathEngine;
+use std::collections::HashSet;
 use tonic::{Request, Response, Status};
 
 pub async fn handle(state: AppState, req: Request<DeleteReq>) -> AppResult<Response<DeleteRsp>> {
@@ -22,11 +21,20 @@ pub async fn handle(state: AppState, req: Request<DeleteReq>) -> AppResult<Respo
 
     let path_engine = PathEngine::new(workspace_meta.config.clone(), &request_body.workspace_name);
 
-    // 2. 规范化路径
-    let local_paths = normalize_paths_strict(&request_body.paths, &path_engine)?;
+    // 规范化路径，展开为文件列表
+    let mut files = vec![];
+    for path in &request_body.paths {
+        let location_union = normalize_path(path, &path_engine)?;
+        files.extend(expand_to_mapped_files_in_edge_meta(
+            &location_union,
+            &path_engine,
+            state.clone(),
+        )?);
+    }
 
-    // 3. 展开为文件列表
-    let files = expand_to_mapped_files_in_edge_meta(&local_paths, &path_engine, state.clone())?;
+    // 由于 request_body.paths 可能有重叠的路径范围，这里还要做一次去重
+    let mut seen = HashSet::new();
+    files.retain(|x| seen.insert(x.workspace_path.to_custom_string()));
 
     // 4. 转换为 workspace paths 并标记为 Delete
     let mut deleted_paths = Vec::new();

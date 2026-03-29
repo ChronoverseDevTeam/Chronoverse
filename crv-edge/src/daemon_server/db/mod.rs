@@ -34,6 +34,7 @@ pub enum Status {
 }
 
 /// 数据库管理器，负责持有 DB 句柄
+#[derive(Clone)]
 pub struct DbManager {
     // 使用 Arc 让 DB 可以在多线程（gRPC handlers）间安全共享
     // rust-rocksdb 的 DB 本身是 Thread-safe 的

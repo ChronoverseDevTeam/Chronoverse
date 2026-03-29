@@ -1,4 +1,4 @@
-//! Active file 也就是可以被提交的 file，亦即 checkout 的 file
+//! Active file 也就是可以被提交的 file
 
 use crate::daemon_server::db::*;
 use bincode::{Decode, Encode};

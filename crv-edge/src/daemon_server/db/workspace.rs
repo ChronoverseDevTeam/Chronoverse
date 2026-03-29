@@ -9,7 +9,7 @@ pub struct WorkspaceMeta {
 }
 
 impl DbManager {
-    const KEY_WORKSPACE_META_REVISON: &'static str = "workspace";
+    const KEY_WORKSPACE_META_REVISION: &'static str = "workspace";
 
     /// 这个方法用于创建一个 workspace，它会检查预创建的 workspace 的 root path 是否和
     /// 某个已有的 worksapce 的 root path 相冲突，但是不会检查 mapping views 是否合法，
@@ -81,7 +81,7 @@ impl DbManager {
             let revision_id = uuid::Uuid::new_v4();
             transaction.put_cf(
                 meta_revision_cf,
-                Self::KEY_WORKSPACE_META_REVISON,
+                Self::KEY_WORKSPACE_META_REVISION,
                 revision_id.as_bytes(),
             )?;
 
