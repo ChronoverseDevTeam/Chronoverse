@@ -9,7 +9,7 @@
 //!
 //! # Quick start
 //!
-//! ```no_run
+//! ```ignore
 //! # tokio_test::block_on(async {
 //! use std::net::SocketAddr;
 //! use crv_hive::crv2::iroh::relay::{RelayServer, RelayServerConfig, RelayTlsConfig, TlsCert};

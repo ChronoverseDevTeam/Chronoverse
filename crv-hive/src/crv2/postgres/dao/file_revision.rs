@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait,
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, EntityTrait,
     QueryFilter, QueryOrder, Set,
 };
 
@@ -41,7 +41,7 @@ fn into_active_model(r: NewFileRevision) -> DaoResult<ActiveModel> {
 /// Fetch the exact revision identified by the composite primary key
 /// `(path, generation, revision)`. Returns `None` if not found.
 pub async fn find_exact(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     path: &str,
     generation: i64,
     revision: i64,
@@ -57,7 +57,7 @@ pub async fn find_exact(
 /// Return the most recent revision for `path`
 /// (highest `generation`, then highest `revision`).
 pub async fn find_latest_by_path(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     path: &str,
 ) -> DaoResult<Option<Model>> {
     Ok(Entity::find()
@@ -71,7 +71,7 @@ pub async fn find_latest_by_path(
 /// Return the latest revision of `path` that was committed at or before
 /// `changelist_id`. This is the core "sync to CL" query.
 pub async fn find_latest_at_changelist(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     path: &str,
     changelist_id: i64,
 ) -> DaoResult<Option<Model>> {
@@ -88,7 +88,7 @@ pub async fn find_latest_at_changelist(
 
 /// Return the full revision history for `path`, ordered oldest first.
 pub async fn find_all_by_path(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     path: &str,
 ) -> DaoResult<Vec<Model>> {
     Ok(Entity::find()
@@ -101,7 +101,7 @@ pub async fn find_all_by_path(
 
 /// Return all revisions that belong to a given changelist.
 pub async fn find_by_changelist(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     changelist_id: i64,
 ) -> DaoResult<Vec<Model>> {
     Ok(Entity::find()
@@ -115,7 +115,7 @@ pub async fn find_by_changelist(
 /// Performs a single batch query and deduplicates in Rust.
 /// Paths not found in the database are absent from the returned map.
 pub async fn find_latest_for_paths(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     paths: &[&str],
 ) -> DaoResult<HashMap<String, Model>> {
     if paths.is_empty() {
@@ -140,7 +140,7 @@ pub async fn find_latest_for_paths(
 /// Like `find_latest_for_paths` but only considers revisions committed at or
 /// before `changelist_id`. Useful for bulk "sync to CL" operations.
 pub async fn find_latest_for_paths_at(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     paths: &[&str],
     changelist_id: i64,
 ) -> DaoResult<HashMap<String, Model>> {
@@ -166,14 +166,14 @@ pub async fn find_latest_for_paths_at(
 // ── Writes ───────────────────────────────────────────────────────────────────
 
 /// Insert a single file revision.
-pub async fn insert(db: &DatabaseConnection, revision: NewFileRevision) -> DaoResult<()> {
+pub async fn insert(db: &impl ConnectionTrait, revision: NewFileRevision) -> DaoResult<()> {
     into_active_model(revision)?.insert(db).await?;
     Ok(())
 }
 
 /// Insert multiple file revisions in one round-trip.
 pub async fn insert_many(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     revisions: Vec<NewFileRevision>,
 ) -> DaoResult<()> {
     if revisions.is_empty() {

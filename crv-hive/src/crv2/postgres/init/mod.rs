@@ -8,7 +8,7 @@
 //! DDL so that multiple service instances starting up simultaneously
 //! serialise on schema creation rather than racing on concurrent DDL.
 
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbErr, Statement};
+use sea_orm::{ConnectionTrait, DbErr, Statement};
 use thiserror::Error;
 
 /// Errors that can occur while initialising the crv2 schema.
@@ -29,7 +29,10 @@ pub enum InitError {
 /// 4. `file_revisions` (FK → `files`, FK → `changelists`)
 ///
 /// Supporting indexes are also created idempotently.
-pub async fn init(db: &DatabaseConnection) -> Result<(), InitError> {
+pub async fn init<C>(db: &C) -> Result<(), InitError>
+where
+    C: ConnectionTrait,
+{
     let backend = db.get_database_backend();
 
     // Serialise concurrent initialisations with an advisory lock.
@@ -53,7 +56,10 @@ pub async fn init(db: &DatabaseConnection) -> Result<(), InitError> {
     result
 }
 
-async fn run_ddl(db: &DatabaseConnection) -> Result<(), InitError> {
+async fn run_ddl<C>(db: &C) -> Result<(), InitError>
+where
+    C: ConnectionTrait,
+{
     let backend = db.get_database_backend();
 
     // ── users ────────────────────────────────────────────────────────────────

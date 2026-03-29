@@ -3,35 +3,47 @@
 param(
     [switch]$Ignored,
     [switch]$NoCapture,
-    [string]$Filter = ""
+    [string]$Filter = "",
+    [string]$Config = ""
 )
 
 $ErrorActionPreference = "Stop"
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $projectRoot = Split-Path -Parent $scriptDir
+$configPath = if ($Config) { $Config } else { Join-Path $projectRoot "hive.example.toml" }
 
-& (Join-Path $scriptDir "start-db.ps1")
+function Get-TomlValue {
+    param(
+        [string]$Path,
+        [string]$Section,
+        [string]$Key
+    )
 
-$envFile = Join-Path $projectRoot ".env"
-if (Test-Path $envFile) {
-    Get-Content $envFile | ForEach-Object {
-        if ($_ -match '^\s*#' -or $_ -match '^\s*$') {
-            return
+    $currentSection = ""
+    foreach ($line in Get-Content $Path) {
+        $trimmed = $line.Trim()
+        if (-not $trimmed -or $trimmed.StartsWith("#")) {
+            continue
         }
 
-        $name, $value = $_ -split '=', 2
-        if ($name -and $value) {
-            Set-Item -Path "Env:$name" -Value $value
+        if ($trimmed -match '^\[(.+)\]$') {
+            $currentSection = $matches[1]
+            continue
+        }
+
+        $pattern = '^{0}\s*=\s*([''\"])(.*)\1\s*$' -f [regex]::Escape($Key)
+        if ($currentSection -eq $Section -and $trimmed -match $pattern) {
+            return $matches[2]
         }
     }
+
+    throw "missing [$Section].$Key in $Path"
 }
 
-if (-not $env:TEST_DATABASE_URL) {
-    $env:TEST_DATABASE_URL = "postgres://crv:crv@127.0.0.1:55432/chronoverse_test"
-}
+& (Join-Path $scriptDir "start-db.ps1") -Config $configPath
 
-$env:DATABASE_URL = $env:TEST_DATABASE_URL
+$env:DATABASE_URL = Get-TomlValue -Path $configPath -Section "database" -Key "test_url"
 $env:CRV_RUN_HIVE_DB_TESTS = "1"
 
 $args = @("test", "-p", "crv-hive", "--lib", "--tests")

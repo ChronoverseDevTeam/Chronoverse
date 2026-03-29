@@ -1,3 +1,4 @@
+# Helper scripts and local Docker defaults read these database URLs.
 [database]
 url = "postgres://crv:crv@127.0.0.1:55432/chronoverse_dev"
 test_url = "postgres://crv:crv@127.0.0.1:55432/chronoverse_test"
@@ -5,3 +6,18 @@ max_connections = 10
 
 [logging]
 rust_log = "info"
+
+[iroh]
+relay_bind_addr = "0.0.0.0:3340"
+relay_url = "http://127.0.0.1:3340"
+captive_portal_addr = "0.0.0.0:80"
+
+[service]
+hive_address = "0.0.0.0:34560"
+
+[storage]
+repository_path = "./data/shards"
+upload_cache_path = "./data/upload_cache"
+
+[security]
+jwt_secret = "dev-secret"

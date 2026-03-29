@@ -1,4 +1,4 @@
-use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait, Set};
+use sea_orm::{ActiveModelTrait, ConnectionTrait, EntityTrait, Set};
 use sea_orm::ActiveValue::Unchanged;
 
 use crate::crv2::postgres::entity::user::{ActiveModel, Entity, Model};
@@ -15,14 +15,14 @@ pub struct NewUser {
 
 /// Look up a user by their username. Returns `None` if not found.
 pub async fn find_by_username(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     username: &str,
 ) -> DaoResult<Option<Model>> {
     Ok(Entity::find_by_id(username.to_owned()).one(db).await?)
 }
 
 /// Insert a new user record. Fails if the username already exists.
-pub async fn insert(db: &DatabaseConnection, new_user: NewUser) -> DaoResult<()> {
+pub async fn insert(db: &impl ConnectionTrait, new_user: NewUser) -> DaoResult<()> {
     let am = ActiveModel {
         username: Set(new_user.username),
         password_hash: Set(new_user.password_hash),
@@ -35,7 +35,7 @@ pub async fn insert(db: &DatabaseConnection, new_user: NewUser) -> DaoResult<()>
 /// Replace the stored password hash for `username`.
 /// Only issues an UPDATE for the `password_hash` column.
 pub async fn update_password(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     username: &str,
     new_hash: &str,
 ) -> DaoResult<()> {
@@ -49,7 +49,7 @@ pub async fn update_password(
 }
 
 /// Delete a user record by username. Returns `true` if a row was removed.
-pub async fn delete(db: &DatabaseConnection, username: &str) -> DaoResult<bool> {
+pub async fn delete(db: &impl ConnectionTrait, username: &str) -> DaoResult<bool> {
     let result = Entity::delete_by_id(username.to_owned()).exec(db).await?;
     Ok(result.rows_affected > 0)
 }

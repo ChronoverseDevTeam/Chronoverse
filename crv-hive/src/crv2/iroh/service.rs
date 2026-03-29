@@ -1,7 +1,10 @@
-//! iroh service layer: accepts connections and dispatches RPC calls to
-//! [`ChronoverseApp`].
+//! iroh control plane for crv-hive.
 //!
-//! ## Wire protocol
+//! Binary blob transfer is delegated to `iroh-blobs` on its own ALPN.
+//! This module only handles control-plane RPCs such as user operations and
+//! issuing `BlobTicket`s that clients can hand to `iroh-blobs` downloaders.
+//!
+//! ## Control protocol
 //!
 //! Every RPC is a single **bi-directional stream**:
 //!
@@ -28,9 +31,13 @@
 //! {"ok":false,"error":"<reason>"}
 //! ```
 
-use std::sync::Arc;
+use std::{future, sync::Arc};
 
-use iroh::endpoint::{Connection, RecvStream, SendStream};
+use iroh::{
+    endpoint::{Connection, RecvStream, SendStream},
+    protocol::{AcceptError, ProtocolHandler, Router},
+};
+use iroh_blobs::BlobsProtocol;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -46,6 +53,7 @@ use super::iroh_client::IrohClient;
 #[serde(tag = "method", rename_all = "snake_case")]
 enum HiveRequest {
     RegisterUser { username: String, password: String },
+    GetBlobTicket { hash: String },
 }
 
 /// Outgoing RPC response (serialized to JSON).
@@ -68,51 +76,72 @@ impl HiveResponse {
     }
 }
 
+#[derive(Clone)]
+struct RpcProtocol {
+    app: Arc<ChronoverseApp>,
+}
+
+impl std::fmt::Debug for RpcProtocol {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RpcProtocol").finish()
+    }
+}
+
+impl RpcProtocol {
+    fn new(app: Arc<ChronoverseApp>) -> Self {
+        Self { app }
+    }
+}
+
+impl ProtocolHandler for RpcProtocol {
+    async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
+        handle_connection(connection, Arc::clone(&self.app))
+            .await
+            .map_err(AcceptError::from_err)
+    }
+}
+
 // ── IrohService ───────────────────────────────────────────────────────────────
 
 /// Runs the iroh endpoint in server mode, accepting connections and dispatching
 /// RPC calls to [`ChronoverseApp`].
 pub struct IrohService {
-    client: IrohClient,
-    app: Arc<ChronoverseApp>,
+    router: Router,
 }
 
 impl IrohService {
     /// Create a new service from an already-started [`IrohClient`] and the
     /// shared application state.
     pub fn new(client: IrohClient, app: Arc<ChronoverseApp>) -> Self {
-        Self { client, app }
+        let rpc = RpcProtocol::new(Arc::clone(&app));
+        let blobs = BlobsProtocol::new(app.cas_store().inner(), None);
+        let router = Router::builder(client.endpoint().clone())
+            .accept(super::iroh_client::ALPN, rpc)
+            .accept(iroh_blobs::ALPN, blobs)
+            .spawn();
+
+        Self { router }
     }
 
-    /// Run the accept loop until the endpoint is closed or an irrecoverable
-    /// error occurs.  Spawn tasks for each connection so this never blocks.
+    /// Keep the service alive until cancelled by the caller.
     pub async fn serve(self) {
-        loop {
-            match self.client.accept().await {
-                Some(conn) => {
-                    let app = Arc::clone(&self.app);
-                    tokio::spawn(async move {
-                        handle_connection(conn, app).await;
-                    });
-                }
-                None => {
-                    tracing::info!("iroh endpoint closed, stopping service");
-                    break;
-                }
-            }
-        }
+        let _router = self.router;
+        future::pending::<()>().await;
     }
 
-    /// Gracefully close the underlying iroh endpoint.
-    pub async fn shutdown(self) {
-        self.client.shutdown().await;
+    /// Gracefully close the underlying router and endpoint.
+    pub async fn shutdown(self) -> Result<(), String> {
+        self.router
+            .shutdown()
+            .await
+            .map_err(|err| err.to_string())
     }
 }
 
 // ── Connection handler ────────────────────────────────────────────────────────
 
 /// Accept bi-directional streams from one connection in a loop.
-async fn handle_connection(conn: Connection, app: Arc<ChronoverseApp>) {
+async fn handle_connection(conn: Connection, app: Arc<ChronoverseApp>) -> Result<(), std::io::Error> {
     let peer = conn.remote_id();
     tracing::info!("iroh: new connection from {peer}");
 
@@ -130,6 +159,8 @@ async fn handle_connection(conn: Connection, app: Arc<ChronoverseApp>) {
             }
         }
     }
+
+	Ok(())
 }
 
 // ── Stream handler ────────────────────────────────────────────────────────────
@@ -149,11 +180,11 @@ async fn handle_stream(
 
     let response = match serde_json::from_str::<HiveRequest>(line.trim()) {
         Err(e) => HiveResponse::err(format!("invalid request: {e}")),
-        Ok(req) => dispatch(&app, req),
+        Ok(req) => dispatch(&app, req).await,
     };
 
     let mut resp_bytes = match serde_json::to_vec(&response) {
-        Ok(b) => b,
+        Ok(bytes) => bytes,
         Err(e) => {
             tracing::error!("failed to serialize response: {e}");
             return;
@@ -167,13 +198,21 @@ async fn handle_stream(
 
 // ── Dispatcher ────────────────────────────────────────────────────────────────
 
-fn dispatch(app: &ChronoverseApp, req: HiveRequest) -> HiveResponse {
+async fn dispatch(app: &ChronoverseApp, req: HiveRequest) -> HiveResponse {
     match req {
         HiveRequest::RegisterUser { username, password } => {
-            match app.register_user(&RegisterUserReq { username, password }) {
+            match app.register_user(&RegisterUserReq { username, password }).await {
                 Ok(rsp) => HiveResponse::ok(json!({"username": rsp.username})),
                 Err(e) => HiveResponse::err(e),
             }
         }
+        HiveRequest::GetBlobTicket { hash } => match app.create_blob_ticket(&hash).await {
+            Ok(offer) => HiveResponse::ok(json!({
+                "hash": offer.hash,
+                "ticket": offer.ticket.to_string(),
+                "format": "raw"
+            })),
+            Err(e) => HiveResponse::err(e),
+        },
     }
 }

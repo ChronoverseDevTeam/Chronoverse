@@ -4,19 +4,12 @@ use tracing::Span;
 
 /// 初始化统一日志系统（全局）。
 ///
-/// - 默认使用 `RUST_LOG` 控制日志级别；
-/// - 若未设置 `RUST_LOG`，默认输出 `info`；
+/// - 日志级别完全由配置模块传入；
 /// - 输出格式为文本（适合本地开发/容器日志收集）。
-pub fn init_logging() {
+pub fn init_logging_with_filter(default_filter: &str) {
     use tracing_subscriber::EnvFilter;
 
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| {
-            EnvFilter::new("info")
-                // iroh's captive-portal probe always times out on
-                // private/offline deployments; suppress the noise.
-                // .add_directive("iroh::net_report=error".parse().unwrap())
-        });
+    let filter = EnvFilter::new(default_filter);
 
     // 多次调用时避免 panic（测试/多入口场景）
     let _ = tracing_subscriber::fmt()

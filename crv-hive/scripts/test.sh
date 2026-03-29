@@ -5,6 +5,7 @@ set -euo pipefail
 ignored=0
 nocapture=0
 filter=""
+config_file=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -16,6 +17,18 @@ while [[ $# -gt 0 ]]; do
       nocapture=1
       shift
       ;;
+    -c|--config)
+      if [[ $# -lt 2 ]]; then
+        echo "missing value after $1" >&2
+        exit 1
+      fi
+      config_file="$2"
+      shift 2
+      ;;
+    --config=*)
+      config_file="${1#*=}"
+      shift
+      ;;
     *)
       filter="$1"
       shift
@@ -25,18 +38,39 @@ done
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 project_root="$(cd "$script_dir/.." && pwd)"
+config_file="${config_file:-$project_root/hive.example.toml}"
 
-"$script_dir/start-db.sh"
+toml_value() {
+  local file="$1"
+  local section="$2"
+  local key="$3"
+  awk -v section="$section" -v key="$key" '
+    /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
+    /^[[:space:]]*\[/ {
+      current = $0
+      gsub(/^[[:space:]]*\[/, "", current)
+      gsub(/\][[:space:]]*$/, "", current)
+      in_section = (current == section)
+      next
+    }
+    in_section {
+      pattern = "^[[:space:]]*" key "[[:space:]]*="
+      if ($0 ~ pattern) {
+        value = $0
+        sub(/^[^=]*=[[:space:]]*/, "", value)
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+        gsub(/^"|"$/, "", value)
+        gsub(/^'\''|'\''$/, "", value)
+        print value
+        exit
+      }
+    }
+  ' "$file"
+}
 
-if [[ -f "$project_root/.env" ]]; then
-  set -a
-  # shellcheck disable=SC1091
-  source "$project_root/.env"
-  set +a
-fi
+"$script_dir/start-db.sh" --config "$config_file"
 
-export TEST_DATABASE_URL="${TEST_DATABASE_URL:-postgres://crv:crv@127.0.0.1:55432/chronoverse_test}"
-export DATABASE_URL="$TEST_DATABASE_URL"
+export DATABASE_URL="$(toml_value "$config_file" database test_url)"
 export CRV_RUN_HIVE_DB_TESTS=1
 
 args=(test -p crv-hive --lib --tests)

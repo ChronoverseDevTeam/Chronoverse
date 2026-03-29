@@ -17,21 +17,25 @@ The test database is created by
 [docker/postgres/init/01-create-test-db.sql](docker/postgres/init/01-create-test-db.sql)
 when the container is initialised for the first time.
 
-## Environment contract
+## Configuration
 
-The tracked file [.env](.env) is the active local environment contract for
-`crv-hive`. Update it directly if you need different local database values.
+`crv-hive` now reads TOML configuration through a single config module.
 
-Current shared variables:
+- Default startup looks for `hive.toml` in the current working directory
+- You can override the file with `-c <path>` or `--config <path>`
+- Missing config items fall back to the defaults defined in `src/crv2/config/mod.rs`
+- Runtime configuration is no longer read from environment variables
+- Local Docker and test helper scripts default to `hive.example.toml`
 
-- `DATABASE_URL`: primary database connection string
-- `TEST_DATABASE_URL`: connection string used by local database-backed tests
-- `RUST_LOG`: default tracing filter
-- `DB_MAX_CONNECTIONS`: reserved for the upcoming pooled database integration
+Example:
 
-The file [hive.example.toml](hive.example.toml) records the config shape planned
-for upcoming database wiring.  The current executable does not read it yet, but
-the values mirror the environment contract so local setup and future CI stay aligned.
+```bash
+cargo run -p crv-hive -- -c crv-hive/hive.example.toml
+```
+
+The sample schema is recorded in [hive.example.toml](hive.example.toml).
+
+The file [hive.example.toml](hive.example.toml) records the supported TOML schema.
 
 ## Scripts
 
@@ -39,7 +43,9 @@ PowerShell:
 
 ```powershell
 ./scripts/start-db.ps1
+./scripts/start-db.ps1 -Config ./hive.example.toml
 ./scripts/test.ps1
+./scripts/test.ps1 -Config ./hive.example.toml
 ./scripts/test.ps1 --Ignored
 ./scripts/test.ps1 --Ignored --NoCapture
 ```
@@ -48,16 +54,17 @@ POSIX shell:
 
 ```bash
 ./scripts/start-db.sh
+./scripts/start-db.sh --config ./hive.example.toml
 ./scripts/test.sh
+./scripts/test.sh --config ./hive.example.toml
 ./scripts/test.sh --ignored
 ./scripts/test.sh --ignored --nocapture
 ```
 
 Behavior:
 
-- `start-db` loads `.env`, starts the local Postgres container, and waits until it is healthy
-- `test` loads `.env`, exports `DATABASE_URL=$TEST_DATABASE_URL`,
-	sets `CRV_RUN_HIVE_DB_TESTS=1`, and runs `cargo test -p crv-hive --lib --tests`
+- `start-db` reads `[database]` from `hive.example.toml`, starts the local Postgres container, and waits until it is healthy
+- `test` reads `[database].test_url` from the same TOML file, starts Postgres, and runs `cargo test -p crv-hive --lib --tests`
 - `--Ignored` / `--ignored` is intended for future database-backed tests that are
 	explicitly gated behind ignored test cases
 
@@ -68,7 +75,7 @@ If you prefer not to use the helper scripts:
 ```bash
 docker-compose -f crv-hive/docker-compose.yml up -d postgres
 cargo test -p crv-hive --lib --tests
-DATABASE_URL=postgres://crv:crv@127.0.0.1:55432/chronoverse_test cargo test -p crv-hive --lib --tests -- --ignored
+cargo test -p crv-hive --lib --tests -- --ignored
 ```
 
 ## Notes

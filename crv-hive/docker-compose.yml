@@ -4,16 +4,17 @@ services:
     container_name: crv-hive-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-crv}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-crv}
-      POSTGRES_DB: ${POSTGRES_DB:-chronoverse_dev}
+      POSTGRES_USER: ${CRV_POSTGRES_USER:-crv}
+      POSTGRES_PASSWORD: ${CRV_POSTGRES_PASSWORD:-crv}
+      POSTGRES_DB: ${CRV_POSTGRES_DB:-chronoverse_dev}
+      POSTGRES_TEST_DB: ${CRV_POSTGRES_TEST_DB:-chronoverse_test}
     ports:
-      - "${POSTGRES_PORT:-55432}:5432"
+      - "${CRV_POSTGRES_PORT:-55432}:5432"
     healthcheck:
       test:
         [
           "CMD-SHELL",
-          "pg_isready -U ${POSTGRES_USER:-crv} -d ${POSTGRES_DB:-chronoverse_dev}",
+          "pg_isready -U ${CRV_POSTGRES_USER:-crv} -d ${CRV_POSTGRES_DB:-chronoverse_dev}",
         ]
       interval: 5s
       timeout: 5s

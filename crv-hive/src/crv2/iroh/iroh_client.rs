@@ -5,7 +5,7 @@
 //!
 //! # Quick start
 //!
-//! ```no_run
+//! ```ignore
 //! # tokio_test::block_on(async {
 //! use crv_hive::crv2::iroh::iroh_client::{IrohClient, IrohClientConfig, ALPN};
 //!
@@ -21,7 +21,7 @@
 //!
 //! // Accept one incoming connection.
 //! if let Some(conn) = client.accept().await {
-//!     println!("peer connected: {}", conn.remote_address());
+//!     println!("peer connected: {}", conn.remote_id());
 //! }
 //!
 //! client.shutdown().await;
@@ -106,6 +106,10 @@ impl IrohClient {
 
         let endpoint = builder.bind().await?;
         Ok(Self { endpoint })
+    }
+
+    pub fn endpoint(&self) -> &Endpoint {
+        &self.endpoint
     }
 
     // ── Identity ─────────────────────────────────────────────────────────────

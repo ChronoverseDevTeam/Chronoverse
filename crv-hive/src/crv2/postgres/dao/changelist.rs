@@ -1,5 +1,5 @@
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait,
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, EntityTrait,
     QueryFilter, QueryOrder, QuerySelect, Set,
 };
 
@@ -15,12 +15,12 @@ pub struct NewChangelist {
 }
 
 /// Look up a changelist by its ID. Returns `None` if not found.
-pub async fn find_by_id(db: &DatabaseConnection, id: i64) -> DaoResult<Option<Model>> {
+pub async fn find_by_id(db: &impl ConnectionTrait, id: i64) -> DaoResult<Option<Model>> {
     Ok(Entity::find_by_id(id).one(db).await?)
 }
 
 /// Return the `limit` most recent changelists, ordered newest first.
-pub async fn list_latest(db: &DatabaseConnection, limit: u64) -> DaoResult<Vec<Model>> {
+pub async fn list_latest(db: &impl ConnectionTrait, limit: u64) -> DaoResult<Vec<Model>> {
     Ok(Entity::find()
         .order_by_desc(Column::Id)
         .limit(limit)
@@ -29,7 +29,7 @@ pub async fn list_latest(db: &DatabaseConnection, limit: u64) -> DaoResult<Vec<M
 }
 
 /// Return all changelists submitted by `author`, ordered newest first.
-pub async fn find_by_author(db: &DatabaseConnection, author: &str) -> DaoResult<Vec<Model>> {
+pub async fn find_by_author(db: &impl ConnectionTrait, author: &str) -> DaoResult<Vec<Model>> {
     Ok(Entity::find()
         .filter(Column::Author.eq(author))
         .order_by_desc(Column::Id)
@@ -41,7 +41,7 @@ pub async fn find_by_author(db: &DatabaseConnection, author: &str) -> DaoResult<
 ///
 /// Useful for incremental sync: repeatedly call with the last seen ID + 1.
 pub async fn find_since(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     since_id: i64,
     limit: u64,
 ) -> DaoResult<Vec<Model>> {
@@ -55,7 +55,7 @@ pub async fn find_since(
 
 /// Return changelists in the inclusive range `[from_id, to_id]`, ordered by id ascending.
 pub async fn find_range(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     from_id: i64,
     to_id: i64,
 ) -> DaoResult<Vec<Model>> {
@@ -67,7 +67,7 @@ pub async fn find_range(
 }
 
 /// Insert a new changelist and return the auto-assigned ID.
-pub async fn insert(db: &DatabaseConnection, new_cl: NewChangelist) -> DaoResult<i64> {
+pub async fn insert(db: &impl ConnectionTrait, new_cl: NewChangelist) -> DaoResult<i64> {
     let am = ActiveModel {
         author: Set(new_cl.author),
         description: Set(new_cl.description),

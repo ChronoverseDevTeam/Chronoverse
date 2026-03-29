@@ -1288,6 +1288,7 @@ dependencies = [
  "crc32fast",
  "crv-core",
  "iroh",
+ "iroh-blobs",
  "iroh-relay",
  "iroh-tickets",
  "jsonwebtoken",
