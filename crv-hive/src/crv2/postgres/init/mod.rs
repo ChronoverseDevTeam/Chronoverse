@@ -135,6 +135,57 @@ where
     ))
     .await?;
 
+    // ── submits ──────────────────────────────────────────────────────────────
+    db.execute(Statement::from_string(
+        backend,
+        r#"
+        CREATE TABLE IF NOT EXISTS submits (
+            id            BIGSERIAL PRIMARY KEY,
+            author        TEXT      NOT NULL,
+            description   TEXT      NOT NULL,
+            status        TEXT      NOT NULL DEFAULT 'pending',
+            changelist_id BIGINT,
+            created_at    BIGINT    NOT NULL,
+            expires_at    BIGINT    NOT NULL,
+            CONSTRAINT fk_submits_changelist_id
+                FOREIGN KEY (changelist_id)
+                REFERENCES changelists (id)
+                ON DELETE SET NULL
+                ON UPDATE CASCADE
+        )
+        "#
+        .to_string(),
+    ))
+    .await?;
+
+    // ── submit_files ─────────────────────────────────────────────────────────
+    // Must be created after `submits` and `files` due to FK constraints.
+    db.execute(Statement::from_string(
+        backend,
+        r#"
+        CREATE TABLE IF NOT EXISTS submit_files (
+            submit_id    BIGINT NOT NULL,
+            path         TEXT   NOT NULL,
+            action       TEXT   NOT NULL,
+            chunk_hashes JSONB  NOT NULL,
+            size         BIGINT NOT NULL,
+            PRIMARY KEY (submit_id, path),
+            CONSTRAINT fk_submit_files_submit_id
+                FOREIGN KEY (submit_id)
+                REFERENCES submits (id)
+                ON DELETE CASCADE
+                ON UPDATE CASCADE,
+            CONSTRAINT fk_submit_files_path
+                FOREIGN KEY (path)
+                REFERENCES files (path)
+                ON DELETE CASCADE
+                ON UPDATE CASCADE
+        )
+        "#
+        .to_string(),
+    ))
+    .await?;
+
     // ── indexes ───────────────────────────────────────────────────────────────
 
     // Covers latest-revision look-ups and range scans over (path, generation).
@@ -151,6 +202,24 @@ where
         backend,
         "CREATE INDEX IF NOT EXISTS idx_file_revisions_changelist_id \
          ON file_revisions (changelist_id)"
+            .to_string(),
+    ))
+    .await?;
+
+    // Fast lock-conflict check: find pending submits that reference a path.
+    db.execute(Statement::from_string(
+        backend,
+        "CREATE INDEX IF NOT EXISTS idx_submit_files_path \
+         ON submit_files (path)"
+            .to_string(),
+    ))
+    .await?;
+
+    // Find submits by status (e.g. expired pending submits).
+    db.execute(Statement::from_string(
+        backend,
+        "CREATE INDEX IF NOT EXISTS idx_submits_status \
+         ON submits (status)"
             .to_string(),
     ))
     .await?;

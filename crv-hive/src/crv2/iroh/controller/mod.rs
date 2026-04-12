@@ -1,9 +1,12 @@
 pub mod blob_controller;
+pub mod pre_submit_controller;
+pub mod submit_controller;
 pub mod user_controller;
 
 use serde::{Deserialize, Serialize};
 
 use crate::crv2::ChronoverseApp;
+use pre_submit_controller::PreSubmitFile;
 
 // ── Wire types ────────────────────────────────────────────────────────────────
 
@@ -13,6 +16,9 @@ use crate::crv2::ChronoverseApp;
 pub enum HiveRequest {
     RegisterUser { username: String, password: String },
     GetBlobTicket { hash: String },
+    PreSubmit { description: String, files: Vec<PreSubmitFile> },
+    Submit { submit_id: i64 },
+    CancelSubmit { submit_id: i64 },
 }
 
 /// Outgoing RPC response (serialized to JSON).
@@ -45,6 +51,15 @@ pub async fn dispatch(app: &ChronoverseApp, req: HiveRequest) -> HiveResponse {
         }
         HiveRequest::GetBlobTicket { hash } => {
             blob_controller::get_blob_ticket(app, hash).await
+        }
+        HiveRequest::PreSubmit { description, files } => {
+            pre_submit_controller::pre_submit(app, description, files).await
+        }
+        HiveRequest::Submit { submit_id } => {
+            submit_controller::submit(app, submit_id).await
+        }
+        HiveRequest::CancelSubmit { submit_id } => {
+            submit_controller::cancel_submit(app, submit_id).await
         }
     }
 }

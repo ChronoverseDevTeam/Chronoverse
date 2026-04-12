@@ -43,6 +43,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use crate::crv2::ChronoverseApp;
 
 use super::{
+    blob_events,
     controller::{self, HiveRequest, HiveResponse},
     iroh_client::IrohClient,
 };
@@ -87,7 +88,18 @@ impl IrohService {
     /// shared application state.
     pub fn new(client: IrohClient, app: Arc<ChronoverseApp>) -> Self {
         let rpc = RpcProtocol::new(Arc::clone(&app));
-        let blobs = BlobsProtocol::new(app.cas_store().inner(), None);
+
+        // Set up iroh-blobs event channel so we can extend submit expiry on push.
+        let (event_sender, event_rx) = blob_events::create_event_channel();
+        let blobs = BlobsProtocol::new(app.cas_store().inner(), Some(event_sender));
+
+        // Spawn the background listener that keeps locks alive during uploads.
+        blob_events::spawn_expiry_extender(
+            app.postgres_arc(),
+            Arc::clone(app.submit_registry()),
+            event_rx,
+        );
+
         let router = Router::builder(client.endpoint().clone())
             .accept(super::iroh_client::ALPN, rpc)
             .accept(iroh_blobs::ALPN, blobs)
