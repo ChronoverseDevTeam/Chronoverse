@@ -9,7 +9,7 @@ services:
       POSTGRES_DB: ${CRV_POSTGRES_DB:-chronoverse_dev}
       POSTGRES_TEST_DB: ${CRV_POSTGRES_TEST_DB:-chronoverse_test}
     ports:
-      - "${CRV_POSTGRES_PORT:-55432}:5432"
+      - "${CRV_POSTGRES_PORT:-5432}:5432"
     healthcheck:
       test:
         [

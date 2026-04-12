@@ -1,4 +1,5 @@
-pub mod captive_portal;
+pub use crv_relay::captive_portal;
 pub mod iroh_client;
-pub mod relay;
+pub use crv_relay::relay;
 pub mod service;
+pub mod controller;

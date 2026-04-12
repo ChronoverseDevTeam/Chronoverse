@@ -2,15 +2,15 @@ use std::sync::Arc;
 
 use crv_core::cas::CasStore;
 use crv_hive::crv2::{
-    config::DatabaseConfig,
+    config::{DatabaseConfig, IrohConfig},
     postgres::PostgreExecutor,
     ChronoverseApp,
     iroh::{
-        iroh_client::{IrohClient, IrohClientConfig, ALPN},
-        relay::RelayServer,
+        iroh_client::{IrohClient, ALPN},
         service::IrohService,
     },
 };
+use crv_relay::relay::RelayServer;
 use iroh_blobs::ticket::BlobTicket;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use uuid::Uuid;
@@ -27,9 +27,9 @@ async fn start_test_server() -> (RelayServer, String, IrohClient) {
     let relay_port = relay.http_addr().expect("relay has http addr").port();
     let relay_url = format!("http://127.0.0.1:{relay_port}");
 
-    let server = IrohClient::start(IrohClientConfig {
-        relay_url: Some(relay_url.parse().unwrap()),
-        secret_key: None,
+    let server = IrohClient::start(&IrohConfig {
+        relay_url: relay_url.clone(),
+        ..IrohConfig::default()
     })
     .await
     .expect("server iroh start");
@@ -77,9 +77,9 @@ async fn test_register_user_over_iroh() {
     tokio::task::yield_now().await;
 
     // Create a client endpoint connected to the same relay.
-    let client = IrohClient::start(IrohClientConfig {
-        relay_url: Some(relay_url.parse().unwrap()),
-        secret_key: None,
+    let client = IrohClient::start(&IrohConfig {
+        relay_url: relay_url.clone(),
+        ..IrohConfig::default()
     })
     .await
     .expect("client iroh start");
@@ -140,9 +140,9 @@ async fn test_download_blob_via_blob_ticket_over_iroh_blobs() {
 
     tokio::task::yield_now().await;
 
-    let client = IrohClient::start(IrohClientConfig {
-        relay_url: Some(relay_url.parse().unwrap()),
-        secret_key: None,
+    let client = IrohClient::start(&IrohConfig {
+        relay_url: relay_url.clone(),
+        ..IrohConfig::default()
     })
     .await
     .expect("client iroh start");

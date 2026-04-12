@@ -1287,16 +1287,14 @@ dependencies = [
  "chrono",
  "crc32fast",
  "crv-core",
+ "crv-relay",
  "iroh",
  "iroh-blobs",
- "iroh-relay",
  "iroh-tickets",
  "jsonwebtoken",
  "lz4_flex",
  "once_cell",
  "rand 0.8.5",
- "rcgen",
- "rustls",
  "sea-orm",
  "sea-orm-migration",
  "serde",
@@ -1307,8 +1305,25 @@ dependencies = [
  "toml 0.8.2",
  "tracing",
  "tracing-subscriber",
+ "url",
  "urlencoding",
  "uuid",
+]
+
+[[package]]
+name = "crv-relay"
+version = "0.1.0"
+dependencies = [
+ "iroh-relay",
+ "once_cell",
+ "rcgen",
+ "rustls",
+ "serde",
+ "thiserror 2.0.17",
+ "tokio",
+ "toml 0.8.2",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

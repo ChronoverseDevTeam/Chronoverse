@@ -8,7 +8,7 @@ Rust process on the host and run only Postgres in Docker.
 The local database stack is defined in [docker-compose.yml](docker-compose.yml).
 It starts a single Postgres 16 container with:
 
-- host port `55432`
+- host port `5432`
 - dev database `chronoverse_dev`
 - test database `chronoverse_test`
 - persistent named volume `crv-hive-postgres-data`

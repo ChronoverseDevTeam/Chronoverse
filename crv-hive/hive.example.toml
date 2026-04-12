@@ -1,7 +1,7 @@
 # Helper scripts and local Docker defaults read these database URLs.
 [database]
-url = "postgres://crv:crv@127.0.0.1:55432/chronoverse_dev"
-test_url = "postgres://crv:crv@127.0.0.1:55432/chronoverse_test"
+url = "postgres://crv:crv@127.0.0.1:5432/chronoverse_dev"
+test_url = "postgres://crv:crv@127.0.0.1:5432/chronoverse_test"
 max_connections = 10
 
 [logging]

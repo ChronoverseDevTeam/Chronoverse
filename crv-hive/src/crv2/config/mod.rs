@@ -1,12 +1,27 @@
 use std::{
 	ffi::OsString,
 	fs,
-	path::{Path, PathBuf},
+	path::PathBuf,
 };
 
 use once_cell::sync::OnceCell;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+mod database;
+mod iroh;
+mod logging;
+mod security;
+
+pub use database::DatabaseConfig;
+pub use iroh::IrohConfig;
+pub use logging::LoggingConfig;
+pub use security::SecurityConfig;
+
+use database::RawDatabaseConfig;
+use iroh::RawIrohConfig;
+use logging::RawLoggingConfig;
+use security::RawSecurityConfig;
 
 pub const DEFAULT_CONFIG_PATH: &str = "hive.toml";
 
@@ -24,7 +39,7 @@ pub struct LoadedConfig {
 	pub source: ConfigSource,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct AppConfig {
 	pub database: DatabaseConfig,
@@ -48,57 +63,7 @@ impl Default for AppConfig {
 	}
 }
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
-pub struct DatabaseConfig {
-	pub url: String,
-	pub test_url: String,
-	pub max_connections: u32,
-}
-
-impl Default for DatabaseConfig {
-	fn default() -> Self {
-		Self {
-			url: "postgres://crv:crv@127.0.0.1:55432/chronoverse_dev".to_owned(),
-			test_url: "postgres://crv:crv@127.0.0.1:55432/chronoverse_test".to_owned(),
-			max_connections: 10,
-		}
-	}
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
-pub struct LoggingConfig {
-	pub rust_log: String,
-}
-
-impl Default for LoggingConfig {
-	fn default() -> Self {
-		Self {
-			rust_log: "info".to_owned(),
-		}
-	}
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
-pub struct IrohConfig {
-	pub relay_bind_addr: String,
-	pub relay_url: String,
-	pub captive_portal_addr: String,
-}
-
-impl Default for IrohConfig {
-	fn default() -> Self {
-		Self {
-			relay_bind_addr: "0.0.0.0:3340".to_owned(),
-			relay_url: "http://127.0.0.1:3340".to_owned(),
-			captive_portal_addr: "0.0.0.0:80".to_owned(),
-		}
-	}
-}
-
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct ServiceConfig {
 	pub hive_address: String,
@@ -112,7 +77,7 @@ impl Default for ServiceConfig {
 	}
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct StorageConfig {
 	pub repository_path: PathBuf,
@@ -124,20 +89,6 @@ impl Default for StorageConfig {
 		Self {
 			repository_path: PathBuf::from("./data/shards"),
 			upload_cache_path: PathBuf::from("./data/upload_cache"),
-		}
-	}
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
-pub struct SecurityConfig {
-	pub jwt_secret: String,
-}
-
-impl Default for SecurityConfig {
-	fn default() -> Self {
-		Self {
-			jwt_secret: "dev-secret".to_owned(),
 		}
 	}
 }
@@ -160,6 +111,17 @@ pub enum ConfigError {
 		#[source]
 		source: toml::de::Error,
 	},
+	#[error("failed to write default config file {path}: {source}")]
+	WriteConfig {
+		path: PathBuf,
+		#[source]
+		source: std::io::Error,
+	},
+	#[error("failed to serialize default config: {source}")]
+	SerializeConfig {
+		#[source]
+		source: toml::ser::Error,
+	},
 	#[error("application config has already been initialized")]
 	AlreadyInitialized,
 }
@@ -181,25 +143,6 @@ struct RawAppConfig {
 }
 
 #[derive(Debug, Default, Deserialize)]
-struct RawDatabaseConfig {
-	url: Option<String>,
-	test_url: Option<String>,
-	max_connections: Option<u32>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-struct RawLoggingConfig {
-	rust_log: Option<String>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-struct RawIrohConfig {
-	relay_bind_addr: Option<String>,
-	relay_url: Option<String>,
-	captive_portal_addr: Option<String>,
-}
-
-#[derive(Debug, Default, Deserialize)]
 struct RawServiceConfig {
 	hive_address: Option<String>,
 }
@@ -208,11 +151,6 @@ struct RawServiceConfig {
 struct RawStorageConfig {
 	repository_path: Option<PathBuf>,
 	upload_cache_path: Option<PathBuf>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-struct RawSecurityConfig {
-	jwt_secret: Option<String>,
 }
 
 impl RawAppConfig {
@@ -238,14 +176,14 @@ impl RawAppConfig {
 		}
 
 		if let Some(iroh) = self.iroh {
-			if let Some(relay_bind_addr) = iroh.relay_bind_addr {
-				config.iroh.relay_bind_addr = relay_bind_addr;
-			}
 			if let Some(relay_url) = iroh.relay_url {
 				config.iroh.relay_url = relay_url;
 			}
-			if let Some(captive_portal_addr) = iroh.captive_portal_addr {
-				config.iroh.captive_portal_addr = captive_portal_addr;
+			if let Some(pkarr_url) = iroh.pkarr_url {
+				config.iroh.pkarr_url = pkarr_url;
+			}
+			if let Some(secret_key) = iroh.secret_key {
+				config.iroh.secret_key = secret_key;
 			}
 		}
 
@@ -313,16 +251,24 @@ pub fn load_from_file(path: impl Into<PathBuf>) -> Result<LoadedConfig, ConfigEr
 	})
 }
 
-fn load_default_or_defaults(path: impl AsRef<Path>) -> Result<LoadedConfig, ConfigError> {
-	let path = path.as_ref();
-	if path.is_file() {
-		return load_from_file(path.to_path_buf());
+fn load_default_or_defaults(filename: &str) -> Result<LoadedConfig, ConfigError> {
+	// Prefer a config file that lives next to the executable so the binary is
+	// self-contained and works regardless of the working directory.
+	let path = std::env::current_exe()
+		.ok()
+		.and_then(|exe| exe.parent().map(|p| p.join(filename)))
+		.unwrap_or_else(|| PathBuf::from(filename));
+
+	if !path.is_file() {
+		let content = toml::to_string_pretty(&AppConfig::default())
+			.map_err(|source| ConfigError::SerializeConfig { source })?;
+		fs::write(&path, content).map_err(|source| {
+			ConfigError::WriteConfig { path: path.clone(), source }
+		})?;
+		tracing::info!("created default config at {}", path.display());
 	}
 
-	Ok(LoadedConfig {
-		config: AppConfig::default(),
-		source: ConfigSource::Defaults,
-	})
+	load_from_file(path)
 }
 
 fn parse_config_path_from_args<I, T>(args: I) -> Result<Option<PathBuf>, ConfigError>
@@ -384,7 +330,6 @@ mod tests {
 
 		assert_eq!(config.logging.rust_log, "debug");
 		assert_eq!(config.iroh.relay_url, "http://127.0.0.1:4455");
-		assert_eq!(config.iroh.relay_bind_addr, AppConfig::default().iroh.relay_bind_addr);
 		assert_eq!(
 			config.database.max_connections,
 			AppConfig::default().database.max_connections

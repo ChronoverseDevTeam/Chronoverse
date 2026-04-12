@@ -7,6 +7,7 @@ edition.workspace = true
 
 [dependencies]
 crv-core = { path = "../crv-core" }
+crv-relay = { path = "../crv-relay" }
 
 tokio = { workspace = true, features = ["full"] }
 serde = { workspace = true }
@@ -34,10 +35,8 @@ sea-orm = { version = "1.1.19", features = ["sqlx-postgres", "runtime-tokio-rust
 sea-orm-migration = { version = "1.1.19", features = ["sqlx-postgres", "runtime-tokio-rustls"] }
 iroh = "0.97.0"
 iroh-blobs = "0.99.0"
-iroh-relay = { version = "0.97.0", features = ["server"] }
-rcgen = "0.14"
-rustls = "0.23"
 iroh-tickets = "0.4.0"
+url = "2"
 
 [dev-dependencies]
 tempfile = "3.23.0"

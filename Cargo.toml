@@ -1,5 +1,5 @@
 [workspace]
-members = ["crv-core", "crv-cli", "crv-edge", "crv-hive"]
+members = ["crv-core", "crv-cli", "crv-edge", "crv-hive", "crv-relay"]
 resolver = "3"
 
 [workspace.package]

@@ -1,4 +1,4 @@
-//! Embedded iroh relay server for crv-hive.
+//! Embedded iroh relay server for Chronoverse.
 //!
 //! Supports three modes:
 //! - **Plain HTTP** – relay only, no TLS.
@@ -12,7 +12,7 @@
 //! ```ignore
 //! # tokio_test::block_on(async {
 //! use std::net::SocketAddr;
-//! use crv_hive::crv2::iroh::relay::{RelayServer, RelayServerConfig, RelayTlsConfig, TlsCert};
+//! use crv_relay::relay::{RelayServer, RelayServerConfig, RelayTlsConfig, TlsCert};
 //!
 //! // Plain HTTP:
 //! let srv = RelayServer::start("0.0.0.0:3340".parse().unwrap()).await.unwrap();

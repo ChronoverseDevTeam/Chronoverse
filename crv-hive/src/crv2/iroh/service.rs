@@ -38,43 +38,16 @@ use iroh::{
     protocol::{AcceptError, ProtocolHandler, Router},
 };
 use iroh_blobs::BlobsProtocol;
-use serde::{Deserialize, Serialize};
-use serde_json::json;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
-use crate::crv2::{ChronoverseApp, RegisterUserReq};
+use crate::crv2::ChronoverseApp;
 
-use super::iroh_client::IrohClient;
+use super::{
+    controller::{self, HiveRequest, HiveResponse},
+    iroh_client::IrohClient,
+};
 
-// ── Wire types ────────────────────────────────────────────────────────────────
-
-/// Incoming RPC request (deserialized from JSON).
-#[derive(Deserialize)]
-#[serde(tag = "method", rename_all = "snake_case")]
-enum HiveRequest {
-    RegisterUser { username: String, password: String },
-    GetBlobTicket { hash: String },
-}
-
-/// Outgoing RPC response (serialized to JSON).
-#[derive(Serialize)]
-struct HiveResponse {
-    ok: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    data: Option<serde_json::Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    error: Option<String>,
-}
-
-impl HiveResponse {
-    fn ok(data: serde_json::Value) -> Self {
-        Self { ok: true, data: Some(data), error: None }
-    }
-
-    fn err(msg: impl Into<String>) -> Self {
-        Self { ok: false, data: None, error: Some(msg.into()) }
-    }
-}
+// ── RPC protocol handler ──────────────────────────────────────────────────────
 
 #[derive(Clone)]
 struct RpcProtocol {
@@ -180,7 +153,7 @@ async fn handle_stream(
 
     let response = match serde_json::from_str::<HiveRequest>(line.trim()) {
         Err(e) => HiveResponse::err(format!("invalid request: {e}")),
-        Ok(req) => dispatch(&app, req).await,
+        Ok(req) => controller::dispatch(&app, req).await,
     };
 
     let mut resp_bytes = match serde_json::to_vec(&response) {
@@ -194,25 +167,4 @@ async fn handle_stream(
 
     let _ = send.write_all(&resp_bytes).await;
     let _ = send.finish();
-}
-
-// ── Dispatcher ────────────────────────────────────────────────────────────────
-
-async fn dispatch(app: &ChronoverseApp, req: HiveRequest) -> HiveResponse {
-    match req {
-        HiveRequest::RegisterUser { username, password } => {
-            match app.register_user(&RegisterUserReq { username, password }).await {
-                Ok(rsp) => HiveResponse::ok(json!({"username": rsp.username})),
-                Err(e) => HiveResponse::err(e),
-            }
-        }
-        HiveRequest::GetBlobTicket { hash } => match app.create_blob_ticket(&hash).await {
-            Ok(offer) => HiveResponse::ok(json!({
-                "hash": offer.hash,
-                "ticket": offer.ticket.to_string(),
-                "format": "raw"
-            })),
-            Err(e) => HiveResponse::err(e),
-        },
-    }
 }
