@@ -1,7 +1,7 @@
 use crate::daemon_server::db::*;
 use bincode::{Decode, Encode};
 use crv_core::path::basic::{DepotPath, LocalPath, WorkspaceDir, WorkspacePath};
-use std::collections::HashSet;
+use std::collections::HashMap;
 
 #[derive(Encode, Decode, Clone)]
 pub struct FileRevision {
@@ -28,14 +28,23 @@ pub struct FileLocation {
 /// FileGuard 用于自动解锁文件
 pub struct FileGuard {
     db_manager: DbManager,
-    pub paths: Vec<WorkspacePath>,
+    pub paths: Vec<WorkspacePath>, // paths = add_paths + existing_paths
+    pub add_paths: Vec<WorkspacePath>,
+    pub existing_paths: Vec<WorkspacePath>,
 }
 
 impl FileGuard {
-    fn new(db_manager: &DbManager, paths: Vec<WorkspacePath>) -> Self {
+    fn new(
+        db_manager: &DbManager,
+        paths: Vec<WorkspacePath>,
+        add_paths: Vec<WorkspacePath>,
+        existing_paths: Vec<WorkspacePath>,
+    ) -> Self {
         Self {
             db_manager: db_manager.clone(),
             paths,
+            add_paths,
+            existing_paths,
         }
     }
 
@@ -164,66 +173,68 @@ impl DbManager {
         return Ok(result);
     }
 
-    /// 对于元数据不在 db 中的文件，插入对应的元数据
-    pub fn prepare_add_file(&self, files: &[FileLocation]) -> Result<FileGuard, DbError> {
+    /// 对于调用时元数据还不存在的文件，插入占位元数据并加锁；
+    /// 对于调用时元数据已存在的文件，将其标记为繁忙。
+    /// 这个方法会首先对 add_files 和 existing_files 分别去重，
+    /// 并检查两个集合之间是否存在冲突路径，若存在则直接报错。
+    pub fn prepare_command(
+        &self,
+        add_files: &[FileLocation],
+        existing_files: &[FileLocation],
+    ) -> Result<FileGuard, DbError> {
         let transaction = self.inner.transaction();
         let file_cf = self
             .inner
             .cf_handle(Self::CF_FILE)
             .expect(&format!("cf {} must exist", Self::CF_FILE));
 
-        let mut prepared_files = vec![];
-        for file in files {
-            let path_string = file.workspace_path.to_custom_string();
-            // 由于已经存在的文件不会重复加锁，所以这个方法不像 prepare_command
-            // 一样要求 files 无重复
-            if transaction.get_cf(file_cf, &path_string)?.is_some() {
+        let mut add_files_map = HashMap::new();
+        for file in add_files {
+            add_files_map
+                .entry(file.workspace_path.to_custom_string())
+                .or_insert(file);
+        }
+
+        let mut existing_files_map = HashMap::new();
+        for file in existing_files {
+            existing_files_map
+                .entry(file.workspace_path.to_custom_string())
+                .or_insert(file);
+        }
+
+        for path in add_files_map.keys() {
+            if existing_files_map.contains_key(path) {
+                return Err(DbError::Invalid(format!(
+                    "File {} exists in both add_files and existing_files.",
+                    path
+                )));
+            }
+        }
+
+        let mut prepared_add_files = vec![];
+        for (path_string, file) in &add_files_map {
+            if transaction.get_cf(file_cf, path_string)?.is_some() {
                 println!("File {} already in meta.", path_string);
                 continue;
             }
 
             let file_meta = FileMeta {
-                location: file.clone(),
+                location: (*file).clone(),
                 current_revision: FileRevision::unexists(),
                 busy: true,
             };
 
             let bytes = bincode::encode_to_vec(file_meta, bincode::config::standard())?;
-            transaction.put_cf(file_cf, &path_string, bytes)?;
+            transaction.put_cf(file_cf, path_string, bytes)?;
 
-            prepared_files.push(file.workspace_path.clone());
+            prepared_add_files.push(file.workspace_path.clone());
         }
 
-        let result = transaction.commit();
+        let mut prepared_existing_files = vec![];
+        for (path_string, file) in &existing_files_map {
+            let file_meta_bytes = transaction.get_cf(file_cf, path_string)?;
 
-        return match result {
-            Ok(_) => Ok(FileGuard::new(self, prepared_files)),
-            Err(e) => Err(DbError::RocksDb(e)),
-        };
-    }
-
-    /// 对于除了 add 这个调用时文件元数据还不存在的指令，其他操作文件元数据的指令在执行前
-    /// 均需要调用这个方法将文件元数据标记为繁忙，这个方法会首先对 files 进行去重
-    /// 避免加锁时遇到重复文件导致报错
-    pub fn prepare_command(&self, files: &[FileLocation]) -> Result<FileGuard, DbError> {
-        let transaction = self.inner.transaction();
-        let file_cf = self
-            .inner
-            .cf_handle(Self::CF_FILE)
-            .expect(&format!("cf {} must exist", Self::CF_FILE));
-
-        let mut prepared_files = vec![];
-        // 进行去重操作
-        let mut seen = HashSet::new();
-        let files = files
-            .iter()
-            .filter(|x| seen.insert(x.workspace_path.to_custom_string()));
-        for file in files {
-            let path_string = file.workspace_path.to_custom_string();
-
-            let file_meta_bytes = transaction.get_cf(file_cf, &path_string)?;
-
-            if transaction.get_cf(file_cf, &path_string)?.is_none() {
+            if file_meta_bytes.is_none() {
                 println!("File {} meta unexists.", path_string);
                 continue;
             }
@@ -240,15 +251,23 @@ impl DbManager {
             file_meta.busy = true;
 
             let bytes = bincode::encode_to_vec(file_meta, bincode::config::standard())?;
-            transaction.put_cf(file_cf, &path_string, bytes)?;
+            transaction.put_cf(file_cf, path_string, bytes)?;
 
-            prepared_files.push(file.workspace_path.clone());
+            prepared_existing_files.push(file.workspace_path.clone());
         }
 
         let result = transaction.commit();
 
+        let mut prepared_files = prepared_add_files.clone();
+        prepared_files.extend(prepared_existing_files.clone());
+
         return match result {
-            Ok(_) => Ok(FileGuard::new(self, prepared_files)),
+            Ok(_) => Ok(FileGuard::new(
+                self,
+                prepared_files,
+                prepared_add_files,
+                prepared_existing_files,
+            )),
             Err(e) => Err(DbError::RocksDb(e)),
         };
     }

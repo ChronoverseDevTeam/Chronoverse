@@ -35,7 +35,7 @@ pub async fn handle(
     let mut seen = HashSet::new();
     files.retain(|x| seen.insert(x.workspace_path.to_custom_string()));
 
-    let _file_guard = state.db.prepare_command(&files)?;
+    let _file_guard = state.db.prepare_command(&[], &files)?;
 
     // 4. 转换为 workspace paths 并标记为 Edit
     let mut checkout_paths = Vec::new();

@@ -13,7 +13,7 @@ use crate::hive_pb::{
     DownloadFileChunkReq, GetFileTreeReq, hive_service_client::HiveServiceClient,
 };
 use crate::pb::sync_progress::Payload::FileUpdate;
-use crate::pb::{SyncFileMetadata, SyncFileUpdate, SyncMetadata, SyncProgress, SyncReq};
+use crate::pb::{SyncFileUpdate, SyncProgress, SyncReq};
 use crv_core::path::basic::DepotPath;
 use crv_core::path::engine::PathEngine;
 use prost::Message;
@@ -100,8 +100,6 @@ pub async fn handle(
         location_unions.push(location_union);
     }
 
-    let file_guard = state.db.prepare_command(&edge_files)?;
-
     // 4. 获取 hive files
     // 构建 depot wildcard (暂时获取所有文件，后续可以优化为只获取需要的)
     let depot_wildcard = "//...".to_string();
@@ -177,20 +175,8 @@ pub async fn handle(
     }
 
     // 至此，files_to_add、files_to_edit 和 files_to_delete 才确切可用
-    let mut files_to_sync = HashSet::new();
-    files_to_sync.extend(&files_to_add);
-    files_to_sync.extend(&files_to_edit);
-    files_to_sync.extend(&files_to_delete);
-    // 指令参数选中的范围内可能有文件是无需拉新的，因此需要在实际拉新前释放掉这些文件的锁
-    for locked_file in &edge_files {
-        let locked_file_path = locked_file.workspace_path.to_custom_string();
-        if !files_to_sync.contains(&locked_file_path) {
-            file_guard.release(&locked_file.workspace_path);
-        }
-    }
-
-    // 从 hive file map 中获取元数据
-    for file in files_to_add.iter().chain(files_to_edit.iter()) {
+    let mut add_locations = vec![];
+    for file in &files_to_add {
         let file_meta = hive_files_map.get(file).unwrap();
         let depot_path = DepotPath::parse(&file_meta.path).unwrap();
         let local_path = path_engine.mapping_depot_path(&depot_path);
@@ -202,38 +188,76 @@ pub async fn handle(
             .local_path_to_workspace_path(&local_path)
             .unwrap();
 
-        let location = FileLocation {
+        add_locations.push(FileLocation {
             local_path,
             workspace_path,
             depot_path,
-        };
+        });
+    }
 
-        if files_to_add.contains(file) {
-            file_to_sync.push(FileToSync {
-                location,
-                action: Action::Add,
-                latest_revision: Some(FileRevision {
-                    generation: file_meta.generation,
-                    revision: file_meta.revision,
-                }),
-                chunk_hashes: file_meta.binary_id.clone(),
-            });
-        } else {
-            file_to_sync.push(FileToSync {
-                location,
-                action: Action::Edit,
-                latest_revision: Some(FileRevision {
-                    generation: file_meta.generation,
-                    revision: file_meta.revision,
-                }),
-                chunk_hashes: file_meta.binary_id.clone(),
-            });
+    let mut existing_locations = vec![];
+    for file in files_to_edit.iter().chain(files_to_delete.iter()) {
+        let location = edge_files_map.get(file).unwrap();
+        existing_locations.push((*location).clone());
+    }
+
+    let file_guard = state.db.prepare_command(&add_locations, &existing_locations)?;
+
+    let prepared_add_paths = file_guard
+        .add_paths
+        .iter()
+        .map(|x| x.to_custom_string())
+        .collect::<HashSet<_>>();
+    let prepared_existing_paths = file_guard
+        .existing_paths
+        .iter()
+        .map(|x| x.to_custom_string())
+        .collect::<HashSet<_>>();
+
+    // 从 hive file map 中获取元数据
+    for location in add_locations {
+        if !prepared_add_paths.contains(&location.workspace_path.to_custom_string()) {
+            continue;
         }
+
+        let file_meta = hive_files_map
+            .get(&location.depot_path.to_custom_string())
+            .unwrap();
+        file_to_sync.push(FileToSync {
+            location,
+            action: Action::Add,
+            latest_revision: Some(FileRevision {
+                generation: file_meta.generation,
+                revision: file_meta.revision,
+            }),
+            chunk_hashes: file_meta.binary_id.clone(),
+        });
+    }
+
+    for file in &files_to_edit {
+        let location = edge_files_map.get(file).unwrap();
+        if !prepared_existing_paths.contains(&location.workspace_path.to_custom_string()) {
+            continue;
+        }
+
+        let file_meta = hive_files_map.get(file).unwrap();
+        file_to_sync.push(FileToSync {
+            location: (*location).clone(),
+            action: Action::Edit,
+            latest_revision: Some(FileRevision {
+                generation: file_meta.generation,
+                revision: file_meta.revision,
+            }),
+            chunk_hashes: file_meta.binary_id.clone(),
+        });
     }
 
     // 从 edge file map 中获取元数据
     for file in files_to_delete {
         let location = edge_files_map.get(&file).unwrap();
+        if !prepared_existing_paths.contains(&location.workspace_path.to_custom_string()) {
+            continue;
+        }
 
         file_to_sync.push(FileToSync {
             location: (*location).clone(),

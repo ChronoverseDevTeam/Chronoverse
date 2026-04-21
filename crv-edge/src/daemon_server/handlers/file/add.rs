@@ -27,7 +27,7 @@ pub async fn handle(state: AppState, req: Request<AddReq>) -> AppResult<Response
 
         let local_files = expand_to_mapped_files_in_fs(&location_union, &path_engine);
 
-        let guard = state.db.prepare_add_file(&local_files)?;
+        let guard = state.db.prepare_command(&local_files, &[])?;
 
         for file in &guard.paths {
             // 设置为 active file，action 为 Add

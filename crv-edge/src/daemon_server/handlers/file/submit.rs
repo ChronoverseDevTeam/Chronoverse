@@ -94,7 +94,7 @@ pub async fn handle(
     let mut seen = HashSet::new();
     files.retain(|x| seen.insert(x.workspace_path.to_custom_string()));
 
-    let file_guard = state.db.prepare_command(&files)?;
+    let file_guard = state.db.prepare_command(&[], &files)?;
 
     let mut files_to_submit: Vec<FileToSubmit> = Vec::new();
 
