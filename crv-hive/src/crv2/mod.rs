@@ -11,7 +11,9 @@ use ::iroh::EndpointAddr;
 use postgres::PostgreExecutor;
 use service::{
     BlobTicketOffer,
+    DepotBrowseResponse,
     PreSubmitFile,
+    PathHistoryResponse,
     SubmitServiceError,
     SubmitRegistry,
     file,
@@ -91,6 +93,35 @@ impl ChronoverseApp {
 			.await
 			.map_err(|err| err.to_string())
 	}
+
+    pub async fn browse_depot_tree(
+        &self,
+        path: &str,
+        changelist_id: i64,
+        recursive: bool,
+    ) -> Result<DepotBrowseResponse, String> {
+        service::depot::browse_depot_tree(self.postgres(), path, changelist_id, recursive)
+            .await
+            .map_err(|err| err.to_string())
+    }
+
+    pub async fn query_path_history(
+        &self,
+        path: &str,
+        from_changelist: Option<i64>,
+        to_changelist: Option<i64>,
+        limit: Option<usize>,
+    ) -> Result<PathHistoryResponse, String> {
+        service::depot::query_path_history(
+            self.postgres(),
+            path,
+            from_changelist,
+            to_changelist,
+            limit,
+        )
+        .await
+        .map_err(|err| err.to_string())
+    }
 
 	pub async fn pre_submit(
 		&self,

@@ -110,6 +110,34 @@ pub async fn find_by_changelist(
         .await?)
 }
 
+/// Return all revisions whose path is under the given depot prefix.
+///
+/// The prefix should end with `/` when representing a directory, for example
+/// `//depot/main/src/`.
+pub async fn find_by_prefix_in_range(
+    db: &impl ConnectionTrait,
+    prefix: &str,
+    from_changelist: Option<i64>,
+    to_changelist: Option<i64>,
+) -> DaoResult<Vec<Model>> {
+    let pattern = format!("{}%", escape_like(prefix));
+    let mut query = Entity::find()
+        .filter(Column::Path.like(pattern))
+        .order_by_desc(Column::ChangelistId)
+        .order_by_asc(Column::Path)
+        .order_by_desc(Column::Generation)
+        .order_by_desc(Column::Revision);
+
+    if let Some(from_id) = from_changelist {
+        query = query.filter(Column::ChangelistId.gte(from_id));
+    }
+    if let Some(to_id) = to_changelist {
+        query = query.filter(Column::ChangelistId.lte(to_id));
+    }
+
+    Ok(query.all(db).await?)
+}
+
 /// For each path in `paths`, return its latest revision.
 ///
 /// Performs a single batch query and deduplicates in Rust.
@@ -185,4 +213,8 @@ pub async fn insert_many(
         .collect::<DaoResult<Vec<_>>>()?;
     Entity::insert_many(models).exec(db).await?;
     Ok(())
+}
+
+fn escape_like(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_")
 }

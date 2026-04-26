@@ -1,4 +1,5 @@
 pub mod blob_controller;
+pub mod depot_controller;
 pub mod pre_submit_controller;
 pub mod submit_controller;
 pub mod user_controller;
@@ -16,6 +17,13 @@ use pre_submit_controller::PreSubmitFilePayload;
 pub enum HiveRequest {
     RegisterUser { username: String, password: String },
     GetBlobTicket { hash: String },
+    BrowseDepotTree { path: String, changelist_id: i64, #[serde(default)] recursive: bool },
+    QueryPathHistory {
+        path: String,
+        from_changelist: Option<i64>,
+        to_changelist: Option<i64>,
+        limit: Option<usize>,
+    },
     PreSubmit { description: String, files: Vec<PreSubmitFilePayload> },
     Submit { submit_id: i64 },
     CancelSubmit { submit_id: i64 },
@@ -51,6 +59,17 @@ pub async fn dispatch(app: &ChronoverseApp, req: HiveRequest) -> HiveResponse {
         }
         HiveRequest::GetBlobTicket { hash } => {
             blob_controller::get_blob_ticket(app, hash).await
+        }
+        HiveRequest::BrowseDepotTree { path, changelist_id, recursive } => {
+            depot_controller::browse_depot_tree(app, path, changelist_id, recursive).await
+        }
+        HiveRequest::QueryPathHistory {
+            path,
+            from_changelist,
+            to_changelist,
+            limit,
+        } => {
+            depot_controller::query_path_history(app, path, from_changelist, to_changelist, limit).await
         }
         HiveRequest::PreSubmit { description, files } => {
             pre_submit_controller::pre_submit(app, description, files).await
