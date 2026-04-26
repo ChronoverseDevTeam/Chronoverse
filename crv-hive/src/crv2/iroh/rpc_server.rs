@@ -48,8 +48,6 @@ use super::{
     iroh_client::IrohClient,
 };
 
-// ── RPC protocol handler ──────────────────────────────────────────────────────
-
 #[derive(Clone)]
 struct RpcProtocol {
     app: Arc<ChronoverseApp>,
@@ -75,29 +73,29 @@ impl ProtocolHandler for RpcProtocol {
     }
 }
 
-// ── IrohService ───────────────────────────────────────────────────────────────
-
 /// Runs the iroh endpoint in server mode, accepting connections and dispatching
 /// RPC calls to [`ChronoverseApp`].
-pub struct IrohService {
+pub struct IrohRpcServer {
     router: Router,
 }
 
-impl IrohService {
-    /// Create a new service from an already-started [`IrohClient`] and the
+impl IrohRpcServer {
+    /// Create a new server from an already-started [`IrohClient`] and the
     /// shared application state.
     pub fn new(client: IrohClient, app: Arc<ChronoverseApp>) -> Self {
         let rpc = RpcProtocol::new(Arc::clone(&app));
 
-        // Set up iroh-blobs event channel so we can extend submit expiry on push.
         let (event_sender, event_rx) = blob_events::create_event_channel();
         let blobs = BlobsProtocol::new(app.cas_store().inner(), Some(event_sender));
 
-        // Spawn the background listener that keeps locks alive during uploads.
         blob_events::spawn_expiry_extender(
             app.postgres_arc(),
             Arc::clone(app.submit_registry()),
             event_rx,
+        );
+        blob_events::spawn_expired_submit_reaper(
+            app.postgres_arc(),
+            Arc::clone(app.submit_registry()),
         );
 
         let router = Router::builder(client.endpoint().clone())
@@ -108,7 +106,7 @@ impl IrohService {
         Self { router }
     }
 
-    /// Keep the service alive until cancelled by the caller.
+    /// Keep the server alive until cancelled by the caller.
     pub async fn serve(self) {
         let _router = self.router;
         future::pending::<()>().await;
@@ -123,9 +121,6 @@ impl IrohService {
     }
 }
 
-// ── Connection handler ────────────────────────────────────────────────────────
-
-/// Accept bi-directional streams from one connection in a loop.
 async fn handle_connection(conn: Connection, app: Arc<ChronoverseApp>) -> Result<(), std::io::Error> {
     let peer = conn.remote_id();
     tracing::info!("iroh: new connection from {peer}");
@@ -145,12 +140,9 @@ async fn handle_connection(conn: Connection, app: Arc<ChronoverseApp>) -> Result
         }
     }
 
-	Ok(())
+    Ok(())
 }
 
-// ── Stream handler ────────────────────────────────────────────────────────────
-
-/// Read one JSON request, dispatch it, and write the JSON response.
 async fn handle_stream(
     mut send: SendStream,
     recv: RecvStream,

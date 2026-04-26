@@ -6,7 +6,7 @@ pub mod user_controller;
 use serde::{Deserialize, Serialize};
 
 use crate::crv2::ChronoverseApp;
-use pre_submit_controller::PreSubmitFile;
+use pre_submit_controller::PreSubmitFilePayload;
 
 // ── Wire types ────────────────────────────────────────────────────────────────
 
@@ -16,7 +16,7 @@ use pre_submit_controller::PreSubmitFile;
 pub enum HiveRequest {
     RegisterUser { username: String, password: String },
     GetBlobTicket { hash: String },
-    PreSubmit { description: String, files: Vec<PreSubmitFile> },
+    PreSubmit { description: String, files: Vec<PreSubmitFilePayload> },
     Submit { submit_id: i64 },
     CancelSubmit { submit_id: i64 },
 }

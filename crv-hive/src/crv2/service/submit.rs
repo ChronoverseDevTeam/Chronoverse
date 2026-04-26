@@ -1,10 +1,18 @@
+use std::collections::HashSet;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use thiserror::Error;
-
-use crate::crv2::iroh::controller::pre_submit_controller::PreSubmitFile;
+use crv_core::cas::{BlobId, CasStore};
 use crate::crv2::postgres::dao::{self, DaoError};
 use crate::crv2::postgres::executor::{PostgreExecutor, PostgreExecutorError};
+
+#[derive(Debug, Clone)]
+pub struct PreSubmitFile {
+    pub path: String,
+    pub action: String,
+    pub chunk_hashes: Vec<String>,
+    pub size: i64,
+}
 
 /// Default lock duration: 10 seconds in milliseconds.
 /// Kept short so that locks are released quickly if the client disconnects.
@@ -41,6 +49,9 @@ pub enum SubmitServiceError {
     #[error("invalid action '{0}', expected add|edit|delete")]
     InvalidAction(String),
 
+    #[error("duplicate file path in submit: {0}")]
+    DuplicatePath(String),
+
     #[error("files are locked by another submit: {0:?}")]
     FilesLocked(Vec<String>),
 
@@ -49,6 +60,18 @@ pub enum SubmitServiceError {
 
     #[error("submit {0} is not pending (status: {1})")]
     NotPending(i64, String),
+
+    #[error("submit {0} has expired")]
+    Expired(i64),
+
+    #[error("file already exists, use edit instead: {0}")]
+    FileAlreadyExists(String),
+
+    #[error("file does not exist, use add instead: {0}")]
+    FileNotFound(String),
+
+    #[error("file is already deleted: {0}")]
+    FileAlreadyDeleted(String),
 
     #[error("file has no revision history (cannot edit/delete): {0}")]
     NoRevisionHistory(String),
@@ -82,10 +105,16 @@ pub async fn pre_submit(
         return Err(SubmitServiceError::EmptyFiles);
     }
 
+    let mut seen_paths = HashSet::new();
+
     // Validate inputs.
     for f in files {
-        if f.path.trim().is_empty() {
+        let path = f.path.trim();
+        if path.is_empty() {
             return Err(SubmitServiceError::EmptyPath);
+        }
+        if !seen_paths.insert(path.to_owned()) {
+            return Err(SubmitServiceError::DuplicatePath(path.to_owned()));
         }
         match f.action.as_str() {
             "add" | "edit" | "delete" => {}
@@ -97,6 +126,7 @@ pub async fn pre_submit(
     let expires_at = now + DEFAULT_LOCK_DURATION_MS;
 
     let paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
+    let files = files.to_vec();
 
     // Run inside a transaction so that lock-check + insert is atomic.
     let result = pg
@@ -105,6 +135,7 @@ pub async fn pre_submit(
             let author = author.to_string();
             let description = description.to_string();
             let paths = paths.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+            let files = files.clone();
             let new_files: Vec<dao::submit::NewSubmitFile> = files
                 .iter()
                 .map(|f| dao::submit::NewSubmitFile {
@@ -124,7 +155,33 @@ pub async fn pre_submit(
                     return Err(SubmitServiceError::FilesLocked(locked));
                 }
 
-                // 2. Create the submit record.
+                // 2. Validate action semantics against the latest committed state.
+                let latest_by_path = dao::file_revision::find_latest_for_paths(txn, &path_refs).await?;
+                for file in files {
+                    match latest_by_path.get(file.path.as_str()) {
+                        Some(latest) => match file.action.as_str() {
+                            "add" if !latest.is_deletion => {
+                                return Err(SubmitServiceError::FileAlreadyExists(file.path.clone()));
+                            }
+                            "edit" if latest.is_deletion => {
+                                return Err(SubmitServiceError::FileAlreadyDeleted(file.path.clone()));
+                            }
+                            "delete" if latest.is_deletion => {
+                                return Err(SubmitServiceError::FileAlreadyDeleted(file.path.clone()));
+                            }
+                            _ => {}
+                        },
+                        None => match file.action.as_str() {
+                            "add" => {}
+                            "edit" | "delete" => {
+                                return Err(SubmitServiceError::FileNotFound(file.path.clone()));
+                            }
+                            _ => unreachable!(),
+                        },
+                    }
+                }
+
+                // 3. Create the submit record.
                 let submit_id = dao::submit::create(
                     txn,
                     dao::submit::NewSubmit {
@@ -136,7 +193,7 @@ pub async fn pre_submit(
                 )
                 .await?;
 
-                // 3. Insert submit files (with real submit_id).
+                // 4. Insert submit files (with real submit_id).
                 let submit_files: Vec<dao::submit::NewSubmitFile> = new_files
                     .into_iter()
                     .map(|mut f| {
@@ -158,7 +215,7 @@ pub async fn pre_submit(
 
 pub async fn submit(
     pg: &PostgreExecutor,
-    cas_store: &crv_core::cas::CasStore,
+    cas_store: &CasStore,
     submit_id: i64,
 ) -> Result<SubmitResult, SubmitServiceError> {
     // 1. Load submit and verify it is pending.
@@ -173,6 +230,11 @@ pub async fn submit(
         ));
     }
 
+    if submit_model.expires_at <= now_ms() {
+        dao::submit::mark_expired(pg.connection(), submit_id).await?;
+        return Err(SubmitServiceError::Expired(submit_id));
+    }
+
     // 2. Load all submit files.
     let submit_files = dao::submit::find_files(pg.connection(), submit_id).await?;
 
@@ -181,7 +243,7 @@ pub async fn submit(
         for hash_hex in sf.chunk_hash_list() {
             let parsed = blake3::Hash::from_hex(&hash_hex)
                 .map_err(|_| SubmitServiceError::MissingChunk(hash_hex.clone()))?;
-            let blob_id = crv_core::cas::BlobId::from_bytes(*parsed.as_bytes());
+            let blob_id = BlobId::from_bytes(*parsed.as_bytes());
             if !cas_store.exists(blob_id).await.unwrap_or(false) {
                 return Err(SubmitServiceError::MissingChunk(hash_hex));
             }
@@ -298,6 +360,11 @@ pub async fn cancel_submit(
             submit_id,
             submit_model.status.clone(),
         ));
+    }
+
+    if submit_model.expires_at <= now_ms() {
+        dao::submit::mark_expired(pg.connection(), submit_id).await?;
+        return Err(SubmitServiceError::Expired(submit_id));
     }
 
     dao::submit::mark_cancelled(pg.connection(), submit_id).await?;

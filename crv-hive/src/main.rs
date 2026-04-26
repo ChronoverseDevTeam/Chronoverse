@@ -6,7 +6,7 @@ use crv_hive::{crv2::{
     postgres::PostgreExecutor,
     iroh::{
         iroh_client::IrohClient,
-        service::IrohService,
+        rpc_server::IrohRpcServer,
     },
     ChronoverseApp,
 }, logging};
@@ -38,7 +38,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // ── 2. Wrap iroh client in the service (handles register_user etc.) ──────
     let app = Arc::new(ChronoverseApp::new(Arc::clone(&postgres), cas_store.clone(), iroh_addr.clone()));
-    let service = IrohService::new(iroh, app);
+    let rpc_server = IrohRpcServer::new(iroh, app);
 
     // ── 3. Publish hive ticket to the captive-portal so edge clients can discover us
     {
@@ -55,7 +55,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         _ = tokio::signal::ctrl_c() => {
             logger.info("Shutting down...");
         }
-        _ = service.serve() => {}
+        _ = rpc_server.serve() => {}
     }
     postgres.close().await?;
 	cas_store.shutdown().await?;

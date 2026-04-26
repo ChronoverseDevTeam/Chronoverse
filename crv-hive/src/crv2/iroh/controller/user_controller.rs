@@ -1,6 +1,6 @@
 use serde_json::json;
 
-use crate::crv2::{ChronoverseApp, RegisterUserReq};
+use crate::crv2::ChronoverseApp;
 
 use super::HiveResponse;
 
@@ -10,11 +10,8 @@ pub async fn register_user(
     username: String,
     password: String,
 ) -> HiveResponse {
-    match app
-        .register_user(&RegisterUserReq { username, password })
-        .await
-    {
-        Ok(rsp) => HiveResponse::ok(json!({"username": rsp.username})),
+    match app.register_user(&username, &password).await {
+        Ok(user) => HiveResponse::ok(json!({"username": user.username})),
         Err(e) => HiveResponse::err(e),
     }
 }

@@ -1,13 +1,13 @@
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::crv2::ChronoverseApp;
+use crate::crv2::{ChronoverseApp, service};
 
 use super::HiveResponse;
 
 /// Payload for a single file in a pre-submit request.
 #[derive(Debug, Deserialize)]
-pub struct PreSubmitFile {
+pub struct PreSubmitFilePayload {
     pub path: String,
     /// add | edit | delete
     pub action: String,
@@ -23,8 +23,18 @@ pub struct PreSubmitFile {
 pub async fn pre_submit(
     app: &ChronoverseApp,
     description: String,
-    files: Vec<PreSubmitFile>,
+    files: Vec<PreSubmitFilePayload>,
 ) -> HiveResponse {
+    let files = files
+        .into_iter()
+        .map(|file| service::PreSubmitFile {
+            path: file.path,
+            action: file.action,
+            chunk_hashes: file.chunk_hashes,
+            size: file.size,
+        })
+        .collect();
+
     match app.pre_submit(description, files).await {
         Ok(result) => HiveResponse::ok(json!({
             "submit_id": result.submit_id,

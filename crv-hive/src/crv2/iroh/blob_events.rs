@@ -56,29 +56,58 @@ pub fn spawn_expiry_extender(
                 None => continue,
             };
 
-            // Look up which submit(s) declared this hash.
-            let submit_ids = registry.lookup(&hash);
-            if submit_ids.is_empty() {
-                continue;
-            }
+            let submit_id = match registry.lookup(&hash) {
+                Some(submit_id) => submit_id,
+                None => continue,
+            };
 
             let new_expires = now_ms() + lock_duration_ms();
 
-            for submit_id in submit_ids {
-                // Per-submit throttle: skip if recently extended.
-                if !registry.try_mark_extended(submit_id, throttle) {
-                    continue;
-                }
+            if !registry.try_mark_extended(submit_id, throttle) {
+                continue;
+            }
 
-                if let Err(e) =
-                    dao::submit::extend_expiry(pg.connection(), submit_id, new_expires).await
-                {
-                    tracing::warn!(submit_id, "failed to extend submit expiry: {e}");
-                }
+            if let Err(e) =
+                dao::submit::extend_expiry(pg.connection(), submit_id, new_expires).await
+            {
+                tracing::warn!(submit_id, "failed to extend submit expiry: {e}");
             }
         }
 
         tracing::debug!("blob event listener shut down");
+    })
+}
+
+/// Spawn a background task that marks expired submits and drops their
+/// in-memory keepalive registrations.
+pub fn spawn_expired_submit_reaper(
+    pg: Arc<PostgreExecutor>,
+    registry: Arc<SubmitRegistry>,
+) -> tokio::task::JoinHandle<()> {
+    let interval = Duration::from_millis((lock_duration_ms() / 2).max(1000) as u64);
+
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(interval);
+
+        loop {
+            ticker.tick().await;
+            let now = now_ms();
+
+            match dao::submit::find_expired_pending(pg.connection(), now).await {
+                Ok(submits) => {
+                    for submit in submits {
+                        if let Err(e) = dao::submit::mark_expired(pg.connection(), submit.id).await {
+                            tracing::warn!(submit_id = submit.id, "failed to mark submit expired: {e}");
+                            continue;
+                        }
+                        registry.unregister(submit.id);
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("failed to scan expired submits: {e}");
+                }
+            }
+        }
     })
 }
 

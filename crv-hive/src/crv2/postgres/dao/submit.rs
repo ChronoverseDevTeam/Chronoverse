@@ -149,6 +149,14 @@ pub async fn extend_expiry(
     submit_id: i64,
     new_expires_at: i64,
 ) -> DaoResult<()> {
+    if let Some(model) = find_by_id(db, submit_id).await? {
+        if model.status != "pending" || model.expires_at <= current_time_millis() {
+            return Ok(());
+        }
+    } else {
+        return Ok(());
+    }
+
     let am = ActiveModel {
         id: Set(submit_id),
         expires_at: Set(new_expires_at),
@@ -191,7 +199,8 @@ pub async fn find_locked_paths(
     let mut query = submit_file::Entity::find()
         .inner_join(Entity)
         .filter(submit_file::Column::Path.is_in(paths.iter().copied()))
-        .filter(Column::Status.eq("pending"));
+        .filter(Column::Status.eq("pending"))
+        .filter(Column::ExpiresAt.gt(current_time_millis()));
 
     if let Some(exclude_id) = exclude_submit_id {
         query = query.filter(submit_file::Column::SubmitId.ne(exclude_id));
@@ -208,6 +217,15 @@ pub async fn find_locked_paths(
         .await?;
 
     Ok(locked.into_iter().map(|m| m.path).collect())
+}
+
+fn current_time_millis() -> i64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64
 }
 
 // ── Submit file writes ───────────────────────────────────────────────────────

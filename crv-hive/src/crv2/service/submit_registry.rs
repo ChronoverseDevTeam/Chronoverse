@@ -1,9 +1,9 @@
-//! In-memory registry mapping chunk hashes to pending submit IDs.
+//! In-memory registry mapping chunk hashes to a pending submit ID.
 //!
 //! Populated by `pre_submit`, queried by the blob-event listener to know
 //! which submit to extend, and cleaned up on commit / cancel / expire.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::Instant;
 
@@ -18,8 +18,8 @@ pub struct SubmitRegistry {
 
 #[derive(Debug, Default)]
 struct Inner {
-    /// chunk hash → set of submit IDs that declared this chunk.
-    hash_to_submits: HashMap<Hash, HashSet<i64>>,
+    /// chunk hash → submit ID that currently owns upload keepalive for that hash.
+    hash_to_submit: HashMap<Hash, i64>,
     /// submit_id → monotonic instant of the last successful expiry extension.
     last_extended: HashMap<i64, Instant>,
 }
@@ -35,7 +35,7 @@ impl SubmitRegistry {
     pub fn register(&self, submit_id: i64, hashes: impl IntoIterator<Item = Hash>) {
         let mut inner = self.inner.lock().unwrap();
         for h in hashes {
-            inner.hash_to_submits.entry(h).or_default().insert(submit_id);
+            inner.hash_to_submit.entry(h).or_insert(submit_id);
         }
         // Allow immediate first extension.
         inner.last_extended.remove(&submit_id);
@@ -44,22 +44,14 @@ impl SubmitRegistry {
     /// Remove a submit from the registry (on commit, cancel, or expire).
     pub fn unregister(&self, submit_id: i64) {
         let mut inner = self.inner.lock().unwrap();
-        inner.hash_to_submits.retain(|_, ids| {
-            ids.remove(&submit_id);
-            !ids.is_empty()
-        });
+        inner.hash_to_submit.retain(|_, owner| *owner != submit_id);
         inner.last_extended.remove(&submit_id);
     }
 
-    /// Look up which submit IDs are associated with a given blob hash.
-    /// Returns an empty set if the hash is not registered.
-    pub fn lookup(&self, hash: &Hash) -> HashSet<i64> {
+    /// Look up which submit is associated with a given blob hash.
+    pub fn lookup(&self, hash: &Hash) -> Option<i64> {
         let inner = self.inner.lock().unwrap();
-        inner
-            .hash_to_submits
-            .get(hash)
-            .cloned()
-            .unwrap_or_default()
+        inner.hash_to_submit.get(hash).copied()
     }
 
     /// Check whether enough time has passed since the last extension for

@@ -3,6 +3,7 @@ pub mod postgres;
 pub mod service;
 pub mod iroh;
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use crv_core::cas::CasStore;
@@ -10,19 +11,12 @@ use ::iroh::EndpointAddr;
 use postgres::PostgreExecutor;
 use service::{
     BlobTicketOffer,
+    PreSubmitFile,
+    SubmitServiceError,
     SubmitRegistry,
     file,
     user::{self, CreateUserRequest, UpdateUserPasswordRequest, UserProfile},
 };
-
-pub struct RegisterUserReq {
-    pub username: String,
-    pub password: String,
-}
-
-pub struct RegisterUserRsp {
-    pub username: String
-}
 
 pub struct ChronoverseApp {
     postgres: Arc<PostgreExecutor>,
@@ -56,21 +50,18 @@ impl ChronoverseApp {
         &self.submit_registry
     }
 
-    pub async fn register_user(
-        self: &ChronoverseApp,
-        req: &RegisterUserReq
-    ) -> Result<RegisterUserRsp, String> {
+    pub async fn register_user(&self, username: &str, password: &str) -> Result<UserProfile, String> {
         let user = user::create_user(
             self.postgres(),
             &CreateUserRequest {
-                username: req.username.clone(),
-                password: req.password.clone(),
+                username: username.to_owned(),
+                password: password.to_owned(),
             },
         )
         .await
         .map_err(|err| err.to_string())?;
 
-        Ok(RegisterUserRsp { username: user.username })
+        Ok(user)
     }
 
     pub async fn update_user_password(
@@ -104,7 +95,7 @@ impl ChronoverseApp {
 	pub async fn pre_submit(
 		&self,
 		description: String,
-		files: Vec<crate::crv2::iroh::controller::pre_submit_controller::PreSubmitFile>,
+        files: Vec<PreSubmitFile>,
 	) -> Result<service::PreSubmitResult, String> {
 		let result = service::submit::pre_submit(
 			self.postgres(),
@@ -115,32 +106,69 @@ impl ChronoverseApp {
 		.await
 		.map_err(|err| err.to_string())?;
 
-		// Register chunk hashes for per-submit expiry tracking.
-		let hashes = files.iter()
-			.flat_map(|f| f.chunk_hashes.iter())
-			.filter_map(|h| {
-				blake3::Hash::from_hex(h).ok()
-					.map(|bh| crv_core::cas::BlobId::from_bytes(*bh.as_bytes()))
-			});
+        // Track only missing chunks; already-present CAS content does not need upload keepalive.
+        let hashes = collect_missing_submit_hashes(self.cas_store(), &files)
+            .await
+            .map_err(|err| err.to_string())?;
 		self.submit_registry.register(result.submit_id, hashes);
 
 		Ok(result)
 	}
 
 	pub async fn submit(&self, submit_id: i64) -> Result<service::SubmitResult, String> {
-		let result = service::submit::submit(self.postgres(), self.cas_store(), submit_id)
-			.await
-			.map_err(|err| err.to_string())?;
-		self.submit_registry.unregister(submit_id);
-		Ok(result)
+        match service::submit::submit(self.postgres(), self.cas_store(), submit_id).await {
+            Ok(result) => {
+                self.submit_registry.unregister(submit_id);
+                Ok(result)
+            }
+            Err(err) => {
+                if matches!(err, SubmitServiceError::Expired(_)) {
+                    self.submit_registry.unregister(submit_id);
+                }
+                Err(err.to_string())
+            }
+        }
 	}
 
 	pub async fn cancel_submit(&self, submit_id: i64) -> Result<(), String> {
-		service::submit::cancel_submit(self.postgres(), submit_id)
-			.await
-			.map_err(|err| err.to_string())?;
-		self.submit_registry.unregister(submit_id);
-		Ok(())
+        match service::submit::cancel_submit(self.postgres(), submit_id).await {
+            Ok(()) => {
+                self.submit_registry.unregister(submit_id);
+                Ok(())
+            }
+            Err(err) => {
+                if matches!(err, SubmitServiceError::Expired(_)) {
+                    self.submit_registry.unregister(submit_id);
+                }
+                Err(err.to_string())
+            }
+        }
 	}
 
+}
+
+async fn collect_missing_submit_hashes(
+    cas_store: &CasStore,
+    files: &[PreSubmitFile],
+) -> Result<Vec<iroh_blobs::Hash>, crv_core::cas::CasError> {
+    let mut seen = HashSet::new();
+    let mut missing = Vec::new();
+
+    for file in files {
+        for hash in &file.chunk_hashes {
+            let parsed = match blake3::Hash::from_hex(hash) {
+                Ok(parsed) => parsed,
+                Err(_) => continue,
+            };
+            let blob_id = crv_core::cas::BlobId::from_bytes(*parsed.as_bytes());
+            if !seen.insert(blob_id) {
+                continue;
+            }
+            if !cas_store.exists(blob_id).await? {
+                missing.push(blob_id);
+            }
+        }
+    }
+
+    Ok(missing)
 }
