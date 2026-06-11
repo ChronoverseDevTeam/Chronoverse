@@ -41,6 +41,7 @@ async fn main() -> Result<()> {
         Commands::Opened { .. } => cmd_opened(&api, cli.client_name.as_deref()).await,
         Commands::Have { .. } => cmd_have().await,
         Commands::Sync { files, force, preview, keep_working } => cmd_sync(&api, cli.client_name.as_deref(), &files, force, preview, keep_working).await,
+        Commands::Reconcile { preview } => cmd_reconcile(&api, cli.client_name.as_deref(), preview).await,
         Commands::Submit { description, .. } => cmd_submit(&api, cli.client_name.as_deref(), description).await,
         Commands::Changes { .. } => cmd_changes(&api, cli.client_name.as_deref()).await,
         Commands::Describe { .. } => cmd_not_impl("describe").await,
@@ -247,6 +248,100 @@ async fn cmd_sync(api: &CrvApiClient, client: Option<&str>, files: &[String], fo
     }
     api.confirm_sync(&c, &entries).await?;
     println!("Sync complete: {} file(s).", needed.len());
+    Ok(())
+}
+
+async fn cmd_reconcile(api: &CrvApiClient, client: Option<&str>, preview: bool) -> Result<()> {
+    let c = need_client(client)?;
+    let client_info = api.get_client(&c).await?;
+    let root = client_info["data"]["root"].as_str().unwrap_or(".");
+
+    // Get depot state (all files tracked for this client)
+    let v = api.sync(&c, "", true).await?;
+    let depot_entries: Vec<Value> = v["data"]["files"].as_array().cloned().unwrap_or_default();
+
+    // Build set of depot paths for quick lookup
+    let depot_set: std::collections::HashSet<String> = depot_entries.iter()
+        .map(|e| e["depot_path"].as_str().unwrap_or("").to_string())
+        .collect();
+
+    // Walk local filesystem under root
+    let mut local_files: Vec<String> = Vec::new();
+    let root_path = std::path::Path::new(root);
+    if root_path.is_dir() {
+        for entry in walkdir::WalkDir::new(root)
+            .follow_links(false)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            if entry.file_type().is_file() {
+                let abs = entry.path().to_string_lossy().to_string();
+                let rel = abs[root.len()..].trim_start_matches(['\\', '/']).to_string();
+                let depot = format!("//depot/{}", rel.replace('\\', "/"));
+                local_files.push(depot);
+            }
+        }
+    }
+
+    // Classify files
+    let mut to_add: Vec<String> = Vec::new();
+    let mut to_edit: Vec<String> = Vec::new();
+    let mut to_delete: Vec<String> = Vec::new();
+
+    for lf in &local_files {
+        if !depot_set.contains(lf) {
+            to_add.push(lf.clone());
+        } else {
+            // Check if file has been modified (compare local path with depot info)
+            let local = depot_to_local(lf, root);
+            if let Ok(meta) = std::fs::metadata(&local) {
+                let local_size = meta.len() as i64;
+                // Find depot entry to compare size
+                let depot_size = depot_entries.iter()
+                    .find(|e| e["depot_path"].as_str() == Some(lf))
+                    .and_then(|e| e["file_size"].as_i64())
+                    .unwrap_or(0);
+                if local_size != depot_size {
+                    to_edit.push(lf.clone());
+                }
+            }
+        }
+    }
+
+    for de in &depot_entries {
+        let dp = de["depot_path"].as_str().unwrap_or("");
+        let local = depot_to_local(dp, root);
+        if !local.exists() && local_files.iter().all(|f| f != dp) {
+            to_delete.push(dp.to_string());
+        }
+    }
+
+    // Report
+    println!("Reconcile preview:");
+    println!("  add:    {} file(s)", to_add.len());
+    println!("  edit:   {} file(s)", to_edit.len());
+    println!("  delete: {} file(s)", to_delete.len());
+
+    if preview || (to_add.is_empty() && to_edit.is_empty() && to_delete.is_empty()) {
+        return Ok(());
+    }
+
+    // Apply
+    if !to_add.is_empty() {
+        let paths: Vec<String> = to_add.iter().map(|p| p.clone()).collect();
+        api.open_files(&c, "add", &paths).await?;
+        println!("{} opened for add.", to_add.len());
+    }
+    if !to_edit.is_empty() {
+        let paths: Vec<String> = to_edit.iter().map(|p| p.clone()).collect();
+        api.open_files(&c, "edit", &paths).await?;
+        println!("{} opened for edit.", to_edit.len());
+    }
+    if !to_delete.is_empty() {
+        let paths: Vec<String> = to_delete.iter().map(|p| p.clone()).collect();
+        api.open_files(&c, "delete", &paths).await?;
+        println!("{} opened for delete.", to_delete.len());
+    }
     Ok(())
 }
 

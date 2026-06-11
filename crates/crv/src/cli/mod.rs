@@ -124,6 +124,13 @@ pub enum Commands {
         keep_working: bool,
     },
 
+    /// Reconcile workspace: detect changes and open files for add/edit/delete
+    Reconcile {
+        /// Preview only — show what would be done without applying
+        #[arg(short = 'n')]
+        preview: bool,
+    },
+
     // ── Changelist ───────────────────────────────────
     /// Submit a changelist to the depot
     Submit {

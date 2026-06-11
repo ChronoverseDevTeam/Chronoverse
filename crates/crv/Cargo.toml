@@ -28,4 +28,5 @@ sha2.workspace = true
 hex.workspace = true
 bytes.workspace = true
 rpassword.workspace = true
+walkdir = "2"
 crv-shared.workspace = true
