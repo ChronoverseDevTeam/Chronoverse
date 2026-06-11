@@ -1,5 +1,4 @@
 use axum::{
-    body::Body,
     extract::{Path, Query, State},
     http::{header, StatusCode},
     response::Response,
@@ -212,6 +211,8 @@ pub struct ContentQuery {
 }
 
 /// GET /api/v1/files/:depot_path/content?rev=N
+///
+/// Download file content. Streams directly from blob storage for any file size.
 pub async fn download_file(
     State(state): State<Arc<AppState>>,
     _auth: AuthUser,
@@ -245,7 +246,11 @@ pub async fn download_file(
 
     let digest: String = row.get("digest");
     let depot = Depot::new(&state.config.depot_root);
-    let content = depot.read_blob(&digest).await.map_err(internal_error)?;
+
+    // Stream blob from disk — no in-memory buffering
+    let file = depot.read_blob_stream(&digest).await.map_err(internal_error)?;
+    let stream = tokio_util::io::ReaderStream::new(file);
+    let body = axum::body::Body::from_stream(stream);
 
     let mime = if row.get::<String, _>("file_type") == "text" {
         "text/plain"
@@ -256,45 +261,86 @@ pub async fn download_file(
     Ok(Response::builder()
         .header(header::CONTENT_TYPE, mime)
         .header(header::CONTENT_DISPOSITION, format!("attachment; filename=\"{}\"", depot_path.rsplit('/').next().unwrap_or("file")))
-        .body(Body::from(content))
+        .body(body)
         .unwrap())
 }
 
 /// POST /api/v1/files/:depot_path/content
 ///
-/// Upload file content before submit. Content is staged for the submit engine.
+/// Upload file content before submit. Streams content to disk for
+/// files of any size (no in-memory buffering beyond chunk size).
 pub async fn upload_file(
     State(state): State<Arc<AppState>>,
     _auth: AuthUser,
     Path(depot_path): Path<String>,
-    body: axum::body::Bytes,
+    body: axum::body::Body,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let depot_path = normalize_depot_path(&depot_path);
-    if body.is_empty() {
-        return Err(bad_request("empty file content"));
-    }
 
     let depot = Depot::new(&state.config.depot_root);
     depot.init().await.map_err(internal_error)?;
 
-    // Store as content-addressed blob
-    let digest = depot.store_blob(&body).await.map_err(internal_error)?;
-
-    // Also write a staging file for the submit engine to find.
-    // Normalize depot_path: strip all leading slashes so URL // and // match.
+    // Prepare staging path
     let normalized = depot_path.trim_start_matches('/');
     let staging_path = depot.blob_path(&format!("staging_{}", normalized.replace('/', "_")));
     if let Some(parent) = staging_path.parent() {
         std::fs::create_dir_all(parent).map_err(internal_error)?;
     }
-    std::fs::write(&staging_path, &body).map_err(internal_error)?;
+
+    // Stream body to blob + staging file, computing digest incrementally
+    use sha2::{Sha256, Digest};
+    use tokio::io::AsyncWriteExt;
+    use futures_util::StreamExt;
+
+    let mut body_stream = body.into_data_stream();
+    let tmp_blob = std::env::temp_dir().join(format!("crv_upload_{}", uuid::Uuid::new_v4()));
+    let mut blob_file = tokio::fs::File::create(&tmp_blob)
+        .await
+        .map_err(internal_error)?;
+    let mut staging_file = tokio::fs::File::create(&staging_path)
+        .await
+        .map_err(internal_error)?;
+    let mut hasher = Sha256::new();
+    let mut total_size: u64 = 0;
+
+    while let Some(chunk_result) = body_stream.next().await {
+        let chunk = chunk_result.map_err(|e| bad_request(&format!("body read: {e}")))?;
+        total_size += chunk.len() as u64;
+        hasher.update(&chunk);
+
+        // Write to both blob temp and staging file
+        blob_file.write_all(&chunk).await.map_err(internal_error)?;
+        staging_file.write_all(&chunk).await.map_err(internal_error)?;
+    }
+
+    if total_size == 0 {
+        let _ = tokio::fs::remove_file(&tmp_blob).await;
+        let _ = tokio::fs::remove_file(&staging_path).await;
+        return Err(bad_request("empty file content"));
+    }
+
+    // Finalize: compute digest, move temp to final blob path
+    let digest = hex::encode(hasher.finalize());
+    let final_blob = depot.blob_path(&digest);
+
+    if !final_blob.exists() {
+        if let Some(parent) = final_blob.parent() {
+            tokio::fs::create_dir_all(parent).await.map_err(internal_error)?;
+        }
+        tokio::fs::rename(&tmp_blob, &final_blob).await.map_err(internal_error)?;
+    } else {
+        // Blob already exists (content dedup), discard temp
+        tokio::fs::remove_file(&tmp_blob).await.ok();
+    }
+
+    drop(staging_file); // ensure flush
 
     Ok(Json(json!({
         "success": true,
         "data": {
             "depot_path": depot_path,
             "digest": digest,
-            "size": body.len(),
+            "size": total_size,
         }
     })))
 }

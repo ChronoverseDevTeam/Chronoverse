@@ -99,7 +99,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
 
     Router::new()
         .nest("/api/v1", api_v1)
-        .layer(DefaultBodyLimit::max(100 * 1024 * 1024)) // 100 MB for large file uploads
+        .layer(DefaultBodyLimit::disable()) // no limit — streaming handles large files
         .with_state(state)
 }
 
