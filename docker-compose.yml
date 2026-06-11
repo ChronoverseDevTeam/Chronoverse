@@ -1,0 +1,57 @@
+services:
+  # ── PostgreSQL ─────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: chronoverse
+      POSTGRES_PASSWORD: chronoverse
+      POSTGRES_DB: chronoverse
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chronoverse"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ── crv-core server ────────────────────────────────────────────
+  crv-core:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      CRV_HOST: 0.0.0.0
+      CRV_PORT: 3000
+      DATABASE_URL: postgres://chronoverse:chronoverse@postgres:5432/chronoverse?sslmode=disable
+      CRV_TICKET_SECRET: crv-smoke-test-secret-do-not-use-in-prod
+      CRV_DEPOT_ROOT: /data/depot
+      RUST_LOG: crv_core=info,tower_http=info
+    volumes:
+      - depot_data:/data/depot
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── Smoke tests (run once: docker compose --profile smoke up) ──
+  smoke:
+    build:
+      context: .
+      dockerfile: Dockerfile.smoke
+    environment:
+      CRV_CORE_URL: http://crv-core:3000
+      CRV_SMOKE_ADMIN_PASSWORD: admin123
+    depends_on:
+      crv-core:
+        condition: service_healthy
+    profiles:
+      - smoke
+
+volumes:
+  pgdata:
+  depot_data:

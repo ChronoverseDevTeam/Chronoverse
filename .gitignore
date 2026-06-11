@@ -1,0 +1,18 @@
+# Build artifacts
+/target/
+
+# Environment
+.env
+
+# Depot data
+/data/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

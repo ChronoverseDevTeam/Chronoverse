@@ -1,0 +1,18 @@
+# Smoke test image — builds and runs the integration test suite
+FROM rust:1.80-alpine AS builder
+
+RUN apk add --no-cache musl-dev pkgconfig openssl-dev
+
+WORKDIR /app
+COPY Cargo.toml Cargo.lock* ./
+COPY crates/ crates/
+
+RUN cargo build --release --test smoke -p crv-core
+
+FROM alpine:3.20
+
+RUN apk add --no-cache ca-certificates
+
+COPY --from=builder /app/target/release/deps/smoke-* /usr/local/bin/crv-smoke
+
+CMD ["crv-smoke"]
