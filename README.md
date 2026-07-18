@@ -1,5 +1,9 @@
 # Chronoverse — Open-Source Perforce-Compatible Version Control
 
+> We have found that the Epic has decided to release their VCS.
+> Chronoverse has a lot of design already implemented by the [lore](https://github.com/epicgames/lore).
+> Currently, we decide to pause the development of the project.
+
 **Chronoverse** is a centralized version control system compatible with the Perforce/Helix Core workflow. It consists of:
 
 - **`crv-core`** — The central server (REST API + PostgreSQL + file storage)
